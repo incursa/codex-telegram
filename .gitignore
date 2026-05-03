@@ -1,0 +1,10 @@
+bin/
+obj/
+.vs/
+.vscode/
+TestResults/
+artifacts/
+publish/
+*.user
+appsettings.Local.json
+*.binlog

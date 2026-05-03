@@ -1,0 +1,267 @@
+using System.Collections.Concurrent;
+using Incursa.Codex.Telegram.Models;
+using Incursa.Codex.Telegram.Telegram;
+using Incursa.OpenAI.Codex;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
+
+namespace Incursa.Codex.Telegram.Services;
+
+internal sealed class CodexSessionRuntimeRegistry : ICodexTurnExecutionCoordinator, IAsyncDisposable
+{
+    private readonly ConcurrentDictionary<string, Lazy<CodexRuntimeSlot>> _threadSlots = new(StringComparer.Ordinal);
+    private readonly CodexRuntimeSlot _defaultSlot;
+    private readonly IOptions<CodexClientOptions> _clientOptions;
+    private readonly ICodexRealtimeBroadcaster _broadcaster;
+    private readonly ITelegramTurnOutputRelay _telegramTurnOutputRelay;
+    private readonly IHostApplicationLifetime _applicationLifetime;
+    private readonly ILoggerFactory _loggerFactory;
+
+    public CodexSessionRuntimeRegistry(
+        IOptions<CodexClientOptions> clientOptions,
+        ICodexRealtimeBroadcaster broadcaster,
+        ITelegramTurnOutputRelay telegramTurnOutputRelay,
+        IHostApplicationLifetime applicationLifetime,
+        ILoggerFactory loggerFactory)
+    {
+        _clientOptions = clientOptions;
+        _broadcaster = broadcaster;
+        _telegramTurnOutputRelay = telegramTurnOutputRelay;
+        _applicationLifetime = applicationLifetime;
+        _loggerFactory = loggerFactory;
+        _defaultSlot = CreateSlot(broadcastRuntimeState: true);
+    }
+
+    public bool HasActiveTurn
+        => EnumerateSlots().Any(slot => slot.TurnCoordinator.HasActiveTurn);
+
+    public async Task<CodexRuntimeSlot> GetDefaultAsync(CancellationToken cancellationToken)
+    {
+        await _defaultSlot.EnsureInitializedAsync(cancellationToken).ConfigureAwait(false);
+        return _defaultSlot;
+    }
+
+    public async Task<CodexRuntimeSlot> CreateDedicatedSlotAsync(CancellationToken cancellationToken)
+    {
+        CodexRuntimeSlot slot = CreateSlot(broadcastRuntimeState: false);
+        await slot.EnsureInitializedAsync(cancellationToken).ConfigureAwait(false);
+        return slot;
+    }
+
+    public async Task<CodexRuntimeSlot> GetOrCreateForThreadAsync(string threadId, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(threadId))
+        {
+            return await GetDefaultAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        Lazy<CodexRuntimeSlot> lazySlot = _threadSlots.GetOrAdd(threadId, _ => new Lazy<CodexRuntimeSlot>(() => CreateSlot(broadcastRuntimeState: false)));
+        CodexRuntimeSlot slot = lazySlot.Value;
+        await slot.EnsureInitializedAsync(cancellationToken).ConfigureAwait(false);
+        return slot;
+    }
+
+    public async Task<CodexRuntimeSlot> GetBestForThreadAsync(string threadId, CancellationToken cancellationToken)
+    {
+        if (!string.IsNullOrWhiteSpace(threadId) && _threadSlots.TryGetValue(threadId, out Lazy<CodexRuntimeSlot>? lazySlot))
+        {
+            CodexRuntimeSlot slot = lazySlot.Value;
+            await slot.EnsureInitializedAsync(cancellationToken).ConfigureAwait(false);
+            return slot;
+        }
+
+        return await GetDefaultAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    public void BindThread(string threadId, CodexRuntimeSlot slot)
+    {
+        if (string.IsNullOrWhiteSpace(threadId))
+        {
+            throw new ArgumentException("Thread id cannot be empty.", nameof(threadId));
+        }
+
+        ArgumentNullException.ThrowIfNull(slot);
+        _threadSlots[threadId] = new Lazy<CodexRuntimeSlot>(() => slot);
+    }
+
+    public IReadOnlyCollection<string> GetActiveThreadIds()
+        => EnumerateSlots()
+            .SelectMany(slot => slot.TurnCoordinator.GetActiveThreadIds())
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+
+    public bool HasActiveTurnForThread(string threadId)
+        => !string.IsNullOrWhiteSpace(threadId)
+            && EnumerateSlots().Any(slot => slot.TurnCoordinator.HasActiveTurnForThread(threadId));
+
+    public string? GetActiveTurnId(string threadId)
+        => EnumerateSlots()
+            .Select(slot => slot.TurnCoordinator.GetActiveTurnId(threadId))
+            .FirstOrDefault(turnId => !string.IsNullOrWhiteSpace(turnId));
+
+    public CodexActiveTurnStateVm? TryGetActiveTurnState(string threadId)
+        => EnumerateSlots()
+            .Select(slot => slot.TurnCoordinator.TryGetActiveTurnState(threadId))
+            .FirstOrDefault(state => state is not null);
+
+    public void RegisterActiveTurn(string threadId, string turnId, CodexTurn? turn = null, CodexTimelineEntryVm? lastEvent = null)
+    {
+        CodexRuntimeSlot slot = GetKnownSlotForThread(threadId);
+        slot.TurnCoordinator.RegisterActiveTurn(threadId, turnId, turn, lastEvent);
+    }
+
+    public void UpdateActiveTurnState(string threadId, string turnId, CodexTimelineEntryVm? lastEvent = null)
+    {
+        CodexRuntimeSlot slot = GetKnownSlotForThread(threadId);
+        slot.TurnCoordinator.UpdateActiveTurnState(threadId, turnId, lastEvent);
+    }
+
+    public bool TryClearActiveTurn(string threadId, string turnId)
+        => EnumerateSlots().Any(slot => slot.TurnCoordinator.TryClearActiveTurn(threadId, turnId));
+
+    public async Task SteerAsync(string threadId, string turnId, IReadOnlyList<CodexInputItem> input, CancellationToken cancellationToken)
+    {
+        CodexRuntimeSlot slot = GetKnownSlotForThread(threadId);
+        await slot.TurnCoordinator.SteerAsync(threadId, turnId, input, cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task InterruptAsync(string threadId, string turnId, CancellationToken cancellationToken)
+    {
+        CodexRuntimeSlot slot = GetKnownSlotForThread(threadId);
+        await slot.TurnCoordinator.InterruptAsync(threadId, turnId, cancellationToken).ConfigureAwait(false);
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        foreach (CodexRuntimeSlot slot in EnumerateSlots())
+        {
+            await slot.DisposeAsync().ConfigureAwait(false);
+        }
+    }
+
+    private CodexRuntimeSlot CreateSlot(bool broadcastRuntimeState)
+        => new(
+            new CodexClient(_clientOptions.Value),
+            new CodexRuntimeState(),
+            new CodexTurnExecutionCoordinator(
+                _broadcaster,
+                _telegramTurnOutputRelay,
+                _applicationLifetime,
+                _loggerFactory.CreateLogger<CodexTurnExecutionCoordinator>()),
+            _broadcaster,
+            broadcastRuntimeState);
+
+    private CodexRuntimeSlot GetKnownSlotForThread(string threadId)
+    {
+        if (!string.IsNullOrWhiteSpace(threadId) && _threadSlots.TryGetValue(threadId, out Lazy<CodexRuntimeSlot>? lazySlot))
+        {
+            return lazySlot.Value;
+        }
+
+        CodexRuntimeSlot? activeSlot = EnumerateSlots()
+            .FirstOrDefault(slot => slot.TurnCoordinator.HasActiveTurnForThread(threadId));
+        return activeSlot ?? _defaultSlot;
+    }
+
+    private IReadOnlyCollection<CodexRuntimeSlot> EnumerateSlots()
+        => _threadSlots.Values
+            .Where(lazy => lazy.IsValueCreated)
+            .Select(lazy => lazy.Value)
+            .Prepend(_defaultSlot)
+            .Distinct(SlotReferenceComparer.Instance)
+            .ToArray();
+
+    private sealed class SlotReferenceComparer : IEqualityComparer<CodexRuntimeSlot>
+    {
+        public static SlotReferenceComparer Instance { get; } = new();
+
+        public bool Equals(CodexRuntimeSlot? x, CodexRuntimeSlot? y)
+            => ReferenceEquals(x, y);
+
+        public int GetHashCode(CodexRuntimeSlot obj)
+            => System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(obj);
+    }
+}
+
+internal sealed class CodexRuntimeSlot : IAsyncDisposable
+{
+    private readonly ICodexRealtimeBroadcaster _broadcaster;
+    private readonly bool _broadcastRuntimeState;
+    private readonly SemaphoreSlim _runtimeInitGate = new(1, 1);
+
+    public CodexRuntimeSlot(
+        CodexClient client,
+        CodexRuntimeState runtimeState,
+        CodexTurnExecutionCoordinator turnCoordinator,
+        ICodexRealtimeBroadcaster broadcaster,
+        bool broadcastRuntimeState)
+    {
+        Client = client;
+        RuntimeState = runtimeState;
+        TurnCoordinator = turnCoordinator;
+        _broadcaster = broadcaster;
+        _broadcastRuntimeState = broadcastRuntimeState;
+    }
+
+    public CodexClient Client { get; }
+
+    public CodexRuntimeState RuntimeState { get; }
+
+    public CodexTurnExecutionCoordinator TurnCoordinator { get; }
+
+    public async Task EnsureInitializedAsync(CancellationToken cancellationToken)
+    {
+        if (RuntimeState.Initialized)
+        {
+            return;
+        }
+
+        await _runtimeInitGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (RuntimeState.Initialized)
+            {
+                return;
+            }
+
+            CodexRuntimeMetadata metadata = await Client.InitializeAsync(cancellationToken).ConfigureAwait(false);
+            CodexRuntimeCapabilities capabilities = Client.Capabilities ?? throw new InvalidOperationException("Codex runtime initialized without capabilities.");
+            IReadOnlyList<CodexModel> models = [];
+
+            try
+            {
+                if (capabilities.SupportsListModels)
+                {
+                    CodexModelListResult result = await Client.ListModelsAsync(new CodexModelListOptions(), cancellationToken).ConfigureAwait(false);
+                    models = result.Models;
+                }
+            }
+            catch (CodexCapabilityNotSupportedException)
+            {
+                models = [];
+            }
+
+            RuntimeState.SetReady(metadata, capabilities, models, $"Codex runtime ready: {metadata.ServerInfo?.Name ?? "Codex"} {metadata.ServerInfo?.Version ?? string.Empty}".Trim());
+            if (_broadcastRuntimeState)
+            {
+                await _broadcaster.BroadcastRuntimeStateAsync(RuntimeState.ToViewModel(), cancellationToken).ConfigureAwait(false);
+            }
+        }
+        catch (Exception exception)
+        {
+            RuntimeState.SetError(exception);
+            throw;
+        }
+        finally
+        {
+            _runtimeInitGate.Release();
+        }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        await Client.DisposeAsync().ConfigureAwait(false);
+        _runtimeInitGate.Dispose();
+    }
+}

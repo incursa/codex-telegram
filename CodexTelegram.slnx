@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Incursa.Codex.Telegram/Incursa.Codex.Telegram.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Incursa.Codex.Telegram.Tests/Incursa.Codex.Telegram.Tests.csproj" />
+  </Folder>
+</Solution>
