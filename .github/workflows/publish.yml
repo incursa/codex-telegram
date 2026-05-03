@@ -28,12 +28,6 @@ jobs:
           - os: macos-15
             runtime: osx-arm64
             asset_name: codex-telegram-osx-arm64
-          - os: ubuntu-24.04-arm
-            runtime: linux-arm64
-            asset_name: codex-telegram-linux-arm64
-          - os: windows-11-arm
-            runtime: win-arm64
-            asset_name: codex-telegram-win-arm64
 
     steps:
       - name: Checkout
@@ -110,6 +104,7 @@ jobs:
           TAG_NAME: ${{ github.ref_name }}
           RELEASE_DIR: ${{ runner.temp }}/release-assets
         run: |
+          $version = $env:TAG_NAME.TrimStart('v')
           $assets = Get-ChildItem -Path $env:RELEASE_DIR -File -Recurse |
             Sort-Object FullName |
             Select-Object -ExpandProperty FullName
@@ -118,4 +113,4 @@ jobs:
             throw "No release assets were downloaded."
           }
 
-          gh release create $env:TAG_NAME $assets --title $env:TAG_NAME --generate-notes
+          gh release create $env:TAG_NAME $assets --title $version --generate-notes

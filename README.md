@@ -145,5 +145,5 @@ This repository is intentionally console-only. The ASP.NET Core web console, Sig
 ## GitHub Actions
 
 - Pull requests run build and test validation on Windows, Linux, and macOS.
-- Pushes to `main` publish artifacts for Windows x64, Linux x64, macOS arm64, Linux arm64, and Windows arm64.
-- Tag pushes that start with `v` also create a GitHub Release and upload the published artifacts.
+- Pushes to `main` publish artifacts for Windows x64, Linux x64, and macOS arm64.
+- Tag pushes that start with `v` also create a GitHub Release and upload the published artifacts with a version-style title.
