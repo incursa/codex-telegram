@@ -4,10 +4,12 @@ Incursa.Codex.Telegram is a lightweight Telegram bot host for a local Codex inst
 
 The app does not bundle Codex, Telegram credentials, OpenAI credentials, or `ffmpeg`. Operators provide those on the machine that runs the bot.
 
+If you are setting this up for the first time, start with [docs/getting-started.md](docs/getting-started.md). It walks through BotFather setup, allowlists, configuration, first launch, private-chat usage, group usage, and troubleshooting in one place.
+
 ## Prerequisites
 
 - .NET 10 SDK for source builds, or a published self-contained binary.
-- Local `codex` installed, on `PATH` or configured via `Codex:CodexPathOverride`, and already authenticated.
+- Local `codex` installed, on `PATH` or configured via `Codex:CodexPathOverride` or `TelegramBot:CodexExecutablePath`, with `CODEX_PATH` as a fallback, and already authenticated.
 - A Telegram bot token from BotFather.
 - Your numeric Telegram user ID. Start with `/whoami` while the bot is temporarily reachable, or use another trusted method to get it.
 - `OPENAI_API_KEY` or `OpenAI:ApiKey` for voice-note transcription.
@@ -67,10 +69,12 @@ Important settings:
 
 - `TelegramBot:AllowedUserIds`: required allowlist for private control.
 - `TelegramBot:AllowedChatIds`: optional group allowlist.
+- `TelegramBot:DefaultWorkingDirectory`: fallback working directory for new sessions.
 - `CodexTelegram:Workspace:WorkspaceRoots`: directories users may add as projects.
 - `CodexTelegram:Context:WorkingDirectory`: default Codex working directory.
 - `CodexTelegram:Workspace:DataRoot`: local JSON state root. Defaults to the user's application data folder.
-- `Codex:CodexPathOverride` or `CODEX_PATH`: optional path to the local `codex` executable.
+- `Codex:CodexPathOverride`, `TelegramBot:CodexExecutablePath`, or `CODEX_PATH`: optional path to the local `codex` executable.
+- `OpenAI:FfmpegPath`: optional `ffmpeg` path override if it is not on `PATH`.
 - `OpenAI:Model`: defaults to `whisper-1`.
 
 ## Run From Source
