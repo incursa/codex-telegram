@@ -15,7 +15,8 @@ dotnet publish (Join-Path $repoRoot "src\Incursa.Codex.Telegram\Incursa.Codex.Te
     -c $Configuration `
     -r $Runtime `
     -o $OutputDirectory `
+    /p:AssemblyName=codex-telegram `
     /p:PublishSingleFile=true `
     /p:SelfContained=true
 
-Write-Host "Published Incursa.Codex.Telegram to $OutputDirectory"
+Write-Host "Published codex-telegram to $OutputDirectory"

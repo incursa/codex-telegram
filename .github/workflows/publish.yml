@@ -1,0 +1,121 @@
+name: Publish
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Publish (${{ matrix.asset_name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-2025
+            runtime: win-x64
+            asset_name: codex-telegram-win-x64
+          - os: ubuntu-24.04
+            runtime: linux-x64
+            asset_name: codex-telegram-linux-x64
+          - os: macos-15
+            runtime: osx-arm64
+            asset_name: codex-telegram-osx-arm64
+          - os: ubuntu-24.04-arm
+            runtime: linux-arm64
+            asset_name: codex-telegram-linux-arm64
+          - os: windows-11-arm
+            runtime: win-arm64
+            asset_name: codex-telegram-win-arm64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version-file: global.json
+          cache: true
+
+      - name: Restore
+        run: dotnet restore CodexTelegram.slnx
+
+      - name: Build
+        run: dotnet build CodexTelegram.slnx -c Release --no-restore -m:1
+
+      - name: Test
+        run: dotnet test tests/Incursa.Codex.Telegram.Tests/Incursa.Codex.Telegram.Tests.csproj -c Release --no-build --no-restore -m:1
+
+      - name: Publish binary
+        id: publish
+        shell: pwsh
+        run: |
+          $publishDir = Join-Path $env:RUNNER_TEMP "codex-telegram-${{ matrix.runtime }}"
+          New-Item -ItemType Directory -Force -Path $publishDir | Out-Null
+
+          dotnet publish src/Incursa.Codex.Telegram/Incursa.Codex.Telegram.csproj `
+            -c Release `
+            -r ${{ matrix.runtime }} `
+            -o $publishDir `
+            /p:AssemblyName=codex-telegram `
+            /p:PublishSingleFile=true `
+            /p:SelfContained=true
+
+          $binary = Get-ChildItem -Path $publishDir -File |
+            Where-Object { $_.BaseName -eq 'codex-telegram' } |
+            Select-Object -First 1
+
+          if (-not $binary) {
+            throw "Published binary not found in $publishDir."
+          }
+
+          $assetPath = Join-Path $publishDir ("${{ matrix.asset_name }}{0}" -f $binary.Extension)
+          Move-Item -LiteralPath $binary.FullName -Destination $assetPath
+          "asset_path=$assetPath" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset_name }}
+          path: ${{ steps.publish.outputs.asset_path }}
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    name: Create GitHub Release
+    needs: publish
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: ${{ runner.temp }}/release-assets
+
+      - name: Create release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ github.ref_name }}
+          RELEASE_DIR: ${{ runner.temp }}/release-assets
+        run: |
+          $assets = Get-ChildItem -Path $env:RELEASE_DIR -File -Recurse |
+            Sort-Object FullName |
+            Select-Object -ExpandProperty FullName
+
+          if (-not $assets) {
+            throw "No release assets were downloaded."
+          }
+
+          gh release create $env:TAG_NAME $assets --title $env:TAG_NAME --generate-notes

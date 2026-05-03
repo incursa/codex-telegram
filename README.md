@@ -20,7 +20,7 @@ OpenAI's transcription API supports `whisper-1`, `gpt-4o-transcribe`, `gpt-4o-mi
 The default startup path is an interactive bootstrap/admin menu:
 
 ```powershell
-.\artifacts\publish\win-x64\Incursa.Codex.Telegram.exe
+.\artifacts\publish\win-x64\codex-telegram.exe
 ```
 
 Use the menu to set the Telegram bot token, admin user IDs, optional chat allowlist, OpenAI transcription key/model, Codex executable path, Codex defaults, workspace roots, and local state root. The menu writes `appsettings.Local.json` in the current directory and never displays stored secret values.
@@ -28,14 +28,14 @@ Use the menu to set the Telegram bot token, admin user IDs, optional chat allowl
 After configuration, choose `Start bot` from the menu, or use `--run` for quiet service-style startup:
 
 ```powershell
-.\artifacts\publish\win-x64\Incursa.Codex.Telegram.exe --run
+.\artifacts\publish\win-x64\codex-telegram.exe --run
 ```
 
 Other supported app switches:
 
 ```powershell
-.\artifacts\publish\win-x64\Incursa.Codex.Telegram.exe --menu
-.\artifacts\publish\win-x64\Incursa.Codex.Telegram.exe --help
+.\artifacts\publish\win-x64\codex-telegram.exe --menu
+.\artifacts\publish\win-x64\codex-telegram.exe --help
 ```
 
 You can still use these configuration approaches:
@@ -96,7 +96,7 @@ The running bot keeps the process alive in the terminal without framework log no
 The output is:
 
 ```text
-artifacts\publish\win-x64\Incursa.Codex.Telegram.exe
+artifacts\publish\win-x64\codex-telegram.exe
 ```
 
 Other runtime identifiers can be passed with `-Runtime`, for example `linux-x64` or `osx-arm64`, when the .NET SDK has the required runtime packs.
@@ -137,7 +137,13 @@ Secrets are not written to those state files.
 ```powershell
 dotnet build CodexTelegram.slnx
 dotnet test CodexTelegram.slnx
-dotnet publish src\Incursa.Codex.Telegram\Incursa.Codex.Telegram.csproj -c Release -r win-x64 -o artifacts\publish\win-x64
+dotnet publish src\Incursa.Codex.Telegram\Incursa.Codex.Telegram.csproj -c Release -r win-x64 -o artifacts\publish\win-x64 /p:AssemblyName=codex-telegram
 ```
 
 This repository is intentionally console-only. The ASP.NET Core web console, SignalR UI, and MCP endpoint belong in the separate `codex-remote` project.
+
+## GitHub Actions
+
+- Pull requests run build and test validation on Windows, Linux, and macOS.
+- Pushes to `main` publish artifacts for Windows x64, Linux x64, macOS arm64, Linux arm64, and Windows arm64.
+- Tag pushes that start with `v` also create a GitHub Release and upload the published artifacts.
