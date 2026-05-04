@@ -4,8 +4,8 @@ Incursa.Codex.Telegram runs local Codex work on the same machine as the bot proc
 
 ## Required Controls
 
-- Set `TelegramBot:AllowedUserIds` before enabling the bot.
-- Keep `TelegramBot:AllowedChatIds` empty unless you intentionally want group access.
+- Set `TelegramBot:AllowedUserIds` before enabling the bot; all bot control requires an allowed user.
+- Keep `TelegramBot:AllowedChatIds` empty unless you intentionally want group or forum-topic access. Group and forum messages require both an allowed user and an allowed chat.
 - Keep `CodexTelegram:Workspace:WorkspaceRoots` narrow; project paths outside those roots are rejected.
 - Store bot tokens and OpenAI API keys in user secrets, environment variables, or another secret store. Do not commit `appsettings.Local.json`.
 - Review Codex sandbox and approval settings before using the bot on sensitive repositories.

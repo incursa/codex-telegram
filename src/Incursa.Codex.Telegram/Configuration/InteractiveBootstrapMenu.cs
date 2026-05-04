@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text;
+using Incursa.Codex.Telegram.Models;
 
 namespace Incursa.Codex.Telegram.Configuration;
 
@@ -12,11 +13,14 @@ internal enum BootstrapMenuResult
 internal static class InteractiveBootstrapMenu
 {
     public static BootstrapMenuResult Run(LocalSettingsStore store)
+        => Run(store, CodexModelDiscovery.CreateFallbackCatalog());
+
+    public static BootstrapMenuResult Run(LocalSettingsStore store, CodexModelCatalog modelCatalog)
     {
         while (true)
         {
             ClearScreen();
-            WriteStatus(store);
+            WriteStatus(store, modelCatalog);
             Console.WriteLine();
             Console.WriteLine("1. Start bot");
             Console.WriteLine("2. Telegram and admins");
@@ -32,7 +36,7 @@ internal static class InteractiveBootstrapMenu
             {
                 case "1":
                 case "start":
-                    if (ConfirmStart(store.GetSnapshot()))
+                    if (ConfirmStart(store, modelCatalog))
                     {
                         return BootstrapMenuResult.Start;
                     }
@@ -51,7 +55,7 @@ internal static class InteractiveBootstrapMenu
 
                 case "4":
                 case "codex":
-                    ConfigureCodex(store);
+                    modelCatalog = ConfigureCodex(store, modelCatalog);
                     break;
 
                 case "5":
@@ -84,6 +88,8 @@ internal static class InteractiveBootstrapMenu
         Console.WriteLine("  Incursa.Codex.Telegram --help     Show this help.");
         Console.WriteLine();
         Console.WriteLine($"The menu writes {LocalSettingsStore.FileName} in the current directory.");
+        Console.WriteLine("The startup screen shows the resolved settings file, local state root, and common model pickers before launch.");
+        Console.WriteLine("When Codex is reachable, the menu queries it for live model lists and falls back to curated examples if discovery fails.");
         Console.WriteLine("Environment variables and command-line configuration still override that file.");
     }
 
@@ -158,7 +164,7 @@ internal static class InteractiveBootstrapMenu
             Console.WriteLine($"ffmpeg path: {FormatValue(snapshot.OpenAiFfmpegPath, "ffmpeg")}");
             Console.WriteLine();
             Console.WriteLine("1. Set API key");
-            Console.WriteLine("2. Set transcription model");
+            Console.WriteLine("2. Pick transcription model");
             Console.WriteLine("3. Set ffmpeg path");
             Console.WriteLine("B. Back");
             Console.WriteLine();
@@ -174,12 +180,7 @@ internal static class InteractiveBootstrapMenu
                     break;
 
                 case "2":
-                    SetString(
-                        "Transcription model",
-                        snapshot.OpenAiModel,
-                        store.SetOpenAiModel,
-                        store,
-                        "whisper-1");
+                    PickOpenAiModel(snapshot, store);
                     break;
 
                 case "3":
@@ -198,7 +199,7 @@ internal static class InteractiveBootstrapMenu
         }
     }
 
-    private static void ConfigureCodex(LocalSettingsStore store)
+    private static CodexModelCatalog ConfigureCodex(LocalSettingsStore store, CodexModelCatalog modelCatalog)
     {
         while (true)
         {
@@ -206,18 +207,19 @@ internal static class InteractiveBootstrapMenu
             LocalSettingsSnapshot snapshot = store.GetSnapshot();
             Console.WriteLine("Codex Runtime");
             Console.WriteLine();
-            Console.WriteLine($"Codex executable: {FormatValue(snapshot.CodexPathOverride, "PATH")}");
+            Console.WriteLine($"Codex executable: {FormatValue(ResolveCodexExecutablePath(snapshot), "PATH")}");
             Console.WriteLine($"Initialize on start: {FormatEnabled(snapshot.InitializeOnStart)}");
-            Console.WriteLine($"Model: {FormatValue(snapshot.CodexModel, "Codex default")}");
+            Console.WriteLine($"Model: {FormatModelValue(snapshot.CodexModel, modelCatalog.Models, "Codex default")}");
             Console.WriteLine($"Thinking: {FormatValue(snapshot.ReasoningEffort, "Codex default")}");
             Console.WriteLine($"Sandbox: {FormatValue(snapshot.Sandbox, "workspace-write")}");
             Console.WriteLine($"Approval mode: {FormatValue(snapshot.ApprovalMode, "on-request")}");
             Console.WriteLine($"Network access: {FormatNullableBool(snapshot.NetworkAccessEnabled, "Codex default")}");
+            Console.WriteLine($"Model catalog: {DescribeModelCatalog(modelCatalog)}");
             Console.WriteLine();
             Console.WriteLine("1. Set Codex executable path");
             Console.WriteLine("2. Toggle initialize on start");
-            Console.WriteLine("3. Set default model");
-            Console.WriteLine("4. Set default thinking effort");
+            Console.WriteLine("3. Pick default model");
+            Console.WriteLine("4. Pick default thinking effort");
             Console.WriteLine("5. Set sandbox");
             Console.WriteLine("6. Set approval mode");
             Console.WriteLine("7. Cycle network access default");
@@ -233,6 +235,7 @@ internal static class InteractiveBootstrapMenu
                         store.SetCodexPathOverride,
                         store,
                         "PATH");
+                    modelCatalog = CodexModelDiscovery.DiscoverAsync(store.GetSnapshot(), CancellationToken.None).GetAwaiter().GetResult();
                     break;
 
                 case "2":
@@ -241,21 +244,11 @@ internal static class InteractiveBootstrapMenu
                     break;
 
                 case "3":
-                    SetString(
-                        "Default model",
-                        snapshot.CodexModel,
-                        store.SetCodexModel,
-                        store,
-                        "Codex default");
+                    PickCodexModel(snapshot, store, modelCatalog);
                     break;
 
                 case "4":
-                    SetString(
-                        "Default thinking effort (minimal, low, medium, high, xhigh)",
-                        snapshot.ReasoningEffort,
-                        store.SetReasoningEffort,
-                        store,
-                        "Codex default");
+                    PickReasoningEffort(snapshot, store, modelCatalog);
                     break;
 
                 case "5":
@@ -283,7 +276,7 @@ internal static class InteractiveBootstrapMenu
 
                 case "b":
                 case "back":
-                    return;
+                    return modelCatalog;
             }
         }
     }
@@ -298,7 +291,7 @@ internal static class InteractiveBootstrapMenu
             Console.WriteLine();
             Console.WriteLine($"Workspace roots: {FormatStringList(snapshot.WorkspaceRoots, Environment.CurrentDirectory)}");
             Console.WriteLine($"Default working directory: {FormatValue(snapshot.WorkingDirectory, Environment.CurrentDirectory)}");
-            Console.WriteLine($"Data root: {FormatValue(snapshot.DataRoot, "User application data")}");
+            Console.WriteLine($"Data root: {FormatValue(snapshot.DataRoot, GetDefaultDataRoot())}");
             Console.WriteLine();
             Console.WriteLine("1. Set workspace roots");
             Console.WriteLine("2. Set default working directory");
@@ -342,7 +335,32 @@ internal static class InteractiveBootstrapMenu
     }
 
     private static bool ConfirmStart(LocalSettingsSnapshot snapshot)
+        => ConfirmStartInternal(snapshot, null, CodexModelDiscovery.CreateFallbackCatalog());
+
+    private static bool ConfirmStart(LocalSettingsStore store)
+        => ConfirmStartInternal(store.GetSnapshot(), store.FilePath, CodexModelDiscovery.CreateFallbackCatalog());
+
+    private static bool ConfirmStart(LocalSettingsStore store, CodexModelCatalog modelCatalog)
+        => ConfirmStartInternal(store.GetSnapshot(), store.FilePath, modelCatalog);
+
+    private static bool ConfirmStartInternal(LocalSettingsSnapshot snapshot, string? settingsPath, CodexModelCatalog modelCatalog)
     {
+        Console.WriteLine();
+        Console.WriteLine("Startup summary:");
+        if (!string.IsNullOrWhiteSpace(settingsPath))
+        {
+            Console.WriteLine($"Settings file: {settingsPath}");
+        }
+
+        Console.WriteLine($"Local state: {FormatValue(snapshot.DataRoot, GetDefaultDataRoot())}");
+        Console.WriteLine($"Workspace roots: {FormatStringList(snapshot.WorkspaceRoots, Environment.CurrentDirectory)}");
+        Console.WriteLine($"Default working directory: {FormatValue(snapshot.WorkingDirectory, Environment.CurrentDirectory)}");
+        Console.WriteLine($"Telegram polling: {FormatEnabled(snapshot.TelegramEnabled)}, token {FormatConfigured(snapshot.TelegramTokenConfigured)}, admins {snapshot.AllowedUserIds.Count}, chats {snapshot.AllowedChatIds.Count}");
+        Console.WriteLine($"OpenAI: key {FormatConfigured(snapshot.OpenAiApiKeyConfigured)}, model {FormatValue(snapshot.OpenAiModel, "whisper-1")}");
+        Console.WriteLine($"Codex: executable {FormatValue(ResolveCodexExecutablePath(snapshot), "PATH")}, model {FormatModelValue(snapshot.CodexModel, modelCatalog.Models, "Codex default")}, thinking {FormatValue(snapshot.ReasoningEffort, "Codex default")}");
+        Console.WriteLine($"Codex model catalog: {DescribeModelCatalog(modelCatalog)}");
+        Console.WriteLine();
+
         List<string> warnings = BuildStartWarnings(snapshot).ToList();
         if (warnings.Count > 0)
         {
@@ -363,6 +381,222 @@ internal static class InteractiveBootstrapMenu
         Console.WriteLine();
         Console.WriteLine("Starting bot. Console logging is disabled; press Ctrl+C to stop.");
         return true;
+    }
+
+    private static void PickOpenAiModel(LocalSettingsSnapshot snapshot, LocalSettingsStore store)
+    {
+        while (true)
+        {
+            ClearScreen();
+            Console.WriteLine("OpenAI Transcription Model");
+            Console.WriteLine();
+            Console.WriteLine($"Current: {FormatValue(snapshot.OpenAiModel, "whisper-1")}");
+            Console.WriteLine();
+            Console.WriteLine("1. whisper-1 (default)");
+            Console.WriteLine("2. gpt-4o-mini-transcribe");
+            Console.WriteLine("3. gpt-4o-transcribe");
+            Console.WriteLine("4. Enter a custom model");
+            Console.WriteLine("5. Clear and use the default");
+            Console.WriteLine("B. Back");
+            Console.WriteLine();
+
+            switch (NormalizeChoice(ReadLine("Select: ")))
+            {
+                case "1":
+                    store.SetOpenAiModel("whisper-1");
+                    SaveAndPause(store);
+                    return;
+
+                case "2":
+                    store.SetOpenAiModel("gpt-4o-mini-transcribe");
+                    SaveAndPause(store);
+                    return;
+
+                case "3":
+                    store.SetOpenAiModel("gpt-4o-transcribe");
+                    SaveAndPause(store);
+                    return;
+
+                case "4":
+                    SetString(
+                        "Transcription model",
+                        snapshot.OpenAiModel,
+                        store.SetOpenAiModel,
+                        store,
+                        "whisper-1");
+                    return;
+
+                case "5":
+                    store.SetOpenAiModel(null);
+                    SaveAndPause(store);
+                    return;
+
+                case "b":
+                case "back":
+                    return;
+            }
+        }
+    }
+
+    private static void PickCodexModel(LocalSettingsSnapshot snapshot, LocalSettingsStore store, CodexModelCatalog modelCatalog)
+    {
+        IReadOnlyList<CodexModelVm> models = modelCatalog.Models;
+        while (true)
+        {
+            ClearScreen();
+            Console.WriteLine("Codex Default Model");
+            Console.WriteLine();
+            Console.WriteLine($"Current: {FormatModelValue(snapshot.CodexModel, models, "Codex default")}");
+            Console.WriteLine(modelCatalog.IsLive ? "Catalog: live Codex discovery." : "Catalog: curated fallback examples.");
+            if (!string.IsNullOrWhiteSpace(modelCatalog.Message))
+            {
+                Console.WriteLine(modelCatalog.Message);
+            }
+
+            Console.WriteLine();
+            Console.WriteLine("1. Use the Codex default");
+            for (int index = 0; index < models.Count; index++)
+            {
+                CodexModelVm model = models[index];
+                string label = FormatModelChoice(model);
+                if (IsSelectedModel(snapshot.CodexModel, model))
+                {
+                    label = "[x] " + label;
+                }
+
+                Console.WriteLine($"{index + 2}. {label}");
+            }
+
+            Console.WriteLine($"{models.Count + 2}. Enter a custom model");
+            Console.WriteLine("B. Back");
+            Console.WriteLine();
+
+            string choice = NormalizeChoice(ReadLine("Select: "));
+            switch (choice)
+            {
+                case "1":
+                    store.SetCodexModel(null);
+                    SaveAndPause(store);
+                    return;
+
+                case "b":
+                case "back":
+                    return;
+
+                default:
+                    if (int.TryParse(choice, NumberStyles.Integer, CultureInfo.InvariantCulture, out int selectedIndex))
+                    {
+                        if (selectedIndex >= 2 && selectedIndex < models.Count + 2)
+                        {
+                            store.SetCodexModel(models[selectedIndex - 2].Id);
+                            SaveAndPause(store);
+                            return;
+                        }
+
+                        if (selectedIndex == models.Count + 2)
+                        {
+                            SetString(
+                                "Default model",
+                                snapshot.CodexModel,
+                                store.SetCodexModel,
+                                store,
+                                "Codex default");
+                            return;
+                        }
+                    }
+
+                    break;
+            }
+        }
+    }
+
+    private static void PickReasoningEffort(LocalSettingsSnapshot snapshot, LocalSettingsStore store, CodexModelCatalog modelCatalog)
+    {
+        IReadOnlyList<CodexModelVm> models = modelCatalog.Models;
+        CodexModelVm? selectedModel = ResolveModel(models, snapshot.CodexModel);
+        IReadOnlyList<string> efforts = BuildReasoningEffortChoices(selectedModel);
+        bool hasModelSpecificEfforts = selectedModel is not null
+            && selectedModel.SupportedEfforts.Any(option => !string.Equals(option.ToString(), "None", StringComparison.OrdinalIgnoreCase));
+
+        while (true)
+        {
+            ClearScreen();
+            Console.WriteLine("Codex Default Thinking Effort");
+            Console.WriteLine();
+            Console.WriteLine($"Current: {FormatValue(snapshot.ReasoningEffort, "Codex default")}");
+            Console.WriteLine($"Model: {FormatModelValue(snapshot.CodexModel, models, "Codex default")}");
+            if (selectedModel is null)
+            {
+                Console.WriteLine(modelCatalog.IsLive
+                    ? "Live discovery found models, but the configured model was not matched; showing generic effort choices."
+                    : "Live discovery is unavailable; showing generic effort choices.");
+            }
+            else if (hasModelSpecificEfforts)
+            {
+                Console.WriteLine($"Efforts reported by Codex: {string.Join(", ", efforts)}");
+            }
+            else
+            {
+                Console.WriteLine(modelCatalog.IsLive
+                    ? "Live discovery did not report a model-specific effort list; showing generic effort choices."
+                    : "Curated fallback examples do not report a specific effort list; showing generic effort choices.");
+            }
+
+            Console.WriteLine();
+            Console.WriteLine("1. Use the Codex default");
+            for (int index = 0; index < efforts.Count; index++)
+            {
+                string effort = efforts[index];
+                string label = effort;
+                if (!string.IsNullOrWhiteSpace(snapshot.ReasoningEffort) && string.Equals(snapshot.ReasoningEffort, effort, StringComparison.OrdinalIgnoreCase))
+                {
+                    label = "[x] " + label;
+                }
+
+                Console.WriteLine($"{index + 2}. {label}");
+            }
+
+            Console.WriteLine($"{efforts.Count + 2}. Enter a custom value");
+            Console.WriteLine("B. Back");
+            Console.WriteLine();
+
+            string choice = NormalizeChoice(ReadLine("Select: "));
+            switch (choice)
+            {
+                case "1":
+                    store.SetReasoningEffort(null);
+                    SaveAndPause(store);
+                    return;
+
+                case "b":
+                case "back":
+                    return;
+
+                default:
+                    if (int.TryParse(choice, NumberStyles.Integer, CultureInfo.InvariantCulture, out int selectedIndex))
+                    {
+                        if (selectedIndex >= 2 && selectedIndex < efforts.Count + 2)
+                        {
+                            store.SetReasoningEffort(efforts[selectedIndex - 2]);
+                            SaveAndPause(store);
+                            return;
+                        }
+
+                        if (selectedIndex == efforts.Count + 2)
+                        {
+                            SetString(
+                                "Default thinking effort (minimal, low, medium, high, xhigh)",
+                                snapshot.ReasoningEffort,
+                                store.SetReasoningEffort,
+                                store,
+                                "Codex default");
+                            return;
+                        }
+                    }
+
+                    break;
+            }
+        }
     }
 
     private static IEnumerable<string> BuildStartWarnings(LocalSettingsSnapshot snapshot)
@@ -387,13 +621,18 @@ internal static class InteractiveBootstrapMenu
             yield return "OpenAI API key is missing; voice transcription will fail until it is configured.";
         }
 
+        if (string.IsNullOrWhiteSpace(snapshot.DataRoot))
+        {
+            yield return $"Local state is using the default AppData folder at {GetDefaultDataRoot()}. Set a local data root only if you need the files somewhere else.";
+        }
+
         if (snapshot.WorkspaceRoots.Count == 0)
         {
             yield return $"No workspace roots are configured; the app will use {Environment.CurrentDirectory}.";
         }
     }
 
-    private static void WriteStatus(LocalSettingsStore store)
+    private static void WriteStatus(LocalSettingsStore store, CodexModelCatalog modelCatalog)
     {
         LocalSettingsSnapshot snapshot = store.GetSnapshot();
         Console.WriteLine("Incursa.Codex.Telegram");
@@ -401,9 +640,131 @@ internal static class InteractiveBootstrapMenu
         Console.WriteLine($"Settings: {store.FilePath}");
         Console.WriteLine($"Telegram: {FormatEnabled(snapshot.TelegramEnabled)}, token {FormatConfigured(snapshot.TelegramTokenConfigured)}, admins {snapshot.AllowedUserIds.Count}, chats {snapshot.AllowedChatIds.Count}");
         Console.WriteLine($"OpenAI: key {FormatConfigured(snapshot.OpenAiApiKeyConfigured)}, model {FormatValue(snapshot.OpenAiModel, "whisper-1")}");
-        Console.WriteLine($"Codex: executable {FormatValue(snapshot.CodexPathOverride, "PATH")}, sandbox {FormatValue(snapshot.Sandbox, "workspace-write")}, approval {FormatValue(snapshot.ApprovalMode, "on-request")}");
+        Console.WriteLine($"Codex: executable {FormatValue(ResolveCodexExecutablePath(snapshot), "PATH")}, model {FormatModelValue(snapshot.CodexModel, modelCatalog.Models, "Codex default")}, sandbox {FormatValue(snapshot.Sandbox, "workspace-write")}, approval {FormatValue(snapshot.ApprovalMode, "on-request")}");
+        Console.WriteLine($"Codex catalog: {DescribeModelCatalog(modelCatalog)}");
+        Console.WriteLine($"Local state: {FormatValue(snapshot.DataRoot, GetDefaultDataRoot())}");
         Console.WriteLine($"Workspace: {FormatStringList(snapshot.WorkspaceRoots, Environment.CurrentDirectory)}");
     }
+
+    private static string DescribeModelCatalog(CodexModelCatalog modelCatalog)
+        => modelCatalog.IsLive
+            ? $"live discovery with {modelCatalog.Models.Count} model{(modelCatalog.Models.Count == 1 ? string.Empty : "s")}"
+            : $"curated fallback with {modelCatalog.Models.Count} example{(modelCatalog.Models.Count == 1 ? string.Empty : "s")}";
+
+    private static string FormatModelValue(string? value, IReadOnlyList<CodexModelVm> models, string fallback)
+    {
+        CodexModelVm? model = ResolveModel(models, value);
+        if (model is not null)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return $"{model.DisplayName} (default)";
+            }
+
+            return model.DisplayName;
+        }
+
+        return string.IsNullOrWhiteSpace(value) ? fallback : value;
+    }
+
+    private static string FormatModelChoice(CodexModelVm model)
+    {
+        StringBuilder builder = new(model.DisplayName);
+        if (!string.Equals(model.DisplayName, model.Id, StringComparison.OrdinalIgnoreCase))
+        {
+            builder.Append(" [");
+            builder.Append(model.Id);
+            builder.Append(']');
+        }
+
+        string defaultEffort = model.DefaultReasoningEffort.ToString();
+        if (!string.Equals(defaultEffort, "None", StringComparison.OrdinalIgnoreCase))
+        {
+            builder.Append(" (default effort ");
+            builder.Append(defaultEffort.ToLowerInvariant());
+            builder.Append(')');
+        }
+
+        if (model.Hidden)
+        {
+            builder.Append(" [hidden]");
+        }
+
+        return builder.ToString();
+    }
+
+    private static IReadOnlyList<string> BuildReasoningEffortChoices(CodexModelVm? model)
+    {
+        if (model is not null && model.SupportedEfforts.Count > 0)
+        {
+            List<string> efforts = [];
+            foreach (string effort in model.SupportedEfforts
+                .Select(option => option.ToString().ToLowerInvariant())
+                .Where(effort => !string.Equals(effort, "none", StringComparison.OrdinalIgnoreCase))
+                .Distinct(StringComparer.OrdinalIgnoreCase))
+            {
+                efforts.Add(effort);
+            }
+
+            if (efforts.Count > 0)
+            {
+                return efforts;
+            }
+        }
+
+        return ["minimal", "low", "medium", "high", "xhigh"];
+    }
+
+    private static CodexModelVm? ResolveModel(IReadOnlyList<CodexModelVm> models, string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return models.FirstOrDefault(candidate => candidate.IsDefault) ?? models.FirstOrDefault();
+        }
+
+        string normalized = NormalizeModelToken(value);
+        return models.FirstOrDefault(candidate =>
+            string.Equals(candidate.Id, value, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(candidate.DisplayName, value, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(NormalizeModelToken(candidate.Id), normalized, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(NormalizeModelToken(candidate.DisplayName), normalized, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static bool IsSelectedModel(string? currentModel, CodexModelVm candidate)
+    {
+        if (string.IsNullOrWhiteSpace(currentModel))
+        {
+            return candidate.IsDefault;
+        }
+
+        string normalized = NormalizeModelToken(currentModel);
+        return string.Equals(candidate.Id, currentModel, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(candidate.DisplayName, currentModel, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(NormalizeModelToken(candidate.Id), normalized, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(NormalizeModelToken(candidate.DisplayName), normalized, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string NormalizeModelToken(string value)
+    {
+        Span<char> buffer = stackalloc char[value.Length];
+        int index = 0;
+        foreach (char ch in value)
+        {
+            if (char.IsLetterOrDigit(ch))
+            {
+                buffer[index++] = char.ToLowerInvariant(ch);
+            }
+        }
+
+        return new string(buffer[..index]);
+    }
+
+    private static string? ResolveCodexExecutablePath(LocalSettingsSnapshot snapshot)
+        => !string.IsNullOrWhiteSpace(snapshot.CodexPathOverride)
+            ? snapshot.CodexPathOverride
+            : !string.IsNullOrWhiteSpace(snapshot.TelegramBotCodexExecutablePath)
+                ? snapshot.TelegramBotCodexExecutablePath
+                : Environment.GetEnvironmentVariable("CODEX_PATH");
 
     private static void SetSecret(
         string label,
@@ -704,4 +1065,15 @@ internal static class InteractiveBootstrapMenu
 
     private static string FormatStringList(IReadOnlyList<string> values, string fallback)
         => values.Count == 0 ? fallback : string.Join("; ", values);
+
+    private static string GetDefaultDataRoot()
+    {
+        string baseDirectory = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+        if (string.IsNullOrWhiteSpace(baseDirectory))
+        {
+            baseDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".incursa");
+        }
+
+        return Path.Combine(baseDirectory, "Incursa", "CodexTelegram");
+    }
 }

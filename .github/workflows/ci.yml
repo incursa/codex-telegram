@@ -34,5 +34,11 @@ jobs:
       - name: Build
         run: dotnet build CodexTelegram.slnx -c Release --no-restore -m:1
 
+      - name: Format
+        run: dotnet format CodexTelegram.slnx --verify-no-changes --no-restore
+
+      - name: Package vulnerability report
+        run: dotnet list CodexTelegram.slnx package --vulnerable --include-transitive
+
       - name: Test
         run: dotnet test tests/Incursa.Codex.Telegram.Tests/Incursa.Codex.Telegram.Tests.csproj -c Release --no-build --no-restore -m:1

@@ -22,7 +22,7 @@ It can:
 2. Create and select Codex sessions.
 3. Route plain text, attachments, and voice notes into the active session.
 4. Keep per-conversation session state so a private chat or a forum topic can continue independently.
-5. Publish build artifacts and releases from GitHub Actions.
+5. Stream and queue Codex session updates back to Telegram.
 
 It does not:
 
@@ -115,7 +115,7 @@ You can configure the app in four ways.
 This is the simplest path for a single machine.
 
 The file is resolved from the current working directory when the app starts.
-The interactive bootstrap menu also writes `appsettings.Local.json` into the current working directory.
+The interactive bootstrap menu also writes `appsettings.Local.json` into the current working directory, so keep the process started from the folder you want to own that file.
 
 Use this when:
 
@@ -139,6 +139,9 @@ The menu has sections for:
 2. OpenAI transcription.
 3. Codex runtime.
 4. Workspaces.
+
+The Workspaces section is where you confirm the local data root before you start polling. That matters because the persisted project catalog, conversation bindings, and thread manifests all live under that root.
+The model prompts are picker-based for the common cases, so you can choose a known transcription model, a default Codex model, or a thinking-effort preset without typing blind. When Codex is reachable, the picker uses the live model list and the model's reported effort choices; otherwise it falls back to curated examples. Custom values are still allowed when you need them.
 
 The menu understands `!clear` when a field prompt says it can be cleared.
 
@@ -241,7 +244,7 @@ Notes on that file:
 1. `TelegramBot.Enabled` must be `true` or the bot will not poll Telegram.
 2. `TelegramBot.Token` is the BotFather token.
 3. `TelegramBot.AllowedUserIds` should contain your numeric Telegram user ID.
-4. `TelegramBot.AllowedChatIds` is optional and is mainly for group workflows.
+4. `TelegramBot.AllowedChatIds` is required for group and forum-topic workflows. Private chats use the user allowlist only.
 5. `TelegramBot.DefaultWorkingDirectory` is the fallback working directory for new sessions that do not already have a project selected.
 6. `Codex:CodexPathOverride` is the preferred place to point at a local `codex` executable if it is not on `PATH`.
    The app also accepts `TelegramBot:CodexExecutablePath` and `CODEX_PATH` as fallbacks.
@@ -249,8 +252,10 @@ Notes on that file:
 8. `OpenAI:Model` defaults to `whisper-1`.
 9. `OpenAI:BaseUrl` defaults to `https://api.openai.com/v1/`.
 10. `OpenAI:FfmpegPath` defaults to `ffmpeg`.
-11. `CodexTelegram:Context.WorkingDirectory` is the default Codex working directory.
-12. `CodexTelegram:Workspace.WorkspaceRoots` are the directories users may add as projects.
+11. `CodexTelegram:InitializeOnStart` controls whether the Codex gateway initializes during startup. Leave it `true` for normal bot use.
+12. `CodexTelegram:Context:WorkingDirectory` is the default Codex working directory.
+13. `CodexTelegram:Workspace:WorkspaceRoots` are the directories users may add as projects.
+14. The Codex submenu will query live model names and effort choices when the configured executable is reachable.
 
 ## First Launch Checklist
 
@@ -323,25 +328,28 @@ Workspaces are the directories the bot considers safe and intentional for projec
 
 Do this before you start using the bot seriously:
 
-1. Add the parent directories where your real work lives to `CodexTelegram:Workspace.WorkspaceRoots`.
-2. Set `CodexTelegram:Context.WorkingDirectory` to the directory you want Codex to start in by default.
+1. Add the parent directories where your real work lives to `CodexTelegram:Workspace:WorkspaceRoots`.
+2. Set `CodexTelegram:Context:WorkingDirectory` to the directory you want Codex to start in by default.
 3. Set `TelegramBot:DefaultWorkingDirectory` if you want brand-new sessions to fall back to a specific directory when no project is selected yet.
-4. If `codex` is not already on `PATH`, set `Codex:CodexPathOverride`, `TelegramBot:CodexExecutablePath`, or `CODEX_PATH`.
+4. If `codex` is not already on `PATH`, set `Codex:CodexPathOverride`, `TelegramBot:CodexExecutablePath`, or `CODEX_PATH`. The startup menu uses that effective executable path for live Codex model discovery.
 
 Useful related settings:
 
-1. `CodexTelegram:Context.Sandbox` defaults to `workspace-write`.
-2. `CodexTelegram:Context.ApprovalMode` defaults to `on-request`.
-3. `CodexTelegram:Context.Model` lets you pin a default model.
-4. `CodexTelegram:Context.ReasoningEffort` lets you pin a default reasoning effort.
-5. `CodexTelegram:Context.NetworkAccessEnabled` can override the Codex default network posture.
-6. `CodexTelegram:Context.WebSearchEnabled` and `CodexTelegram:Context.WebSearchMode` can be used if your Codex workflow expects web search.
-7. `CodexTelegram:Context.AdditionalDirectories` can grant Codex extra read access when needed.
-8. `CodexTelegram:Workspace.DataRoot` moves the local state files somewhere other than the default user application data folder.
+1. `CodexTelegram:Context:Sandbox` defaults to `workspace-write`.
+2. `CodexTelegram:Context:ApprovalMode` defaults to `on-request`.
+3. `CodexTelegram:Context:Model` lets you pin a default model.
+4. `CodexTelegram:Context:ReasoningEffort` lets you pin a default reasoning effort.
+5. `CodexTelegram:Context:NetworkAccessEnabled` can override the Codex default network posture.
+6. `CodexTelegram:Context:WebSearchEnabled` and `CodexTelegram:Context:WebSearchMode` can be used if your Codex workflow expects web search.
+7. `CodexTelegram:Context:AdditionalDirectories` can grant Codex extra read access when needed.
+8. `CodexTelegram:Workspace:DataRoot` moves the local state files somewhere other than the default user application data folder.
+
+The bootstrap menu offers direct pickers for the common values in items 3 and 4, which avoids typing model IDs or effort names from memory.
 
 ## Verify The Private Chat Flow
 
 After the bot is running, test it in a private chat before you move on to groups.
+For release or public-demo validation, use the fuller checklist in [manual-test-plan.md](manual-test-plan.md). Owner-only tasks such as BotFather choices, screenshots, and visibility decisions are tracked in [release-owner-actions.md](release-owner-actions.md).
 
 Suggested sequence:
 
@@ -365,13 +373,13 @@ If the bot never replies, stop and check:
 
 ## Use The Bot In A Group
 
-If you want the bot in a group chat, add the group chat ID to `AllowedChatIds`.
+If you want the bot in a group chat, add the group chat ID to `AllowedChatIds`. Group and forum-topic messages require both an allowed user and an allowed chat.
 
 Important notes:
 
 1. The bot should still be tested privately first.
 2. Group IDs are numeric and often negative.
-3. A group can be allowed even when individual users are not, but the bot still checks both the user and the chat.
+3. A group must be allowed in addition to the individual Telegram user.
 4. If the group is busy, private-mode behavior and allowlists matter more than in a private chat.
 
 Recommended group workflow:
@@ -449,7 +457,7 @@ The bot's built-in help text is the final authority, but this is the practical s
 | `/status [sessionId]` | Shows session status. | Use when you want a quick health check. |
 | `/outbound` | Shows outbound Telegram queue status. | Use when messages seem delayed or missing. |
 | `/stop [sessionId]` | Gracefully stops a session. | Use when you want to end work cleanly. |
-| `/restart confirm` | Rebuilds and restarts the server via a detached helper. | Use only when you intentionally want to restart the host. |
+| `/restart confirm` | Explains that restart is managed outside this standalone process. | Use when you need the correct restart procedure for your terminal, service manager, or scheduled task. |
 | `/kill <sessionId> confirm` | Hard-stops a session. | Use only when graceful stop is not enough. |
 | `/rename <sessionId> <new name>` | Renames a session. | Use to make a session list easier to scan later. |
 | `/forget <sessionId>` | Hides a stopped or exited session without deleting logs. | Use when you want to clean up the visible list. |
@@ -474,13 +482,16 @@ The important files are:
 3. `telegram-state.json` for Telegram conversation state.
 4. Thread manifest files for Codex session tracking.
 
-The data root defaults to the user's application data folder unless you override `CodexTelegram:Workspace.DataRoot`.
+The data root defaults to the user's application data folder unless you override `CodexTelegram:Workspace:DataRoot`.
+The active topic/session follow map is rehydrated from `telegram-state.json` on startup, but it is still derived state rather than a separate durable file.
 
 Important guarantees:
 
 1. Secret values are not supposed to be written into the local state files.
 2. The local state is machine-local.
 3. If you move the data root, move it intentionally and keep the old path around until you know the new one works.
+
+For restart, backup, and token-rotation procedures, see [operations.md](operations.md).
 
 ## Advanced Runtime Tuning
 
@@ -514,7 +525,7 @@ Check these in order:
 2. `TelegramBot.Enabled` is `true`.
 3. The bot process is actually running.
 4. Your user ID is in `AllowedUserIds`.
-5. The chat ID is in `AllowedChatIds` if you are in a group.
+5. The chat ID is in `AllowedChatIds` if you are in a group or forum topic.
 6. You are talking to the right bot account.
 7. The current working directory contains the config file you think it does.
 

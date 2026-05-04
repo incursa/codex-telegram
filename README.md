@@ -5,6 +5,7 @@ Incursa.Codex.Telegram is a lightweight Telegram bot host for a local Codex inst
 The app does not bundle Codex, Telegram credentials, OpenAI credentials, or `ffmpeg`. Operators provide those on the machine that runs the bot.
 
 If you are setting this up for the first time, start with [docs/getting-started.md](docs/getting-started.md). It walks through BotFather setup, allowlists, configuration, first launch, private-chat usage, group usage, and troubleshooting in one place.
+For operations and restart behavior, use [docs/operations.md](docs/operations.md). Before a public demo or release tag, run the manual validation checklist in [docs/manual-test-plan.md](docs/manual-test-plan.md) and track owner-only release work in [docs/release-owner-actions.md](docs/release-owner-actions.md).
 
 ## Prerequisites
 
@@ -26,6 +27,8 @@ The default startup path is an interactive bootstrap/admin menu:
 ```
 
 Use the menu to set the Telegram bot token, admin user IDs, optional chat allowlist, OpenAI transcription key/model, Codex executable path, Codex defaults, workspace roots, and local state root. The menu writes `appsettings.Local.json` in the current directory and never displays stored secret values.
+The menu also shows a startup summary before launching and uses simple pickers for the common model and thinking-effort values, so you do not have to remember every ID or preset from scratch.
+When Codex is reachable, the Codex submenu queries the live model list and model-specific effort choices before falling back to curated examples.
 
 After configuration, choose `Start bot` from the menu, or use `--run` for quiet service-style startup:
 
@@ -63,16 +66,16 @@ $env:CODEX_TELEGRAM_TelegramBot__Enabled = "true"
 $env:CODEX_TELEGRAM_CodexTelegram__Workspace__WorkspaceRoots__0 = "C:\src"
 ```
 
-- `appsettings.Local.json` next to the working directory or binary. Use `appsettings.Local.example.json` as the shape, but keep the real local file untracked.
+- `appsettings.Local.json` in the current working directory for the process you start. Use `appsettings.Local.example.json` as the shape, but keep the real local file untracked.
 
 Important settings:
 
-- `TelegramBot:AllowedUserIds`: required allowlist for private control.
-- `TelegramBot:AllowedChatIds`: optional group allowlist.
+- `TelegramBot:AllowedUserIds`: required user allowlist for all control.
+- `TelegramBot:AllowedChatIds`: required chat allowlist for group and forum-topic control; private chats use the user allowlist only.
 - `TelegramBot:DefaultWorkingDirectory`: fallback working directory for new sessions.
 - `CodexTelegram:Workspace:WorkspaceRoots`: directories users may add as projects.
 - `CodexTelegram:Context:WorkingDirectory`: default Codex working directory.
-- `CodexTelegram:Workspace:DataRoot`: local JSON state root. Defaults to the user's application data folder.
+- `CodexTelegram:Workspace:DataRoot`: local JSON state root. Defaults to the user's application data folder, which is `%AppData%\Incursa\CodexTelegram` on Windows.
 - `Codex:CodexPathOverride`, `TelegramBot:CodexExecutablePath`, or `CODEX_PATH`: optional path to the local `codex` executable.
 - `OpenAI:FfmpegPath`: optional `ffmpeg` path override if it is not on `PATH`.
 - `OpenAI:Model`: defaults to `whisper-1`.
@@ -112,10 +115,11 @@ Other runtime identifiers can be passed with `-Runtime`, for example `linux-x64`
 3. If you do not know your numeric Telegram user ID, start once and send `/whoami`; the app allows that command before the admin allowlist is configured.
 4. Return to the menu and add your numeric Telegram user ID under `Telegram and admins`.
 5. Set the OpenAI API key if you want voice transcription.
-6. Set the Codex executable path if `codex` is not already on `PATH`.
+6. Set the Codex executable path if `codex` is not already on `PATH`; the menu uses that path when it queries Codex for live model discovery.
 7. Set workspace roots and a default working directory.
-8. Choose `Start bot`, then send `/projects` or `/project add <absolute-directory>`.
-9. Send `/new <session name>`, then send normal messages to continue the active Codex session.
+8. Leave `CodexTelegram:Workspace:DataRoot` blank if you want the default `%AppData%\Incursa\CodexTelegram` location, or set it now if you need a different durable folder.
+9. Choose `Start bot`, then send `/projects` or `/project add <absolute-directory>`.
+10. Send `/new <session name>`, then send normal messages to continue the active Codex session.
 
 Useful commands:
 
@@ -136,6 +140,8 @@ State is stored under `CodexTelegram:Workspace:DataRoot`, defaulting to the user
 
 Secrets are not written to those state files.
 
+The active Telegram conversation-to-session follow map is rehydrated from `telegram-state.json` on startup, but it is still derived state. If you move `DataRoot`, keep the old folder until you confirm the new one is being loaded.
+
 ## Development
 
 ```powershell
@@ -143,6 +149,16 @@ dotnet build CodexTelegram.slnx
 dotnet test CodexTelegram.slnx
 dotnet publish src\Incursa.Codex.Telegram\Incursa.Codex.Telegram.csproj -c Release -r win-x64 -o artifacts\publish\win-x64 /p:AssemblyName=codex-telegram
 ```
+
+The local release-readiness preflight is:
+
+```powershell
+.\scripts\Test-ReleaseReadiness.ps1 -Runtime win-x64
+```
+
+Manual Telegram validation is tracked in [docs/manual-test-plan.md](docs/manual-test-plan.md).
+Owner-only release tasks are tracked in [docs/release-owner-actions.md](docs/release-owner-actions.md).
+Operational restart and local-state guidance is tracked in [docs/operations.md](docs/operations.md).
 
 This repository is intentionally console-only. The ASP.NET Core web console, SignalR UI, and MCP endpoint belong in the separate `codex-remote` project.
 

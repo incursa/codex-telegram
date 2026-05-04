@@ -59,6 +59,7 @@ internal sealed class LocalSettingsStore
             GetString("OpenAI", "Model"),
             GetString("OpenAI", "FfmpegPath"),
             GetString("Codex", "CodexPathOverride"),
+            GetString("TelegramBot", "CodexExecutablePath"),
             GetBool("CodexTelegram", "InitializeOnStart") ?? true,
             GetString("CodexTelegram", "Context", "WorkingDirectory"),
             GetString("CodexTelegram", "Workspace", "DataRoot"),

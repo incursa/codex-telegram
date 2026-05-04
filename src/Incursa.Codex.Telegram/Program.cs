@@ -30,7 +30,9 @@ if (ShouldRunInteractiveMenu(commandLine))
         return;
     }
 
-    if (InteractiveBootstrapMenu.Run(store) == BootstrapMenuResult.Quit)
+    CodexModelCatalog modelCatalog = await CodexModelDiscovery.DiscoverAsync(store.GetSnapshot(), CancellationToken.None);
+
+    if (InteractiveBootstrapMenu.Run(store, modelCatalog) == BootstrapMenuResult.Quit)
     {
         return;
     }
@@ -172,6 +174,7 @@ builder.Services.AddHostedService<TelegramQueuedPromptProcessorHostedService>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<OutboundTelegramScheduler>());
 
 IHost host = builder.Build();
+await RehydrateTelegramThreadFollowsAsync(host.Services, CancellationToken.None);
 await host.RunAsync();
 
 static string? DefaultIfWhiteSpace(string? value, string? fallback)
@@ -207,6 +210,21 @@ static long[] ParseInt64List(string? value)
         .Where(item => item.HasValue)
         .Select(item => item!.Value)
         .ToArray();
+}
+
+static async Task RehydrateTelegramThreadFollowsAsync(IServiceProvider services, CancellationToken cancellationToken)
+{
+    ITelegramBotStateStore stateStore = services.GetRequiredService<ITelegramBotStateStore>();
+    ITelegramThreadFollowRegistry followRegistry = services.GetRequiredService<ITelegramThreadFollowRegistry>();
+
+    IReadOnlyCollection<TelegramConversationState> conversationStates = await stateStore.ListConversationStatesAsync(cancellationToken).ConfigureAwait(false);
+    foreach (TelegramConversationState state in conversationStates)
+    {
+        if (!string.IsNullOrWhiteSpace(state.ActiveSessionId))
+        {
+            followRegistry.FollowThread(state.Scope, state.ActiveSessionId);
+        }
+    }
 }
 
 static bool ShouldRunInteractiveMenu(ApplicationCommandLine commandLine)

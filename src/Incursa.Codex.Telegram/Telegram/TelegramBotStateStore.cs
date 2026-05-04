@@ -19,6 +19,8 @@ public interface ITelegramBotStateStore
 
     Task ClearActiveProjectAsync(TelegramConversationScope conversation, CancellationToken cancellationToken);
 
+    Task<IReadOnlyCollection<TelegramConversationState>> ListConversationStatesAsync(CancellationToken cancellationToken);
+
     Task<IReadOnlyCollection<TelegramConversationState>> ListConversationStatesForChatAsync(long chatId, CancellationToken cancellationToken);
 
     Task ClearActiveSessionForSessionAsync(string sessionId, CancellationToken cancellationToken);
@@ -113,53 +115,16 @@ internal sealed class TelegramBotStateStore : ITelegramBotStateStore
             return state;
         }, cancellationToken);
 
+    public async Task<IReadOnlyCollection<TelegramConversationState>> ListConversationStatesAsync(CancellationToken cancellationToken)
+    {
+        TelegramBotState state = await LoadStateAsync(cancellationToken).ConfigureAwait(false);
+        return BuildConversationStates(state);
+    }
+
     public async Task<IReadOnlyCollection<TelegramConversationState>> ListConversationStatesForChatAsync(long chatId, CancellationToken cancellationToken)
     {
         TelegramBotState state = await LoadStateAsync(cancellationToken).ConfigureAwait(false);
-        Dictionary<TelegramConversationScope, ConversationStateBuilder> builders = new();
-
-        foreach (KeyValuePair<string, string> pair in state.ActiveSessionsByScope)
-        {
-            if (TryParseScopeForChat(pair.Key, chatId, out TelegramConversationScope scope))
-            {
-                GetBuilder(scope).ActiveSessionId = pair.Value;
-            }
-        }
-
-        foreach (KeyValuePair<string, string> pair in state.ActiveProjectsByScope)
-        {
-            if (TryParseScopeForChat(pair.Key, chatId, out TelegramConversationScope scope))
-            {
-                GetBuilder(scope).ActiveProjectWorkingDirectory = pair.Value;
-            }
-        }
-
-        foreach (IGrouping<TelegramConversationScope, TelegramQueuedPrompt> group in state.QueuedPrompts
-            .Where(prompt => prompt.ChatId == chatId)
-            .GroupBy(prompt => prompt.ConversationScope))
-        {
-            ConversationStateBuilder builder = GetBuilder(group.Key);
-            TelegramQueuedPrompt[] prompts = group.ToArray();
-            builder.QueuedPromptCount = prompts.Length;
-            builder.OldestQueuedPromptAt = prompts.Min(prompt => prompt.EnqueuedAt);
-        }
-
-        return builders.Values
-            .Select(builder => builder.ToState())
-            .OrderBy(state => state.Scope.MessageThreadId.HasValue ? 1 : 0)
-            .ThenBy(state => state.Scope.MessageThreadId ?? 0)
-            .ToArray();
-
-        ConversationStateBuilder GetBuilder(TelegramConversationScope scope)
-        {
-            if (!builders.TryGetValue(scope, out ConversationStateBuilder? builder))
-            {
-                builder = new ConversationStateBuilder(scope);
-                builders[scope] = builder;
-            }
-
-            return builder;
-        }
+        return BuildConversationStates(state, chatId);
     }
 
     public Task ClearActiveSessionForSessionAsync(string sessionId, CancellationToken cancellationToken)
@@ -333,6 +298,56 @@ internal sealed class TelegramBotStateStore : ITelegramBotStateStore
     private string GetStatePath()
         => Path.Combine(GetDataRoot(), "telegram-state.json");
 
+    private IReadOnlyCollection<TelegramConversationState> BuildConversationStates(TelegramBotState state, long? chatId = null)
+    {
+        Dictionary<TelegramConversationScope, ConversationStateBuilder> builders = new();
+
+        foreach (KeyValuePair<string, string> pair in state.ActiveSessionsByScope)
+        {
+            if (TryParseScopeForChat(pair.Key, chatId, out TelegramConversationScope scope))
+            {
+                GetBuilder(scope).ActiveSessionId = pair.Value;
+            }
+        }
+
+        foreach (KeyValuePair<string, string> pair in state.ActiveProjectsByScope)
+        {
+            if (TryParseScopeForChat(pair.Key, chatId, out TelegramConversationScope scope))
+            {
+                GetBuilder(scope).ActiveProjectWorkingDirectory = pair.Value;
+            }
+        }
+
+        IEnumerable<TelegramQueuedPrompt> queuedPrompts = chatId.HasValue
+            ? state.QueuedPrompts.Where(prompt => prompt.ChatId == chatId.Value)
+            : state.QueuedPrompts;
+
+        foreach (IGrouping<TelegramConversationScope, TelegramQueuedPrompt> group in queuedPrompts.GroupBy(prompt => prompt.ConversationScope))
+        {
+            ConversationStateBuilder builder = GetBuilder(group.Key);
+            TelegramQueuedPrompt[] prompts = group.ToArray();
+            builder.QueuedPromptCount = prompts.Length;
+            builder.OldestQueuedPromptAt = prompts.Min(prompt => prompt.EnqueuedAt);
+        }
+
+        return builders.Values
+            .Select(builder => builder.ToState())
+            .OrderBy(conversationState => conversationState.Scope.MessageThreadId.HasValue ? 1 : 0)
+            .ThenBy(conversationState => conversationState.Scope.MessageThreadId ?? 0)
+            .ToArray();
+
+        ConversationStateBuilder GetBuilder(TelegramConversationScope scope)
+        {
+            if (!builders.TryGetValue(scope, out ConversationStateBuilder? builder))
+            {
+                builder = new ConversationStateBuilder(scope);
+                builders[scope] = builder;
+            }
+
+            return builder;
+        }
+    }
+
     private string GetDataRoot()
     {
         string? configuredRoot = _options.Value.Workspace.DataRoot;
@@ -352,14 +367,14 @@ internal sealed class TelegramBotStateStore : ITelegramBotStateStore
         }
     }
 
-    private static bool TryParseScopeForChat(string key, long chatId, out TelegramConversationScope scope)
+    private static bool TryParseScopeForChat(string key, long? chatId, out TelegramConversationScope scope)
     {
         if (!TelegramConversationScope.TryParseStorageKey(key, out scope))
         {
             return false;
         }
 
-        return scope.ChatId == chatId;
+        return !chatId.HasValue || scope.ChatId == chatId.Value;
     }
 
     private sealed class ConversationStateBuilder(TelegramConversationScope scope)

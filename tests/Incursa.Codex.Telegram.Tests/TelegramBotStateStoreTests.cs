@@ -24,6 +24,30 @@ public sealed class TelegramBotStateStoreTests
     }
 
     [Fact]
+    public async Task ListConversationStatesReturnsPersistedConversationScopes()
+    {
+        using TemporaryDirectory temp = TemporaryDirectory.Create();
+        TelegramConversationScope privateConversation = new(1234, null);
+        TelegramConversationScope topicConversation = new(1234, 55);
+        TelegramBotStateStore store = CreateStore(temp.Path);
+
+        await store.SetActiveSessionIdAsync(privateConversation, "thread-private", CancellationToken.None);
+        await store.SetActiveProjectWorkingDirectoryAsync(privateConversation, Path.Combine(temp.Path, "private"), CancellationToken.None);
+        await store.SetActiveSessionIdAsync(topicConversation, "thread-topic", CancellationToken.None);
+
+        TelegramBotStateStore reloaded = CreateStore(temp.Path);
+        IReadOnlyCollection<TelegramConversationState> states = await reloaded.ListConversationStatesAsync(CancellationToken.None);
+
+        Assert.Contains(states, state =>
+            state.Scope == privateConversation
+            && state.ActiveSessionId == "thread-private"
+            && state.ActiveProjectWorkingDirectory == Path.GetFullPath(Path.Combine(temp.Path, "private")));
+        Assert.Contains(states, state =>
+            state.Scope == topicConversation
+            && state.ActiveSessionId == "thread-topic");
+    }
+
+    [Fact]
     public async Task QueuedPromptSkipsUnavailableSessions()
     {
         using TemporaryDirectory temp = TemporaryDirectory.Create();

@@ -262,7 +262,7 @@ public sealed class TelegramCodexBotCommandHandler
         ITelegramBotMessageSender sender,
         CancellationToken cancellationToken)
     {
-        if (!IsAuthorized(callback.UserId))
+        if (!IsAuthorized(callback))
         {
             _logger.LogWarning("Ignoring unauthorized Telegram callback user {UserId}.", callback.UserId);
             await sender.AnswerCallbackQueryAsync(callback.Id, null, cancellationToken).ConfigureAwait(false);
@@ -1459,12 +1459,21 @@ public sealed class TelegramCodexBotCommandHandler
         }
     }
 
-    private bool IsAuthorized(long userId)
-        => _options.AllowedUserIds.Contains(userId);
+    private bool IsAuthorized(TelegramInboundCallback callback)
+        => TelegramAuthorization.IsAuthorized(
+            callback.UserId,
+            callback.ChatId,
+            callback.ChatType,
+            _options.AllowedUserIds,
+            _options.AllowedChatIds);
 
     private bool IsAuthorized(TelegramInboundMessage message)
-        => _options.AllowedUserIds.Contains(message.UserId)
-            || _options.AllowedChatIds.Contains(message.ChatId);
+        => TelegramAuthorization.IsAuthorized(
+            message.UserId,
+            message.ChatId,
+            message.ChatType,
+            _options.AllowedUserIds,
+            _options.AllowedChatIds);
 
     private static bool IsWhoAmI(ParsedTelegramCommand command)
         => command.IsCommand && string.Equals(command.Name, "whoami", StringComparison.OrdinalIgnoreCase);
@@ -1526,7 +1535,7 @@ public sealed class TelegramCodexBotCommandHandler
     private static string BuildHelpText()
         => string.Join(Environment.NewLine, [
             "Commands:",
-            "Use the buttons below for quick navigation between topics, sessions, and projects.",
+            "Use the buttons below for quick navigation between sessions, projects, and help.",
             "/help - show this help",
             "/whoami - show Telegram user, chat, and topic thread IDs",
             "/projects - list known project directories",
@@ -1549,7 +1558,7 @@ public sealed class TelegramCodexBotCommandHandler
             "/status [sessionId] - show session status",
             "/outbound - show outbound Telegram queue status",
             "/stop [sessionId] - gracefully stop a session",
-            "/restart confirm - rebuild and restart the server via a detached helper",
+            "/restart confirm - explain how to restart this standalone process",
             "/kill <sessionId> confirm - hard-stop a session",
             "/rename <sessionId> <new name> - rename a session",
             "/forget <sessionId> - hide a stopped/exited session without deleting logs",
@@ -1850,14 +1859,14 @@ public sealed class TelegramCodexBotCommandHandler
             $"Project: {projectName ?? CodexTextFormatting.ResolveProjectName(session.WorkingDirectory)}",
             $"Model: {FormatModelDisplay(settings)}",
             $"Thinking: {FormatValue(settings.ReasoningEffort)}",
-            "Tap Tail, Status, Model, or Thinking below."
+            "Send a message to continue, or use /tail, /status, /model, or /thinking when you need a control."
         ]);
 
-    private static IReadOnlyList<IReadOnlyList<TelegramReplyButton>>? BuildSessionButtons(
+    internal static IReadOnlyList<IReadOnlyList<TelegramReplyButton>>? BuildSessionButtons(
         IReadOnlyList<CodexSessionSummary> sessions,
         bool includeUse = true)
     {
-        if (sessions.Count == 0)
+        if (sessions.Count == 0 || !includeUse)
         {
             return null;
         }
@@ -1866,22 +1875,9 @@ public sealed class TelegramCodexBotCommandHandler
         for (int index = 0; index < sessions.Count; index++)
         {
             CodexSessionSummary session = sessions[index];
-            string ordinal = (index + 1).ToString(CultureInfo.InvariantCulture);
+            string suffix = sessions.Count == 1 ? string.Empty : $" {(index + 1).ToString(CultureInfo.InvariantCulture)}";
             List<TelegramReplyButton> row = [];
-            if (includeUse)
-            {
-                row.Add(new TelegramReplyButton($"Use {ordinal}", $"use:{session.Id}"));
-            }
-
-            row.Add(new TelegramReplyButton($"Tail {ordinal}", $"tail:{session.Id}"));
-            row.Add(new TelegramReplyButton($"Status {ordinal}", $"status:{session.Id}"));
-            row.Add(new TelegramReplyButton($"Model {ordinal}", $"model:{session.Id}"));
-            row.Add(new TelegramReplyButton($"Thinking {ordinal}", $"thinking:{session.Id}"));
-
-            if (session.Status is CodexSessionStatus.Running or CodexSessionStatus.Starting)
-            {
-                row.Add(new TelegramReplyButton($"Stop {ordinal}", $"stop:{session.Id}"));
-            }
+            row.Add(new TelegramReplyButton($"Use{suffix}", $"use:{session.Id}"));
 
             rows.Add(row);
         }
@@ -1889,16 +1885,11 @@ public sealed class TelegramCodexBotCommandHandler
         return rows;
     }
 
-    private static IReadOnlyList<IReadOnlyList<TelegramReplyButton>> BuildNavigationButtons()
+    internal static IReadOnlyList<IReadOnlyList<TelegramReplyButton>> BuildNavigationButtons()
         => [
             [
-                new TelegramReplyButton("Topics", "nav:topics"),
                 new TelegramReplyButton("Sessions", "nav:sessions"),
-                new TelegramReplyButton("Projects", "nav:projects")
-            ],
-            [
-                new TelegramReplyButton("Current topic", "nav:current"),
-                new TelegramReplyButton("New topic", "nav:new"),
+                new TelegramReplyButton("Projects", "nav:projects"),
                 new TelegramReplyButton("Help", "nav:help")
             ]
         ];
@@ -1997,8 +1988,8 @@ public sealed class TelegramCodexBotCommandHandler
         for (int index = 0; index < projects.Count; index++)
         {
             ProjectChoice project = projects[index];
-            string ordinal = (index + 1).ToString(CultureInfo.InvariantCulture);
-            rows.Add([new TelegramReplyButton($"Use {ordinal}", $"project:{project.Key}")]);
+            string suffix = projects.Count == 1 ? string.Empty : $" {(index + 1).ToString(CultureInfo.InvariantCulture)}";
+            rows.Add([new TelegramReplyButton($"Use{suffix}", $"project:{project.Key}")]);
         }
 
         return rows;

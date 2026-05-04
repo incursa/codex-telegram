@@ -77,4 +77,25 @@ public sealed class LocalSettingsStoreTests
         Assert.DoesNotContain("telegram-token", settingsJson);
         Assert.DoesNotContain("openai-key", settingsJson);
     }
+
+    [Fact]
+    public void LoadReadsTelegramBotCodexExecutablePathFallback()
+    {
+        using TemporaryDirectory temp = TemporaryDirectory.Create();
+        string settingsPath = Path.Combine(temp.Path, "appsettings.Local.json");
+
+        File.WriteAllText(
+            settingsPath,
+            """
+            {
+              "TelegramBot": {
+                "CodexExecutablePath": "C:\\tools\\codex.exe"
+              }
+            }
+            """);
+
+        LocalSettingsSnapshot snapshot = LocalSettingsStore.Load(settingsPath).GetSnapshot();
+
+        Assert.Equal("C:\\tools\\codex.exe", snapshot.TelegramBotCodexExecutablePath);
+    }
 }

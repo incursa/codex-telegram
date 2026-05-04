@@ -534,18 +534,19 @@ internal sealed class TelegramCodexBotHostedService : BackgroundService
         }
     }
 
-    private bool IsAuthorized(long userId)
-        => _options.AllowedUserIds.Contains(userId);
-
     private bool IsAuthorized(Message message)
     {
-        if (message.From is not null && _options.AllowedUserIds.Contains(message.From.Id))
+        if (message.From is null)
         {
-            return true;
+            return false;
         }
 
-        return _options.AllowedChatIds.Contains(message.Chat.Id)
-            || (message.SenderChat is not null && _options.AllowedChatIds.Contains(message.SenderChat.Id));
+        return TelegramAuthorization.IsAuthorized(
+            message.From.Id,
+            message.Chat.Id,
+            message.Chat.Type.ToString(),
+            _options.AllowedUserIds,
+            _options.AllowedChatIds);
     }
 
     private static bool IsWhoAmIMessage(Message message)

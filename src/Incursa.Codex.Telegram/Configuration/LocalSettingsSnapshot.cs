@@ -9,6 +9,7 @@ internal sealed record LocalSettingsSnapshot(
     string? OpenAiModel,
     string? OpenAiFfmpegPath,
     string? CodexPathOverride,
+    string? TelegramBotCodexExecutablePath,
     bool InitializeOnStart,
     string? WorkingDirectory,
     string? DataRoot,
