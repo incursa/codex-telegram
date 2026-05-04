@@ -50,7 +50,7 @@ public sealed class TelegramAttachmentInputBuilderTests
     public void BuildInputItems_AllowsAttachmentOnlyMessages()
     {
         TelegramAttachmentDescriptor document = new(
-            @"C:\temp\codex-telegram\report.bin",
+            Path.Combine(Path.GetTempPath(), "codex-telegram", "report.bin"),
             "",
             null,
             IsImage: false);
