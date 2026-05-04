@@ -1,0 +1,19 @@
+{
+  "stryker-config": {
+    "test-projects": [
+      "../../tests/Incursa.Codex.Telegram.Tests/Incursa.Codex.Telegram.Tests.csproj"
+    ],
+    "reporters": [
+      "progress",
+      "cleartext",
+      "html"
+    ],
+    "mutate": [
+      "Telegram/TelegramAttachmentInputBuilder.cs",
+      "Telegram/TelegramBotClientMessageSender.cs",
+      "Telegram/TelegramCommandParser.cs",
+      "Telegram/TelegramConversationScope.cs",
+      "Telegram/TelegramMessageChunker.cs"
+    ]
+  }
+}

@@ -40,7 +40,7 @@ public sealed class TelegramMessageChunker
 
             if (current.Length > 0)
             {
-                current.AppendLine();
+                current.Append('\n');
             }
 
             current.Append(line);

@@ -28,4 +28,45 @@ public sealed class TelegramCommandParserTests
         Assert.Equal("continue the thread", parsed.Text);
         Assert.Equal(string.Empty, parsed.Name);
     }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void Parse_BlankInputIsEmptyPlainText(string? text)
+    {
+        TelegramCommandParser parser = new();
+
+        ParsedTelegramCommand parsed = parser.Parse(text);
+
+        Assert.False(parsed.IsCommand);
+        Assert.Equal(string.Empty, parsed.Name);
+        Assert.Equal(string.Empty, parsed.Arguments);
+        Assert.Equal(string.Empty, parsed.Text);
+    }
+
+    [Fact]
+    public void Parse_CommandNameIsLowercaseAndArgumentsTrimmedAfterWhitespace()
+    {
+        TelegramCommandParser parser = new();
+
+        ParsedTelegramCommand parsed = parser.Parse("  /MODEL\tgpt-5.4-mini  ");
+
+        Assert.True(parsed.IsCommand);
+        Assert.Equal("model", parsed.Name);
+        Assert.Equal("gpt-5.4-mini", parsed.Arguments);
+        Assert.Equal("/MODEL\tgpt-5.4-mini", parsed.Text);
+    }
+
+    [Fact]
+    public void Parse_CommandArgumentsCanStartOnNextLine()
+    {
+        TelegramCommandParser parser = new();
+
+        ParsedTelegramCommand parsed = parser.Parse("/send\r\nplease keep this");
+
+        Assert.True(parsed.IsCommand);
+        Assert.Equal("send", parsed.Name);
+        Assert.Equal("please keep this", parsed.Arguments);
+    }
 }

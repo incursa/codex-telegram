@@ -101,6 +101,97 @@ public sealed class TelegramCommandHandlerTests
     }
 
     [Fact]
+    public async Task HandleMessageAsync_ExplainsGroupRootPlainTextInsteadOfSilentlyIgnoringIt()
+    {
+        using CommandHandlerHarness harness = CommandHandlerHarness.Create(new TelegramBotOptions
+        {
+            AllowedUserIds = [1234],
+            AllowedChatIds = [-1005555],
+        });
+
+        await harness.Handler.HandleMessageAsync(
+            new TelegramInboundMessage(1234, -1005555, "supergroup", "please look at this"),
+            harness.Sender,
+            CancellationToken.None);
+
+        SentTelegramMessage sent = Assert.Single(harness.Sender.Sent);
+        Assert.Contains("group root", sent.Text);
+        Assert.Contains("/send <text>", sent.Text);
+        Assert.Contains("forum topics", sent.Text);
+        Assert.Empty(harness.SessionManager.SendRequests);
+    }
+
+    [Fact]
+    public async Task HandleMessageAsync_ExplainsGroupRootAttachmentInsteadOfRoutingIt()
+    {
+        using CommandHandlerHarness harness = CommandHandlerHarness.Create(new TelegramBotOptions
+        {
+            AllowedUserIds = [1234],
+            AllowedChatIds = [-1005555],
+        });
+
+        await harness.Handler.HandleMessageAsync(
+            new TelegramInboundMessage(
+                1234,
+                -1005555,
+                "supergroup",
+                null,
+                Attachments:
+                [
+                    new TelegramAttachmentDescriptor(
+                        Path.Combine(harness.Temp.Path, "photo.png"),
+                        "photo.png",
+                        "image/png",
+                        IsImage: true),
+                ]),
+            harness.Sender,
+            CancellationToken.None);
+
+        SentTelegramMessage sent = Assert.Single(harness.Sender.Sent);
+        Assert.Contains("group root", sent.Text);
+        Assert.Contains("did not send it to Codex", sent.Text);
+        Assert.Empty(harness.SessionManager.SendRequests);
+    }
+
+    [Fact]
+    public async Task HandleMessageAsync_RoutesTopicAttachmentAndEmojiCaptionToActiveSession()
+    {
+        using CommandHandlerHarness harness = CommandHandlerHarness.Create(new TelegramBotOptions
+        {
+            AllowedUserIds = [1234],
+            AllowedChatIds = [-1005555],
+        });
+        TelegramConversationScope conversation = new(-1005555, 77);
+        harness.SessionManager.Sessions.Add(CreateSession("thread-topic", "Topic session", harness.Temp.Path));
+        await harness.StateStore.SetActiveSessionIdAsync(conversation, "thread-topic", CancellationToken.None);
+
+        await harness.Handler.HandleMessageAsync(
+            new TelegramInboundMessage(
+                1234,
+                conversation.ChatId,
+                "supergroup",
+                "inspect this image 🚀",
+                conversation.MessageThreadId,
+                Attachments:
+                [
+                    new TelegramAttachmentDescriptor(
+                        Path.Combine(harness.Temp.Path, "photo.png"),
+                        "photo.png",
+                        "image/png",
+                        IsImage: true),
+                ]),
+            harness.Sender,
+            CancellationToken.None);
+
+        IReadOnlyList<CodexInputItem> input = Assert.IsAssignableFrom<IReadOnlyList<CodexInputItem>>(Assert.Single(harness.SessionManager.SendRequests));
+        Assert.Collection(
+            input,
+            item => Assert.Equal("inspect this image 🚀", Assert.IsType<CodexTextInput>(item).Text),
+            item => Assert.EndsWith("photo.png", Assert.IsType<CodexLocalImageInput>(item).Path, StringComparison.Ordinal));
+        Assert.Contains("Sent to Topic session.", Assert.Single(harness.Sender.Sent).Text);
+    }
+
+    [Fact]
     public async Task HandleMessageAsync_NewSessionReplyDoesNotShowRedundantSessionControls()
     {
         using CommandHandlerHarness harness = CommandHandlerHarness.Create();
@@ -260,6 +351,8 @@ public sealed class TelegramCommandHandlerTests
 
         public List<CreateCodexSessionRequest> CreateRequests { get; } = [];
 
+        public List<object> SendRequests { get; } = [];
+
         public Task<IReadOnlyCollection<CodexSessionSummary>> ListSessionsAsync(CancellationToken cancellationToken)
             => Task.FromResult<IReadOnlyCollection<CodexSessionSummary>>(Sessions.ToArray());
 
@@ -275,10 +368,16 @@ public sealed class TelegramCommandHandlerTests
             => Task.FromResult(Sessions.FirstOrDefault(session => string.Equals(session.Id, sessionId, StringComparison.OrdinalIgnoreCase)));
 
         public Task<CodexThreadExecutionVm> SendAsync(string sessionId, string input, CancellationToken cancellationToken)
-            => Task.FromResult(new CodexThreadExecutionVm(sessionId, "turn-1", "running", null));
+        {
+            SendRequests.Add(input);
+            return Task.FromResult(new CodexThreadExecutionVm(sessionId, "turn-1", "running", null));
+        }
 
         public Task<CodexThreadExecutionVm> SendAsync(string sessionId, IReadOnlyList<CodexInputItem> input, CancellationToken cancellationToken)
-            => Task.FromResult(new CodexThreadExecutionVm(sessionId, "turn-1", "running", null));
+        {
+            SendRequests.Add(input);
+            return Task.FromResult(new CodexThreadExecutionVm(sessionId, "turn-1", "running", null));
+        }
 
         public Task SteerAsync(string sessionId, string input, CancellationToken cancellationToken)
             => Task.CompletedTask;

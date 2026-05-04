@@ -3,6 +3,7 @@ obj/
 .vs/
 .vscode/
 TestResults/
+StrykerOutput/
 artifacts/
 publish/
 *.user

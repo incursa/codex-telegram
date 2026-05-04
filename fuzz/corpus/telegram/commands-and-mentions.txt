@@ -1,0 +1,4 @@
+/send please preserve slash commands
+/model gpt-5.4-mini thinking high
+@codex_telegram_bot can you see this?
+Codex settings model gpt-5.4 thinking high: summarize the attached file

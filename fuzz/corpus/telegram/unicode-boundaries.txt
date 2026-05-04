@@ -1,0 +1,4 @@
+Family emoji: 👨‍👩‍👧‍👦
+Combining marks: café résumé
+RTL text: שלום עולם
+Zero width joiner: word‍word

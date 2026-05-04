@@ -1,0 +1,6 @@
+✅ approve this change
+❌ reject that plan
+🚫 stop doing that
+🔁 retry the last command
+📎 inspect the attachment
+🧵 keep this tied to the topic

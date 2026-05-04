@@ -1,0 +1,6 @@
+*bold* _italic_ `code`
+[link](https://example.invalid)
+<b>html-like</b> & <script>not code</script>
+
+Line one
+Line two

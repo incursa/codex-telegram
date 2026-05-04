@@ -38,12 +38,14 @@ Record the date, operator, OS, published asset or commit SHA, Codex CLI version,
 
 1. Add the bot to a normal group and record the group chat ID with `/whoami`.
 2. Add that chat ID to `TelegramBot:AllowedChatIds`.
-3. With privacy mode enabled, confirm `/send <text>` works and plain text behavior matches Telegram privacy expectations.
-4. If plain group text is part of the demo, disable privacy mode in BotFather, re-add the bot if needed, and confirm ordinary text routes only in the intended chat.
-5. In a forum-enabled supergroup, run `/topic new <name>` with the bot missing topic-management rights and confirm the error is understandable.
-6. Grant the needed topic rights and rerun `/topic new <name>`.
-7. Send messages in two topics and confirm each topic remains bound to its own session.
-8. Restart the process and confirm topic/session bindings rehydrate from local state.
+3. Send plain text to the group root and confirm the bot explains that it was not sent to Codex.
+4. With privacy mode enabled, confirm `/send <text>` works and plain text behavior matches Telegram privacy expectations.
+5. If plain group text is part of the demo, disable privacy mode in BotFather, re-add the bot if needed, and confirm ordinary text routes only in the intended topic or private chat.
+6. In a forum-enabled supergroup, run `/topic new <name>` with the bot missing topic-management rights and confirm the error is understandable.
+7. Grant the needed topic rights and rerun `/topic new <name>`.
+8. Send messages in two topics and confirm each topic remains bound to its own session.
+9. Close, delete, or otherwise invalidate a test topic when practical and confirm topic-scoped output is not retried in the group root.
+10. Restart the process and confirm topic/session bindings rehydrate from local state.
 
 ## Voice And Attachments
 
@@ -72,7 +74,8 @@ Record the date, operator, OS, published asset or commit SHA, Codex CLI version,
 ## Release Gate
 
 1. Run the automated build, test, publish, format, and package-vulnerability checks.
-2. Run this manual checklist for private chat.
-3. Run group/forum checks only if the release notes claim group/forum support.
-4. Record any skipped manual checks with the reason.
-5. Do not flip repository visibility or publish a release if token, allowlist, path, or restart behavior is unclear.
+2. Confirm `scripts\Test-TelegramFuzzCorpus.ps1 -Configuration Release` is covered by the automated gate or run it directly.
+3. Run this manual checklist for private chat.
+4. Run group/forum checks only if the release notes claim group/forum support.
+5. Record any skipped manual checks with the reason.
+6. Do not flip repository visibility or publish a release if token, allowlist, path, or restart behavior is unclear.

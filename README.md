@@ -156,6 +156,13 @@ The local release-readiness preflight is:
 .\scripts\Test-ReleaseReadiness.ps1 -Runtime win-x64
 ```
 
+The Telegram corpus gate can also be run directly when changing command parsing, chunking, attachments, or emoji/text handling:
+
+```powershell
+.\scripts\Test-TelegramFuzzCorpus.ps1 -Configuration Release
+```
+
+Automated fuzz and mutation guidance is tracked in [docs/testing.md](docs/testing.md).
 Manual Telegram validation is tracked in [docs/manual-test-plan.md](docs/manual-test-plan.md).
 Owner-only release tasks are tracked in [docs/release-owner-actions.md](docs/release-owner-actions.md).
 Operational restart and local-state guidance is tracked in [docs/operations.md](docs/operations.md).

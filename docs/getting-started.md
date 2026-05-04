@@ -380,7 +380,8 @@ Important notes:
 1. The bot should still be tested privately first.
 2. Group IDs are numeric and often negative.
 3. A group must be allowed in addition to the individual Telegram user.
-4. If the group is busy, private-mode behavior and allowlists matter more than in a private chat.
+4. Plain text in the group root is not auto-routed to Codex. In an allowed group, the bot explains that you should use `/send <text>`, a forum topic, or a private chat.
+5. If the group is busy, private-mode behavior and allowlists matter more than in a private chat.
 
 Recommended group workflow:
 
@@ -388,7 +389,7 @@ Recommended group workflow:
 2. If necessary, make it an admin with topic-management rights.
 3. Allowlist the group chat ID.
 4. Decide whether privacy should stay enabled.
-5. Use `/send <text>` if ordinary group text should not be relied on.
+5. Use `/send <text>` for group-root messages.
 
 ## Use The Bot In Forum Topics
 
@@ -408,7 +409,8 @@ Behavior to remember:
 1. `/topic new` only works in a forum-enabled supergroup.
 2. If the bot does not have the needed rights, topic creation will fail.
 3. If ordinary text appears to do nothing in a topic, use `/send <text>` or revisit privacy settings.
-4. The topic thread ID is useful when you want to debug or trace where messages are going.
+4. If Telegram rejects a reply to a stale, closed, or deleted topic, the bot does not retry the message in the group root.
+5. The topic thread ID is useful when you want to debug or trace where messages are going.
 
 ## Voice Notes, Audio, And Attachments
 

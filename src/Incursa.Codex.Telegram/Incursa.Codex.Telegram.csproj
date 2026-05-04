@@ -9,7 +9,7 @@
     <RootNamespace>Incursa.Codex.Telegram</RootNamespace>
     <UserSecretsId>incursa-codex-telegram</UserSecretsId>
     <PublishSingleFile>true</PublishSingleFile>
-    <SelfContained>true</SelfContained>
+    <SelfContained Condition="'$(RuntimeIdentifier)' != ''">true</SelfContained>
     <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
     <DebugType Condition="'$(Configuration)' == 'Release'">embedded</DebugType>

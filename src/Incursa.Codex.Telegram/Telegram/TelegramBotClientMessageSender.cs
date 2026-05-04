@@ -11,15 +11,34 @@ internal sealed class TelegramBotClientMessageSender : ITelegramBotMessageSender
 {
     private readonly TelegramBotOptions _options;
     private readonly ILogger<TelegramBotClientMessageSender> _logger;
-    private readonly Lazy<ITelegramBotClient> _client;
+    private readonly Lazy<ITelegramBotApiClient> _client;
 
     public TelegramBotClientMessageSender(
         IOptions<TelegramBotOptions> options,
         ILogger<TelegramBotClientMessageSender> logger)
+        : this(
+            options.Value,
+            logger,
+            new Lazy<ITelegramBotApiClient>(() => new TelegramBotApiClient(new TelegramBotClient(RequireToken(options.Value)))))
     {
-        _options = options.Value;
+    }
+
+    internal TelegramBotClientMessageSender(
+        TelegramBotOptions options,
+        ILogger<TelegramBotClientMessageSender> logger,
+        ITelegramBotApiClient client)
+        : this(options, logger, new Lazy<ITelegramBotApiClient>(() => client))
+    {
+    }
+
+    private TelegramBotClientMessageSender(
+        TelegramBotOptions options,
+        ILogger<TelegramBotClientMessageSender> logger,
+        Lazy<ITelegramBotApiClient> client)
+    {
+        _options = options;
         _logger = logger;
-        _client = new Lazy<ITelegramBotClient>(() => new TelegramBotClient(RequireToken()));
+        _client = client;
     }
 
     public async Task SendTextMessageAsync(
@@ -41,10 +60,9 @@ internal sealed class TelegramBotClientMessageSender : ITelegramBotMessageSender
         {
             _logger.LogWarning(
                 exception,
-                "Telegram rejected a reply to chat {ChatId} topic {MessageThreadId}. Retrying in the main chat.",
+                "Telegram rejected a reply to chat {ChatId} topic {MessageThreadId}. The message was not retried in the main chat to preserve topic isolation.",
                 conversation.ChatId,
                 conversation.MessageThreadId);
-            await SendMessageAsync(conversation with { MessageThreadId = null }, text, buttons, cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -83,7 +101,9 @@ internal sealed class TelegramBotClientMessageSender : ITelegramBotMessageSender
         }
         catch (ApiRequestException exception) when (conversation.MessageThreadId is not null && IsThreadReplyFailure(exception))
         {
-            await SendMessageAsync(conversation with { MessageThreadId = null }, text, null, cancellationToken).ConfigureAwait(false);
+            throw new TelegramTopicSendException(
+                $"Telegram rejected a reply to chat {conversation.ChatId} topic {conversation.MessageThreadId}; the message was not retried in the main chat.",
+                exception);
         }
     }
 
@@ -101,16 +121,12 @@ internal sealed class TelegramBotClientMessageSender : ITelegramBotMessageSender
 
         try
         {
-            await _client.Value.EditMessageText(
+            await _client.Value.EditMessageTextAsync(
                 conversation.ChatId,
                 messageId,
                 text,
-                global::Telegram.Bot.Types.Enums.ParseMode.None,
                 ToInlineKeyboardMarkup(buttons),
-                null,
-                null,
-                null,
-                cancellationToken: cancellationToken).ConfigureAwait(false);
+                cancellationToken).ConfigureAwait(false);
 
             _logger.LogDebug(
                 "Telegram edit succeeded for chat {ChatId} message {MessageId}; topic {MessageThreadId}; text length {TextLength}; button rows {ButtonRowCount}.",
@@ -152,7 +168,7 @@ internal sealed class TelegramBotClientMessageSender : ITelegramBotMessageSender
 
         try
         {
-            await _client.Value.AnswerCallbackQuery(callbackQueryId, text, cancellationToken: cancellationToken).ConfigureAwait(false);
+            await _client.Value.AnswerCallbackQueryAsync(callbackQueryId, text, cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -177,12 +193,12 @@ internal sealed class TelegramBotClientMessageSender : ITelegramBotMessageSender
         IReadOnlyList<IReadOnlyList<TelegramReplyButton>>? buttons,
         CancellationToken cancellationToken)
     {
-        await _client.Value.SendMessage(
+        await _client.Value.SendMessageAsync(
             conversation.ChatId,
             text,
-            replyMarkup: ToInlineKeyboardMarkup(buttons),
-            messageThreadId: conversation.MessageThreadId,
-            cancellationToken: cancellationToken).ConfigureAwait(false);
+            ToInlineKeyboardMarkup(buttons),
+            conversation.MessageThreadId,
+            cancellationToken).ConfigureAwait(false);
 
         _logger.LogDebug(
             "Telegram send succeeded for chat {ChatId} topic {MessageThreadId}; text length {TextLength}; button rows {ButtonRowCount}.",
@@ -192,14 +208,14 @@ internal sealed class TelegramBotClientMessageSender : ITelegramBotMessageSender
             buttons?.Count ?? 0);
     }
 
-    private string RequireToken()
+    private static string RequireToken(TelegramBotOptions options)
     {
-        if (string.IsNullOrWhiteSpace(_options.Token))
+        if (string.IsNullOrWhiteSpace(options.Token))
         {
             throw new InvalidOperationException("TelegramBot:Token must be configured when TelegramBot:Enabled is true.");
         }
 
-        return _options.Token.Trim();
+        return options.Token.Trim();
     }
 
     private static InlineKeyboardMarkup? ToInlineKeyboardMarkup(IReadOnlyList<IReadOnlyList<TelegramReplyButton>>? buttons)
@@ -230,4 +246,71 @@ internal sealed class TelegramBotClientMessageSender : ITelegramBotMessageSender
         int? retryAfter = exception.Parameters?.RetryAfter;
         return retryAfter is > 0 ? TimeSpan.FromSeconds(retryAfter.Value) : null;
     }
+}
+
+internal interface ITelegramBotApiClient
+{
+    Task SendMessageAsync(
+        long chatId,
+        string text,
+        InlineKeyboardMarkup? replyMarkup,
+        int? messageThreadId,
+        CancellationToken cancellationToken);
+
+    Task EditMessageTextAsync(
+        long chatId,
+        int messageId,
+        string text,
+        InlineKeyboardMarkup? replyMarkup,
+        CancellationToken cancellationToken);
+
+    Task AnswerCallbackQueryAsync(string callbackQueryId, string? text, CancellationToken cancellationToken);
+}
+
+internal sealed class TelegramTopicSendException : Exception
+{
+    public TelegramTopicSendException(string message, Exception? innerException = null)
+        : base(message, innerException)
+    {
+    }
+}
+
+internal sealed class TelegramBotApiClient : ITelegramBotApiClient
+{
+    private readonly ITelegramBotClient _client;
+
+    public TelegramBotApiClient(ITelegramBotClient client)
+    {
+        _client = client;
+    }
+
+    public Task SendMessageAsync(
+        long chatId,
+        string text,
+        InlineKeyboardMarkup? replyMarkup,
+        int? messageThreadId,
+        CancellationToken cancellationToken)
+        => _client.SendMessage(
+            chatId,
+            text,
+            replyMarkup: replyMarkup,
+            messageThreadId: messageThreadId,
+            cancellationToken: cancellationToken);
+
+    public Task EditMessageTextAsync(
+        long chatId,
+        int messageId,
+        string text,
+        InlineKeyboardMarkup? replyMarkup,
+        CancellationToken cancellationToken)
+        => _client.EditMessageText(
+            chatId,
+            messageId,
+            text,
+            global::Telegram.Bot.Types.Enums.ParseMode.None,
+            replyMarkup,
+            cancellationToken: cancellationToken);
+
+    public Task AnswerCallbackQueryAsync(string callbackQueryId, string? text, CancellationToken cancellationToken)
+        => _client.AnswerCallbackQuery(callbackQueryId, text, cancellationToken: cancellationToken);
 }

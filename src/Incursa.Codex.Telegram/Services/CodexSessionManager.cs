@@ -213,17 +213,7 @@ internal sealed class CodexGatewaySessionManager : ICodexSessionManager
         CodexSessionSummary session = await RequireSessionAsync(sessionId, cancellationToken).ConfigureAwait(false);
         CodexThreadManifestRecord manifest = await _manifestStore.GetOrCreateAsync(sessionId, cancellationToken).ConfigureAwait(false);
         IReadOnlyList<CodexModelVm> models = await _gateway.ListModelsAsync(cancellationToken).ConfigureAwait(false);
-        string? model = ResolveConfiguredModel(manifest);
-        CodexModelVm? selectedModel = ResolveModel(models, model);
-        string? effort = ResolveConfiguredEffort(manifest, selectedModel);
-
-        return new CodexSessionModelSettings(
-            session.Id,
-            session.Name,
-            model,
-            effort,
-            models,
-            ResolveAvailableEfforts(selectedModel));
+        return BuildModelSettings(session, manifest, models);
     }
 
     public async Task<CodexSessionModelSettings> UpdateModelSettingsAsync(
@@ -232,7 +222,7 @@ internal sealed class CodexGatewaySessionManager : ICodexSessionManager
         string? reasoningEffort,
         CancellationToken cancellationToken)
     {
-        await RequireSessionAsync(sessionId, cancellationToken).ConfigureAwait(false);
+        CodexSessionSummary session = await RequireSessionAsync(sessionId, cancellationToken).ConfigureAwait(false);
         CodexThreadManifestRecord manifest = await _manifestStore.GetOrCreateAsync(sessionId, cancellationToken).ConfigureAwait(false);
         IReadOnlyList<CodexModelVm> models = await _gateway.ListModelsAsync(cancellationToken).ConfigureAwait(false);
 
@@ -262,7 +252,7 @@ internal sealed class CodexGatewaySessionManager : ICodexSessionManager
             }
         }
 
-        await _manifestStore.SetContextAsync(
+        CodexThreadManifestRecord updatedManifest = await _manifestStore.SetContextAsync(
             sessionId,
             new CodexThreadContextSubmission
             {
@@ -271,7 +261,7 @@ internal sealed class CodexGatewaySessionManager : ICodexSessionManager
             },
             cancellationToken).ConfigureAwait(false);
 
-        return await GetModelSettingsAsync(sessionId, cancellationToken).ConfigureAwait(false);
+        return BuildModelSettings(session, updatedManifest, models);
     }
 
     public async Task<string> TailAsync(string sessionId, int lineCount, CancellationToken cancellationToken)
@@ -535,4 +525,22 @@ internal sealed class CodexGatewaySessionManager : ICodexSessionManager
     private static CodexReasoningEffort ResolveReasoningEffortOrThrow(string value)
         => ResolveReasoningEffort(value)
             ?? throw new ArgumentException($"Thinking effort '{value}' was not recognized. Use minimal, low, medium, high, or xhigh.");
+
+    private CodexSessionModelSettings BuildModelSettings(
+        CodexSessionSummary session,
+        CodexThreadManifestRecord manifest,
+        IReadOnlyList<CodexModelVm> models)
+    {
+        string? model = ResolveConfiguredModel(manifest);
+        CodexModelVm? selectedModel = ResolveModel(models, model);
+        string? effort = ResolveConfiguredEffort(manifest, selectedModel);
+
+        return new CodexSessionModelSettings(
+            session.Id,
+            session.Name,
+            model,
+            effort,
+            models,
+            ResolveAvailableEfforts(selectedModel));
+    }
 }
