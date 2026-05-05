@@ -154,6 +154,31 @@ public sealed class TelegramCommandHandlerTests
     }
 
     [Fact]
+    public async Task HandleMessageAsync_ExplainsGroupRootAudioInsteadOfTranscribingIt()
+    {
+        using CommandHandlerHarness harness = CommandHandlerHarness.Create(new TelegramBotOptions
+        {
+            AllowedUserIds = [1234],
+            AllowedChatIds = [-1005555],
+        });
+
+        await harness.Handler.HandleMessageAsync(
+            new TelegramInboundMessage(
+                1234,
+                -1005555,
+                "supergroup",
+                null,
+                AudioFilePath: "not-created.ogg"),
+            harness.Sender,
+            CancellationToken.None);
+
+        SentTelegramMessage sent = Assert.Single(harness.Sender.Sent);
+        Assert.Contains("group root", sent.Text);
+        Assert.Contains("did not send it to Codex", sent.Text);
+        Assert.Empty(harness.SessionManager.SendRequests);
+    }
+
+    [Fact]
     public async Task HandleMessageAsync_RoutesTopicAttachmentAndEmojiCaptionToActiveSession()
     {
         using CommandHandlerHarness harness = CommandHandlerHarness.Create(new TelegramBotOptions

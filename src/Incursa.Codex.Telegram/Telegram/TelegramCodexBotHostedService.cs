@@ -154,6 +154,11 @@ internal sealed class TelegramCodexBotHostedService : BackgroundService
                 return;
             }
 
+            if (!await ValidateAutoRouteAsync(message, sender, cancellationToken).ConfigureAwait(false))
+            {
+                return;
+            }
+
             if (!await ValidateAudioMessageAsync(message, audioMessage, sender, cancellationToken).ConfigureAwait(false))
             {
                 return;
@@ -326,6 +331,25 @@ internal sealed class TelegramCodexBotHostedService : BackgroundService
         await sender.SendTextMessageAsync(
             new TelegramConversationScope(message.Chat.Id, message.MessageThreadId),
             rejection,
+            null,
+            cancellationToken).ConfigureAwait(false);
+        return false;
+    }
+
+    private static async Task<bool> ValidateAutoRouteAsync(
+        Message message,
+        ITelegramBotMessageSender sender,
+        CancellationToken cancellationToken)
+    {
+        string chatType = message.Chat.Type.ToString();
+        if (TelegramRoutingPolicy.CanAutoRoute(chatType, message.MessageThreadId))
+        {
+            return true;
+        }
+
+        await sender.SendTextMessageAsync(
+            new TelegramConversationScope(message.Chat.Id, message.MessageThreadId),
+            TelegramRoutingPolicy.BuildNotRoutedMessage(chatType),
             null,
             cancellationToken).ConfigureAwait(false);
         return false;

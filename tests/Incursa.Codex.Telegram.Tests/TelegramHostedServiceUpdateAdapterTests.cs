@@ -150,6 +150,35 @@ public sealed class TelegramHostedServiceUpdateAdapterTests
     }
 
     [Fact]
+    public async Task HandleUpdateAsync_RejectsGroupRootAudioWithoutRequestingFile()
+    {
+        using Harness harness = Harness.Create();
+        Message telegramMessage = CreateMessage(chatId: -1005555, chatType: ChatType.Supergroup);
+        telegramMessage.Voice = new Voice
+        {
+            FileId = "voice-file",
+            FileUniqueId = "voice-file-u",
+            Duration = 2,
+            MimeType = "audio/ogg",
+        };
+        Update update = new()
+        {
+            Id = 28,
+            Message = telegramMessage,
+        };
+
+        await harness.Service.HandleUpdateAsync(harness.FileClient, update, harness.Sender, CancellationToken.None);
+
+        Assert.Empty(harness.Handler.Messages);
+        Assert.Empty(harness.FileClient.RequestedFileIds);
+        Assert.Empty(harness.FileClient.DownloadedFileIds);
+        SentTelegramMessage sent = Assert.Single(harness.Sender.Sent);
+        Assert.Equal(new TelegramConversationScope(-1005555, null), sent.Conversation);
+        Assert.Contains("group root", sent.Text);
+        Assert.Contains("did not send it to Codex", sent.Text);
+    }
+
+    [Fact]
     public async Task HandleUpdateAsync_MapsImageDocumentFallbackNameAndImageFlag()
     {
         using Harness harness = Harness.Create();
@@ -607,10 +636,14 @@ public sealed class TelegramHostedServiceUpdateAdapterTests
     {
         public string? ThrowOnGetFileId { get; set; }
 
+        public List<string> RequestedFileIds { get; } = [];
+
         public List<string> DownloadedFileIds { get; } = [];
 
         public Task<TGFile> GetFileAsync(string fileId, CancellationToken cancellationToken)
         {
+            RequestedFileIds.Add(fileId);
+
             if (string.Equals(fileId, ThrowOnGetFileId, StringComparison.Ordinal))
             {
                 throw new InvalidOperationException($"download failed for {fileId}");

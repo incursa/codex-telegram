@@ -1516,18 +1516,16 @@ public sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHand
         => command.IsCommand && string.Equals(command.Name, "whoami", StringComparison.OrdinalIgnoreCase);
 
     private static bool IsPrivateChat(TelegramInboundMessage message)
-        => string.Equals(message.ChatType, "private", StringComparison.OrdinalIgnoreCase);
+        => TelegramRoutingPolicy.IsPrivateChat(message.ChatType);
 
     private static bool IsForumTopicChat(TelegramInboundMessage message)
         => string.Equals(message.ChatType, "supergroup", StringComparison.OrdinalIgnoreCase);
 
     private static bool CanRoutePlainText(TelegramInboundMessage message)
-        => IsPrivateChat(message) || message.MessageThreadId is not null;
+        => TelegramRoutingPolicy.CanAutoRoute(message.ChatType, message.MessageThreadId);
 
     private static string BuildNotRoutedMessage(TelegramInboundMessage message)
-        => string.Equals(message.ChatType, "supergroup", StringComparison.OrdinalIgnoreCase)
-            ? "I only auto-route messages from private chats or forum topics. This message was sent to the group root, so I did not send it to Codex. Use /send <text>, open a topic, or message me privately."
-            : $"I only auto-route messages from private chats or topic threads. This {message.ChatType} message was not sent to Codex. Use /send <text> or message me privately.";
+        => TelegramRoutingPolicy.BuildNotRoutedMessage(message.ChatType);
 
     private static bool IsChatNotForumError(Exception exception)
         => exception.Message.Contains("chat is not a forum", StringComparison.OrdinalIgnoreCase);
