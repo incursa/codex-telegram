@@ -97,15 +97,20 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
             return;
         }
 
+        bool isTerminal = IsTerminalTurnEvent(entry);
         string? text = entry.IsInternal && kind == CodexOutboundMessageKind.Progress
             ? FormatInternalProgressEntry(entry)
             : FormatEntry(entry, bufferedAgentMessage);
-        if (string.IsNullOrWhiteSpace(text))
+
+        if (!string.IsNullOrWhiteSpace(text))
         {
-            return;
+            await PublishTextAsync(entry.ThreadId, entry.Type, text, kind, ResolvePriority(kind), cancellationToken).ConfigureAwait(false);
         }
 
-        await PublishTextAsync(entry.ThreadId, entry.Type, text, kind, ResolvePriority(kind), cancellationToken).ConfigureAwait(false);
+        if (isTerminal)
+        {
+            await PublishTextAsync(entry.ThreadId, entry.Type + ".finished", TurnFinishedMarker, CodexOutboundMessageKind.Completion, OutboundPriority.High, cancellationToken).ConfigureAwait(false);
+        }
     }
 
     private async Task PublishTextAsync(
@@ -154,7 +159,7 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
     {
         if (string.Equals(entry.Type, TurnCompletedType, StringComparison.OrdinalIgnoreCase))
         {
-            return AppendTurnFinishedMarker(ResolveFinalResponseText(entry, bufferedAgentMessage));
+            return RemoveTurnFinishedMarker(ResolveFinalResponseText(entry, bufferedAgentMessage));
         }
 
         List<string> lines = [entry.Title];
@@ -179,7 +184,7 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
         }
 
         string text = string.Join(Environment.NewLine, lines.Where(line => !string.IsNullOrWhiteSpace(line)));
-        return IsTerminalTurnEvent(entry) ? AppendTurnFinishedMarker(text) : text;
+        return IsTerminalTurnEvent(entry) ? RemoveTurnFinishedMarker(text) : text;
     }
 
     private static string? FormatInternalProgressEntry(CodexTimelineEntryVm entry)
@@ -283,17 +288,15 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
         return null;
     }
 
-    private static string AppendTurnFinishedMarker(string? text)
+    private static string? RemoveTurnFinishedMarker(string? text)
     {
         string normalized = string.IsNullOrWhiteSpace(text) ? string.Empty : text.Trim();
         if (normalized.EndsWith(TurnFinishedMarker, StringComparison.Ordinal))
         {
-            return normalized;
+            normalized = normalized[..^TurnFinishedMarker.Length].TrimEnd();
         }
 
-        return string.IsNullOrWhiteSpace(normalized)
-            ? TurnFinishedMarker
-            : normalized + Environment.NewLine + Environment.NewLine + TurnFinishedMarker;
+        return string.IsNullOrWhiteSpace(normalized) ? null : normalized;
     }
 
     private string? AppendAgentMessageDelta(string threadId, string? delta, int minChars, int maxChars)

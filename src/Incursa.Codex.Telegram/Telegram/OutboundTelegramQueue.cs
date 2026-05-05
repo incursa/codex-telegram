@@ -244,6 +244,7 @@ internal sealed class OutboundTelegramScheduler : BackgroundService, IOutboundTe
     private const int GlobalSendBudgetWindowSeconds = 1;
     private const int DefaultRateLimitBackoffSeconds = 5;
     private const int SchedulerFailureDelaySeconds = 1;
+    private const string TurnFinishedMarker = "~~ fin ~~";
     private readonly ConcurrentDictionary<TelegramDestinationKey, DestinationBuffer> _buffers = new();
     private readonly ConcurrentDictionary<TelegramSendBudgetKey, BudgetState> _chatBudgets = new();
     private readonly Queue<DateTimeOffset> _globalSendTimestamps = new();
@@ -760,8 +761,17 @@ internal sealed class OutboundTelegramScheduler : BackgroundService, IOutboundTe
 
         private string FormatNextSend()
         {
-            List<PendingOutboundItem> messages = [.. _messages];
-            _messages.Clear();
+            int standaloneIndex = _messages.FindIndex(IsStandaloneMessage);
+            if (standaloneIndex == 0)
+            {
+                PendingOutboundItem standalone = _messages[0];
+                _messages.RemoveAt(0);
+                return FormatBatchItem(standalone.Text);
+            }
+
+            int count = standaloneIndex > 0 ? standaloneIndex : _messages.Count;
+            List<PendingOutboundItem> messages = _messages.GetRange(0, count);
+            _messages.RemoveRange(0, count);
             return FormatBatch(messages);
         }
 
@@ -788,6 +798,9 @@ internal sealed class OutboundTelegramScheduler : BackgroundService, IOutboundTe
 
         private static string FormatBatchItem(string value)
             => value.Replace("\r\n", "\n", StringComparison.Ordinal).Trim();
+
+        private static bool IsStandaloneMessage(PendingOutboundItem message)
+            => string.Equals(FormatBatchItem(message.Text), TurnFinishedMarker, StringComparison.Ordinal);
     }
 
     /// <summary>

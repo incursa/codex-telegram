@@ -304,7 +304,13 @@ public sealed class TelegramTurnOutputRelayTests
             {
                 Assert.Equal(CodexOutboundMessageKind.Completion, message.Kind);
                 Assert.Equal(OutboundPriority.High, message.Priority);
-                Assert.Equal("remaining" + Environment.NewLine + Environment.NewLine + "~~ fin ~~", message.Text);
+                Assert.Equal("remaining", message.Text);
+            },
+            message =>
+            {
+                Assert.Equal(CodexOutboundMessageKind.Completion, message.Kind);
+                Assert.Equal(OutboundPriority.High, message.Priority);
+                Assert.Equal("~~ fin ~~", message.Text);
             });
     }
 
@@ -370,11 +376,14 @@ public sealed class TelegramTurnOutputRelayTests
             CreateEntry(type: "turn.completed", title: "Turn completed", body: null, severity: "success"),
             CancellationToken.None);
 
-        Assert.Equal("short final" + Environment.NewLine + Environment.NewLine + "~~ fin ~~", Assert.Single(queue.Messages).Text);
+        Assert.Collection(
+            queue.Messages,
+            message => Assert.Equal("short final", message.Text),
+            message => Assert.Equal("~~ fin ~~", message.Text));
     }
 
     [Fact]
-    public async Task PublishTurnEventAsync_DoesNotDuplicateFinishedMarker()
+    public async Task PublishTurnEventAsync_StripsEmbeddedFinishedMarkerAndPublishesMarkerSeparately()
     {
         FakeOutboundTelegramQueue queue = new();
         TelegramThreadFollowRegistry followRegistry = FollowThread();
@@ -384,7 +393,10 @@ public sealed class TelegramTurnOutputRelayTests
             CreateEntry(type: "turn.completed", title: "Turn completed", body: "Finished already" + Environment.NewLine + Environment.NewLine + "~~ fin ~~", severity: "success"),
             CancellationToken.None);
 
-        Assert.Equal("Finished already" + Environment.NewLine + Environment.NewLine + "~~ fin ~~", Assert.Single(queue.Messages).Text);
+        Assert.Collection(
+            queue.Messages,
+            message => Assert.Equal("Finished already", message.Text),
+            message => Assert.Equal("~~ fin ~~", message.Text));
     }
 
     [Fact]
@@ -456,7 +468,7 @@ public sealed class TelegramTurnOutputRelayTests
     }
 
     [Fact]
-    public async Task PublishTurnEventAsync_AppendsFinishedMarkerToFailures()
+    public async Task PublishTurnEventAsync_PublishesFinishedMarkerSeparatelyForFailures()
     {
         FakeOutboundTelegramQueue queue = new();
         TelegramThreadFollowRegistry followRegistry = FollowThread();
@@ -466,12 +478,22 @@ public sealed class TelegramTurnOutputRelayTests
             CreateEntry(type: "turn.failed", title: "Turn failed", body: "Codex crashed.", severity: "danger"),
             CancellationToken.None);
 
-        OutboundTelegramMessage message = Assert.Single(queue.Messages);
-        Assert.Equal(CodexOutboundMessageKind.Error, message.Kind);
-        Assert.Equal(OutboundPriority.Critical, message.Priority);
-        Assert.Contains("Turn failed", message.Text);
-        Assert.Contains("Codex crashed.", message.Text);
-        Assert.EndsWith("~~ fin ~~", message.Text, StringComparison.Ordinal);
+        Assert.Collection(
+            queue.Messages,
+            message =>
+            {
+                Assert.Equal(CodexOutboundMessageKind.Error, message.Kind);
+                Assert.Equal(OutboundPriority.Critical, message.Priority);
+                Assert.Contains("Turn failed", message.Text);
+                Assert.Contains("Codex crashed.", message.Text);
+                Assert.DoesNotContain("~~ fin ~~", message.Text);
+            },
+            message =>
+            {
+                Assert.Equal(CodexOutboundMessageKind.Completion, message.Kind);
+                Assert.Equal(OutboundPriority.High, message.Priority);
+                Assert.Equal("~~ fin ~~", message.Text);
+            });
     }
 
     [Fact]

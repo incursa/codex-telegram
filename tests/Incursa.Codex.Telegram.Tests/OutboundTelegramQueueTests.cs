@@ -198,6 +198,36 @@ public sealed class OutboundTelegramQueueTests
     }
 
     [Fact]
+    public async Task ProcessNextAsync_SendsFinishedMarkerAsStandaloneMessageAfterBatchedContent()
+    {
+        TestTelegramSender sender = new();
+        OutboundTelegramScheduler scheduler = CreateScheduler(sender, new TelegramOutboundOptions
+        {
+            BatchWindowSeconds = 0,
+            PrivateMinimumSendIntervalSeconds = 0,
+            GroupMinimumSendIntervalSeconds = 0,
+            MaxMessageChars = 3500,
+        });
+
+        await scheduler.EnqueueAsync(CreateMessage(CodexOutboundMessageKind.Update, "first update"), CancellationToken.None);
+        await scheduler.EnqueueAsync(CreateMessage(CodexOutboundMessageKind.Completion, "second update"), CancellationToken.None);
+        await scheduler.EnqueueAsync(CreateMessage(CodexOutboundMessageKind.Completion, "~~ fin ~~"), CancellationToken.None);
+
+        Assert.True(await scheduler.ProcessNextAsync(CancellationToken.None));
+        Assert.True(await scheduler.ProcessNextAsync(CancellationToken.None));
+
+        Assert.Collection(
+            sender.Sent,
+            message =>
+            {
+                Assert.Contains("first update", message.Text);
+                Assert.Contains("second update", message.Text);
+                Assert.DoesNotContain("~~ fin ~~", message.Text);
+            },
+            message => Assert.Equal("~~ fin ~~", message.Text));
+    }
+
+    [Fact]
     public async Task ProcessNextAsync_BatchedReleaseSectionsPreserveNumberedLists()
     {
         TestTelegramSender sender = new();
