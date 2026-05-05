@@ -10,18 +10,32 @@ internal sealed class TelegramQueuedPromptProcessorHostedService : BackgroundSer
     private readonly ITelegramQueuedPromptProcessor _processor;
     private readonly TelegramBotOptions _options;
     private readonly ILogger<TelegramQueuedPromptProcessorHostedService> _logger;
+    private readonly ITelegramProcessorDelayProvider _delayProvider;
 
     public TelegramQueuedPromptProcessorHostedService(
         ITelegramQueuedPromptProcessor processor,
         IOptions<TelegramBotOptions> options,
         ILogger<TelegramQueuedPromptProcessorHostedService> logger)
+        : this(processor, options, logger, SystemTelegramProcessorDelayProvider.Instance)
+    {
+    }
+
+    internal TelegramQueuedPromptProcessorHostedService(
+        ITelegramQueuedPromptProcessor processor,
+        IOptions<TelegramBotOptions> options,
+        ILogger<TelegramQueuedPromptProcessorHostedService> logger,
+        ITelegramProcessorDelayProvider delayProvider)
     {
         _processor = processor;
         _options = options.Value;
         _logger = logger;
+        _delayProvider = delayProvider;
     }
 
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    protected override Task ExecuteAsync(CancellationToken stoppingToken)
+        => RunAsync(stoppingToken);
+
+    internal async Task RunAsync(CancellationToken stoppingToken)
     {
         if (!_options.Enabled)
         {
@@ -36,7 +50,9 @@ internal sealed class TelegramQueuedPromptProcessorHostedService : BackgroundSer
             try
             {
                 bool processed = await _processor.ProcessNextAsync(stoppingToken).ConfigureAwait(false);
-                await Task.Delay(processed ? TimeSpan.FromMilliseconds(200) : TimeSpan.FromSeconds(1), stoppingToken).ConfigureAwait(false);
+                await _delayProvider.DelayAsync(
+                    processed ? TimeSpan.FromMilliseconds(200) : TimeSpan.FromSeconds(1),
+                    stoppingToken).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
@@ -45,10 +61,27 @@ internal sealed class TelegramQueuedPromptProcessorHostedService : BackgroundSer
             catch (Exception exception)
             {
                 _logger.LogError(exception, "Telegram queued prompt processor failed; retrying.");
-                await Task.Delay(TimeSpan.FromSeconds(2), stoppingToken).ConfigureAwait(false);
+                await _delayProvider.DelayAsync(TimeSpan.FromSeconds(2), stoppingToken).ConfigureAwait(false);
             }
         }
 
         _logger.LogInformation("Telegram queued prompt processor stopped.");
     }
+}
+
+internal interface ITelegramProcessorDelayProvider
+{
+    Task DelayAsync(TimeSpan delay, CancellationToken cancellationToken);
+}
+
+internal sealed class SystemTelegramProcessorDelayProvider : ITelegramProcessorDelayProvider
+{
+    public static SystemTelegramProcessorDelayProvider Instance { get; } = new();
+
+    private SystemTelegramProcessorDelayProvider()
+    {
+    }
+
+    public Task DelayAsync(TimeSpan delay, CancellationToken cancellationToken)
+        => Task.Delay(delay, cancellationToken);
 }

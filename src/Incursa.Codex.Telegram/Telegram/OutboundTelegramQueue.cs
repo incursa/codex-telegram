@@ -302,14 +302,17 @@ internal sealed class OutboundTelegramScheduler : BackgroundService, IOutboundTe
             .Where(buffer => buffer.HasPending)
             .Where(buffer => IsBatchReady(buffer, now, options))
             .Where(buffer => IsChatAllowed(buffer.Destination.ChatId, now, options))
-            .OrderBy(buffer => buffer.LastSentUtc is null ? 0 : 1)
-            .ThenBy(buffer => buffer.LastSentUtc ?? DateTimeOffset.MinValue)
+            .OrderBy(buffer => GetLastSentUtc(buffer) is null ? 0 : 1)
+            .ThenBy(buffer => GetLastSentUtc(buffer) ?? DateTimeOffset.MinValue)
             .ThenBy(buffer => buffer.FirstPendingUtc)
             .ThenByDescending(buffer => buffer.HighestPriority)
             .ThenBy(buffer => buffer.LastEnqueuedUtc)
             .ThenBy(buffer => buffer.Destination.ChatId)
             .ThenBy(buffer => buffer.Destination.MessageThreadId ?? 0)
             .FirstOrDefault();
+
+    private DateTimeOffset? GetLastSentUtc(DestinationBuffer buffer)
+        => GetBudget(buffer.Destination.ChatId).LastSentUtc ?? buffer.LastSentUtc;
 
     private bool IsBatchReady(DestinationBuffer buffer, DateTimeOffset now, TelegramOutboundOptions options)
     {

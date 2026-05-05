@@ -18,6 +18,18 @@ public sealed class TelegramCommandParserTests
     }
 
     [Fact]
+    public void Parse_CommandMentionWithoutCommandNameProducesEmptyCommandName()
+    {
+        TelegramCommandParser parser = new();
+
+        ParsedTelegramCommand parsed = parser.Parse("/@my_bot diagnostics");
+
+        Assert.True(parsed.IsCommand);
+        Assert.Equal(string.Empty, parsed.Name);
+        Assert.Equal("diagnostics", parsed.Arguments);
+    }
+
+    [Fact]
     public void Parse_PlainTextIsNotCommand()
     {
         TelegramCommandParser parser = new();

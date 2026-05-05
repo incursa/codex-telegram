@@ -28,6 +28,19 @@ public interface ITelegramBotMessageSender
     Task AnswerCallbackQueryAsync(string callbackQueryId, string? text, CancellationToken cancellationToken);
 }
 
+internal interface ITelegramCodexBotUpdateHandler
+{
+    Task HandleMessageAsync(
+        TelegramInboundMessage message,
+        ITelegramBotMessageSender sender,
+        CancellationToken cancellationToken);
+
+    Task HandleCallbackAsync(
+        TelegramInboundCallback callback,
+        ITelegramBotMessageSender sender,
+        CancellationToken cancellationToken);
+}
+
 public sealed record TelegramInboundMessage(
     long UserId,
     long ChatId,
@@ -55,7 +68,7 @@ public sealed record TelegramInboundCallback(
 
 public sealed record TelegramReplyButton(string Text, string CallbackData);
 
-public sealed class TelegramCodexBotCommandHandler
+public sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHandler
 {
     private static readonly StringComparer PathComparer = OperatingSystem.IsWindows()
         ? StringComparer.OrdinalIgnoreCase

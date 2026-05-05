@@ -24,10 +24,39 @@ The seed corpus lives under `fuzz/corpus` and is exercised by `TelegramFuzzCorpu
 
 ## Mutation Gate
 
-Run scoped mutation testing when changing Telegram routing, parser, chunker, attachment, or sender behavior:
+Run scoped mutation testing when changing Telegram routing, parser, chunker, attachment, queueing, or sender behavior:
 
 ```powershell
 .\scripts\Test-TelegramMutation.ps1 -Configuration Release
 ```
 
-This uses the repo-local `dotnet-stryker` tool and `src/Incursa.Codex.Telegram/stryker-config.json`. It is not part of the normal release gate because it is slower and best used as focused quality evidence after meaningful Telegram behavior changes.
+The default `core` profile uses the repo-local `dotnet-stryker` tool and `src/Incursa.Codex.Telegram/stryker-config.json`.
+
+Use a narrower profile when the change is concentrated in one surface:
+
+```powershell
+.\scripts\Test-TelegramMutation.ps1 -Configuration Release -Profile core
+.\scripts\Test-TelegramMutation.ps1 -Configuration Release -Profile handler
+.\scripts\Test-TelegramMutation.ps1 -Configuration Release -Profile queue
+```
+
+Use all mutation profiles before a public release candidate when time permits:
+
+```powershell
+.\scripts\Test-TelegramMutation.ps1 -Configuration Release -Profile all
+```
+
+The profiles are:
+
+- `core`: parser, chunker, attachment mapping, sender behavior, and conversation scope.
+- `handler`: Telegram command handling and raw Telegram update adaptation.
+- `queue`: outbound queueing, queued prompt dispatch, and turn output relay behavior.
+
+Latest local mutation evidence from the May 4, 2026 Telegram hardening pass:
+
+- `core`: 82.35%, improved from 64.71% after adding sender failure/rate-limit/button coverage plus parser and attachment display-name edge cases.
+- `handler`: 33.68%, improved from 15.22% after adding command, callback, audio, topic, project, session, model, thinking, status, tail, outbound, lifecycle, authorization, attachment, and raw update-adapter coverage.
+- `queue`: 70.71%, improved from 13.11% after adding queue scheduler, queued prompt processor, hosted service, turn output relay, runtime option update, cancellation, backoff boundary, compaction, and relay cleanup coverage.
+
+Mutation testing is not part of the normal release gate because it is slower and best used as focused quality evidence after meaningful Telegram behavior changes.
+Treat mutation scores as advisory evidence. The broader `handler` and `queue` profiles intentionally include large surfaces that are not exhaustively covered by unit tests, so record the score and investigate material survivors instead of presenting a passing Stryker run as full behavioral proof.

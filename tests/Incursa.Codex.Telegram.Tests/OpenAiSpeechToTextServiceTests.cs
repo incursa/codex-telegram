@@ -28,10 +28,67 @@ public sealed class OpenAiSpeechToTextServiceTests
     }
 
     [Fact]
+    public async Task TranscribeAsync_FailsClearlyWhenAudioFileIsEmpty()
+    {
+        using TemporaryDirectory temp = TemporaryDirectory.Create();
+        string audioPath = CreateFile(temp, "empty.wav", []);
+        TestHttpMessageHandler handler = new(_ => new HttpResponseMessage(HttpStatusCode.OK));
+        OpenAiSpeechToTextService service = CreateService(handler, new OpenAiSpeechToTextOptions
+        {
+            ApiKey = "test-key",
+            Model = "whisper-1",
+        });
+
+        InvalidOperationException exception = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => service.TranscribeAsync(audioPath, CancellationToken.None));
+
+        Assert.Contains("empty", exception.Message);
+        Assert.Equal(0, handler.RequestCount);
+    }
+
+    [Fact]
+    public async Task TranscribeAsync_FailsClearlyWhenAudioFileIsTooSmall()
+    {
+        using TemporaryDirectory temp = TemporaryDirectory.Create();
+        string audioPath = CreateFile(temp, "too-small.wav", [1, 2, 3]);
+        TestHttpMessageHandler handler = new(_ => new HttpResponseMessage(HttpStatusCode.OK));
+        OpenAiSpeechToTextService service = CreateService(handler, new OpenAiSpeechToTextOptions
+        {
+            ApiKey = "test-key",
+            Model = "whisper-1",
+        });
+
+        InvalidOperationException exception = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => service.TranscribeAsync(audioPath, CancellationToken.None));
+
+        Assert.Contains("too small", exception.Message);
+        Assert.Equal(0, handler.RequestCount);
+    }
+
+    [Fact]
+    public async Task TranscribeAsync_FailsClearlyWhenAudioFileExceedsOpenAiLimit()
+    {
+        using TemporaryDirectory temp = TemporaryDirectory.Create();
+        string audioPath = CreateSparseFile(temp, "too-large.wav", (25L * 1024 * 1024) + 1);
+        TestHttpMessageHandler handler = new(_ => new HttpResponseMessage(HttpStatusCode.OK));
+        OpenAiSpeechToTextService service = CreateService(handler, new OpenAiSpeechToTextOptions
+        {
+            ApiKey = "test-key",
+            Model = "whisper-1",
+        });
+
+        InvalidOperationException exception = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => service.TranscribeAsync(audioPath, CancellationToken.None));
+
+        Assert.Contains("larger than the OpenAI transcription limit of 25 MB", exception.Message);
+        Assert.Equal(0, handler.RequestCount);
+    }
+
+    [Fact]
     public async Task TranscribeAsync_IncludesHttpFailureDetails()
     {
         using TemporaryDirectory temp = TemporaryDirectory.Create();
-        string audioPath = CreateFile(temp, "audio.wav", [1, 2, 3]);
+        string audioPath = CreateFile(temp, "audio.wav", CreateBytes(64));
         TestHttpMessageHandler handler = new(_ => new HttpResponseMessage(HttpStatusCode.BadRequest)
         {
             ReasonPhrase = "Bad Request",
@@ -62,6 +119,21 @@ public sealed class OpenAiSpeechToTextServiceTests
         string path = Path.Combine(temp.Path, name);
         File.WriteAllBytes(path, contents);
         return path;
+    }
+
+    private static string CreateSparseFile(TemporaryDirectory temp, string name, long length)
+    {
+        string path = Path.Combine(temp.Path, name);
+        using FileStream stream = File.Create(path);
+        stream.SetLength(length);
+        return path;
+    }
+
+    private static byte[] CreateBytes(int length)
+    {
+        byte[] bytes = new byte[length];
+        Array.Fill<byte>(bytes, 1);
+        return bytes;
     }
 
     private sealed class TestHttpMessageHandler(Func<HttpRequestMessage, HttpResponseMessage> handle) : HttpMessageHandler

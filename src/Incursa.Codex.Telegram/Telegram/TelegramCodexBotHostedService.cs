@@ -1,3 +1,4 @@
+using System.Globalization;
 using Incursa.Codex.Telegram.Options;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -13,13 +14,13 @@ internal sealed class TelegramCodexBotHostedService : BackgroundService
 {
     private static readonly UpdateType[] AllowedUpdates = [UpdateType.Message, UpdateType.CallbackQuery];
 
-    private readonly TelegramCodexBotCommandHandler _handler;
+    private readonly ITelegramCodexBotUpdateHandler _handler;
     private readonly ITelegramBotMessageSender _sender;
     private readonly TelegramBotOptions _options;
     private readonly ILogger<TelegramCodexBotHostedService> _logger;
 
     public TelegramCodexBotHostedService(
-        TelegramCodexBotCommandHandler handler,
+        ITelegramCodexBotUpdateHandler handler,
         ITelegramBotMessageSender sender,
         IOptions<TelegramBotOptions> options,
         ILogger<TelegramCodexBotHostedService> logger)
@@ -80,7 +81,7 @@ internal sealed class TelegramCodexBotHostedService : BackgroundService
                     offset = update.Id + 1;
                     try
                     {
-                        await HandleUpdateAsync(client, update, _sender, stoppingToken).ConfigureAwait(false);
+                        await HandleUpdateAsync(new TelegramUpdateFileClient(client), update, _sender, stoppingToken).ConfigureAwait(false);
                     }
                     catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
                     {
@@ -117,8 +118,8 @@ internal sealed class TelegramCodexBotHostedService : BackgroundService
         _logger.LogInformation("Telegram bot long polling stopped.");
     }
 
-    private async Task HandleUpdateAsync(
-        TelegramBotClient client,
+    internal async Task HandleUpdateAsync(
+        ITelegramUpdateFileClient client,
         Update update,
         ITelegramBotMessageSender sender,
         CancellationToken cancellationToken)
@@ -141,7 +142,7 @@ internal sealed class TelegramCodexBotHostedService : BackgroundService
                 HasAttachments(message));
         }
 
-        if (message is not null && TryGetAudioFileId(message, out string audioFileId))
+        if (message is not null && TryGetAudioMessage(message, out TelegramAudioMessage audioMessage))
         {
             if (!IsAuthorized(message))
             {
@@ -153,7 +154,12 @@ internal sealed class TelegramCodexBotHostedService : BackgroundService
                 return;
             }
 
-            await HandleAudioMessageAsync(client, message, audioFileId, sender, cancellationToken).ConfigureAwait(false);
+            if (!await ValidateAudioMessageAsync(message, audioMessage, sender, cancellationToken).ConfigureAwait(false))
+            {
+                return;
+            }
+
+            await HandleAudioMessageAsync(client, message, audioMessage.FileId, sender, cancellationToken).ConfigureAwait(false);
             return;
         }
 
@@ -255,7 +261,7 @@ internal sealed class TelegramCodexBotHostedService : BackgroundService
     }
 
     private async Task HandleAudioMessageAsync(
-        TelegramBotClient client,
+        ITelegramUpdateFileClient client,
         Message message,
         string audioFileId,
         ITelegramBotMessageSender sender,
@@ -266,11 +272,11 @@ internal sealed class TelegramCodexBotHostedService : BackgroundService
 
         try
         {
-            TGFile file = await client.GetFile(audioFileId, cancellationToken).ConfigureAwait(false);
+            TGFile file = await client.GetFileAsync(audioFileId, cancellationToken).ConfigureAwait(false);
             tempAudioPath = CreateTemporaryAudioPath(file.FilePath);
             await using (FileStream stream = File.Create(tempAudioPath))
             {
-                await client.DownloadFile(file, stream, cancellationToken).ConfigureAwait(false);
+                await client.DownloadFileAsync(file, stream, cancellationToken).ConfigureAwait(false);
             }
 
             TelegramInboundMessage inbound = new(
@@ -305,23 +311,61 @@ internal sealed class TelegramCodexBotHostedService : BackgroundService
         }
     }
 
-    private static bool TryGetAudioFileId(Message message, out string fileId)
+    private async Task<bool> ValidateAudioMessageAsync(
+        Message message,
+        TelegramAudioMessage audioMessage,
+        ITelegramBotMessageSender sender,
+        CancellationToken cancellationToken)
+    {
+        string? rejection = BuildAudioRejectionMessage(audioMessage);
+        if (rejection is null)
+        {
+            return true;
+        }
+
+        await sender.SendTextMessageAsync(
+            new TelegramConversationScope(message.Chat.Id, message.MessageThreadId),
+            rejection,
+            null,
+            cancellationToken).ConfigureAwait(false);
+        return false;
+    }
+
+    private string? BuildAudioRejectionMessage(TelegramAudioMessage audioMessage)
+    {
+        if (audioMessage.DurationSeconds < _options.MinAudioDurationSeconds)
+        {
+            return $"Audio message is too short to transcribe. Record at least {FormatSeconds(_options.MinAudioDurationSeconds)}.";
+        }
+
+        if (audioMessage.DurationSeconds > _options.MaxAudioDurationSeconds)
+        {
+            return $"Audio message is too long to transcribe. Keep audio at or below {FormatSeconds(_options.MaxAudioDurationSeconds)}.";
+        }
+
+        return null;
+    }
+
+    private static bool TryGetAudioMessage(Message message, out TelegramAudioMessage audioMessage)
     {
         if (message.Voice is not null)
         {
-            fileId = message.Voice.FileId;
+            audioMessage = new TelegramAudioMessage(message.Voice.FileId, message.Voice.Duration);
             return true;
         }
 
         if (message.Audio is not null)
         {
-            fileId = message.Audio.FileId;
+            audioMessage = new TelegramAudioMessage(message.Audio.FileId, message.Audio.Duration);
             return true;
         }
 
-        fileId = string.Empty;
+        audioMessage = default;
         return false;
     }
+
+    private static string FormatSeconds(int seconds)
+        => seconds == 1 ? "1 second" : $"{seconds.ToString(CultureInfo.InvariantCulture)} seconds";
 
     private static bool HasAttachments(Message message)
         => message.Photo is { Length: > 0 }
@@ -332,7 +376,7 @@ internal sealed class TelegramCodexBotHostedService : BackgroundService
             || message.VideoNote is not null;
 
     private async Task<IReadOnlyList<TelegramAttachmentDescriptor>> DownloadAttachmentsAsync(
-        TelegramBotClient client,
+        ITelegramUpdateFileClient client,
         Message message,
         CancellationToken cancellationToken)
     {
@@ -419,15 +463,15 @@ internal sealed class TelegramCodexBotHostedService : BackgroundService
     }
 
     private async Task<TelegramAttachmentDescriptor> DownloadAttachmentAsync(
-        TelegramBotClient client,
+        ITelegramUpdateFileClient client,
         AttachmentDownloadRequest request,
         CancellationToken cancellationToken)
     {
-        TGFile file = await client.GetFile(request.FileId, cancellationToken).ConfigureAwait(false);
+        TGFile file = await client.GetFileAsync(request.FileId, cancellationToken).ConfigureAwait(false);
         string tempPath = CreateTemporaryAttachmentPath(file.FilePath, request.FileName, request.ContentType);
         await using (FileStream stream = File.Create(tempPath))
         {
-            await client.DownloadFile(file, stream, cancellationToken).ConfigureAwait(false);
+            await client.DownloadFileAsync(file, stream, cancellationToken).ConfigureAwait(false);
         }
 
         return new TelegramAttachmentDescriptor(
@@ -587,4 +631,29 @@ internal sealed class TelegramCodexBotHostedService : BackgroundService
                 : "chat";
 
     private sealed record AttachmentDownloadRequest(string FileId, string FileName, string? ContentType, bool IsImage);
+
+    private readonly record struct TelegramAudioMessage(string FileId, int DurationSeconds);
+}
+
+internal interface ITelegramUpdateFileClient
+{
+    Task<TGFile> GetFileAsync(string fileId, CancellationToken cancellationToken);
+
+    Task DownloadFileAsync(TGFile file, Stream destination, CancellationToken cancellationToken);
+}
+
+internal sealed class TelegramUpdateFileClient : ITelegramUpdateFileClient
+{
+    private readonly ITelegramBotClient _client;
+
+    public TelegramUpdateFileClient(ITelegramBotClient client)
+    {
+        _client = client;
+    }
+
+    public Task<TGFile> GetFileAsync(string fileId, CancellationToken cancellationToken)
+        => _client.GetFile(fileId, cancellationToken);
+
+    public Task DownloadFileAsync(TGFile file, Stream destination, CancellationToken cancellationToken)
+        => _client.DownloadFile(file, destination, cancellationToken);
 }

@@ -18,6 +18,10 @@ public sealed class TelegramBotOptions
 
     public int MaxTelegramMessageLength { get; set; } = 3500;
 
+    public int MinAudioDurationSeconds { get; set; } = 1;
+
+    public int MaxAudioDurationSeconds { get; set; } = 600;
+
     public string? SessionLogDirectory { get; set; }
 
     public TelegramOutboundOptions Outbound { get; set; } = new();

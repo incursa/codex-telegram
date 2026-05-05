@@ -12,6 +12,9 @@ namespace Incursa.Codex.Telegram.Services;
 
 internal sealed class OpenAiSpeechToTextService : IAudioTranscriptionService
 {
+    private const long MaxTranscriptionUploadBytes = 25L * 1024 * 1024;
+    private const long MinimumPlausibleAudioBytes = 16;
+
     private static readonly HashSet<string> DirectUploadExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
         ".mp3",
@@ -50,6 +53,10 @@ internal sealed class OpenAiSpeechToTextService : IAudioTranscriptionService
             throw new FileNotFoundException("Audio file was not found.", sourcePath);
         }
 
+        string apiKey = RequireApiKey();
+        string model = RequireModel();
+        EnsureSourceAudioFileIsUsable(sourcePath);
+
         string preparedPath = sourcePath;
         string? tempTranscodedPath = null;
 
@@ -64,13 +71,13 @@ internal sealed class OpenAiSpeechToTextService : IAudioTranscriptionService
             EnsureWithinOpenAiLimit(preparedPath);
             using FileStream fileStream = File.OpenRead(preparedPath);
             using MultipartFormDataContent form = new();
-            form.Add(new StringContent(RequireModel(), Encoding.UTF8), "model");
+            form.Add(new StringContent(model, Encoding.UTF8), "model");
             StreamContent fileContent = new(fileStream);
             fileContent.Headers.ContentType = new MediaTypeHeaderValue(GetContentType(preparedPath));
             form.Add(fileContent, "file", Path.GetFileName(preparedPath));
 
             using HttpRequestMessage request = new(HttpMethod.Post, BuildEndpoint());
-            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", RequireApiKey());
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
             request.Content = form;
 
             using HttpResponseMessage response = await _httpClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
@@ -129,6 +136,22 @@ internal sealed class OpenAiSpeechToTextService : IAudioTranscriptionService
 
     private bool IsDirectUploadSupported(string audioFilePath)
         => DirectUploadExtensions.Contains(Path.GetExtension(audioFilePath));
+
+    private static void EnsureSourceAudioFileIsUsable(string filePath)
+    {
+        FileInfo info = new(filePath);
+        if (info.Length == 0)
+        {
+            throw new InvalidOperationException("Audio file is empty.");
+        }
+
+        if (info.Length < MinimumPlausibleAudioBytes)
+        {
+            throw new InvalidOperationException("Audio file is too small to be a valid recording.");
+        }
+
+        EnsureWithinOpenAiLimit(filePath);
+    }
 
     private async Task<string> TranscodeToSupportedFormatAsync(string inputFilePath, CancellationToken cancellationToken)
     {
@@ -200,9 +223,8 @@ internal sealed class OpenAiSpeechToTextService : IAudioTranscriptionService
 
     private static void EnsureWithinOpenAiLimit(string filePath)
     {
-        const long maxBytes = 25 * 1024 * 1024;
         FileInfo info = new(filePath);
-        if (info.Length > maxBytes)
+        if (info.Length > MaxTranscriptionUploadBytes)
         {
             throw new InvalidOperationException($"Audio file '{info.Name}' is larger than the OpenAI transcription limit of 25 MB.");
         }

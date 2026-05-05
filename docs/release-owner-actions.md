@@ -2,6 +2,8 @@
 
 This file tracks work that needs the repository owner, a live Telegram account, private credentials, or public-release decisions. Agent-owned repo changes should not require any item in this file unless the item is explicitly handed back with results.
 
+Use `docs/demo-readiness.md` as the go/no-go scorecard that ties these owner actions to automated and manual evidence.
+
 ## Required Before Public Demo
 
 1. Choose the demo mode.

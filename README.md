@@ -5,7 +5,7 @@ Incursa.Codex.Telegram is a lightweight Telegram bot host for a local Codex inst
 The app does not bundle Codex, Telegram credentials, OpenAI credentials, or `ffmpeg`. Operators provide those on the machine that runs the bot.
 
 If you are setting this up for the first time, start with [docs/getting-started.md](docs/getting-started.md). It walks through BotFather setup, allowlists, configuration, first launch, private-chat usage, group usage, and troubleshooting in one place.
-For operations and restart behavior, use [docs/operations.md](docs/operations.md). Before a public demo or release tag, run the manual validation checklist in [docs/manual-test-plan.md](docs/manual-test-plan.md) and track owner-only release work in [docs/release-owner-actions.md](docs/release-owner-actions.md).
+For operations and restart behavior, use [docs/operations.md](docs/operations.md). Before a public demo or release tag, use the scorecard in [docs/demo-readiness.md](docs/demo-readiness.md), run the manual validation checklist in [docs/manual-test-plan.md](docs/manual-test-plan.md), and track owner-only release work in [docs/release-owner-actions.md](docs/release-owner-actions.md).
 
 ## Prerequisites
 
@@ -77,6 +77,7 @@ Important settings:
 - `CodexTelegram:Context:WorkingDirectory`: default Codex working directory.
 - `CodexTelegram:Workspace:DataRoot`: local JSON state root. Defaults to the user's application data folder, which is `%AppData%\Incursa\CodexTelegram` on Windows.
 - `Codex:CodexPathOverride`, `TelegramBot:CodexExecutablePath`, or `CODEX_PATH`: optional path to the local `codex` executable.
+- `TelegramBot:MinAudioDurationSeconds` and `TelegramBot:MaxAudioDurationSeconds`: reject suspiciously short or long Telegram audio before download.
 - `OpenAI:FfmpegPath`: optional `ffmpeg` path override if it is not on `PATH`.
 - `OpenAI:Model`: defaults to `whisper-1`.
 
@@ -164,6 +165,7 @@ The Telegram corpus gate can also be run directly when changing command parsing,
 ```
 
 Automated fuzz and mutation guidance is tracked in [docs/testing.md](docs/testing.md).
+Public-demo readiness is tracked in [docs/demo-readiness.md](docs/demo-readiness.md).
 Manual Telegram validation is tracked in [docs/manual-test-plan.md](docs/manual-test-plan.md).
 Owner-only release tasks are tracked in [docs/release-owner-actions.md](docs/release-owner-actions.md).
 Operational restart and local-state guidance is tracked in [docs/operations.md](docs/operations.md).

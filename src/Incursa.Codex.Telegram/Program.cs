@@ -119,6 +119,12 @@ builder.Services.PostConfigure<TelegramBotOptions>(options =>
 
     options.PollingTimeoutSeconds = Math.Clamp(options.PollingTimeoutSeconds, 1, 120);
     options.MaxTelegramMessageLength = Math.Clamp(options.MaxTelegramMessageLength, 1, 4000);
+    options.MinAudioDurationSeconds = Math.Clamp(options.MinAudioDurationSeconds, 0, 60);
+    options.MaxAudioDurationSeconds = Math.Clamp(options.MaxAudioDurationSeconds, 1, 6 * 60 * 60);
+    if (options.MaxAudioDurationSeconds < options.MinAudioDurationSeconds)
+    {
+        options.MaxAudioDurationSeconds = options.MinAudioDurationSeconds;
+    }
 });
 
 builder.Services.PostConfigure<TelegramOutboundOptions>(options =>
@@ -168,6 +174,7 @@ builder.Services.AddSingleton<ITelegramBotStateStore, TelegramBotStateStore>();
 builder.Services.AddSingleton<ICodexSessionManager, CodexGatewaySessionManager>();
 builder.Services.AddSingleton<ITelegramQueuedPromptProcessor, TelegramQueuedPromptProcessor>();
 builder.Services.AddSingleton<TelegramCodexBotCommandHandler>();
+builder.Services.AddSingleton<ITelegramCodexBotUpdateHandler>(sp => sp.GetRequiredService<TelegramCodexBotCommandHandler>());
 builder.Services.AddHostedService<CodexWarmupHostedService>();
 builder.Services.AddHostedService<TelegramCodexBotHostedService>();
 builder.Services.AddHostedService<TelegramQueuedPromptProcessorHostedService>();

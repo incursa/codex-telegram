@@ -70,12 +70,14 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
         }
 
         CodexOutboundMessageKind kind = Classify(entry);
-        if (entry.IsInternal && kind is not (CodexOutboundMessageKind.Error or CodexOutboundMessageKind.System))
+        if (entry.IsInternal && kind is not (CodexOutboundMessageKind.Error or CodexOutboundMessageKind.System or CodexOutboundMessageKind.Progress))
         {
             return;
         }
 
-        string? text = FormatEntry(entry, bufferedAgentMessage);
+        string? text = entry.IsInternal && kind == CodexOutboundMessageKind.Progress
+            ? FormatInternalProgressEntry(entry)
+            : FormatEntry(entry, bufferedAgentMessage);
         if (string.IsNullOrWhiteSpace(text))
         {
             return;

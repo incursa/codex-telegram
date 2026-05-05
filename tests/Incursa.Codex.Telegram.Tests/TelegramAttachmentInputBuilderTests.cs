@@ -64,6 +64,22 @@ public sealed class TelegramAttachmentInputBuilderTests
         Assert.Equal(document.FilePath, mention.Path);
     }
 
+    [Fact]
+    public void BuildInputItems_UsesTelegramDisplayNameOverTemporaryFileName()
+    {
+        TelegramAttachmentDescriptor document = new(
+            Path.Combine(Path.GetTempPath(), "codex-telegram", "upload-random.bin"),
+            "operator-notes.pdf",
+            "application/pdf",
+            IsImage: false);
+
+        IReadOnlyList<CodexInputItem> items = TelegramAttachmentInputBuilder.BuildInputItems(null, [document]);
+
+        CodexMentionInput mention = Assert.IsType<CodexMentionInput>(Assert.Single(items));
+        Assert.Equal("operator-notes.pdf", mention.Name);
+        Assert.Equal(document.FilePath, mention.Path);
+    }
+
     [Theory]
     [MemberData(nameof(TelegramTextCorpus))]
     public void BuildInputItems_DoesNotCorruptTelegramTextCorpus(string text)

@@ -216,7 +216,9 @@ If you prefer to edit JSON by hand, this is a good starting point:
     ],
     "AllowedChatIds": [],
     "DefaultWorkingDirectory": "C:\\src\\your-repo",
-    "CodexExecutablePath": ""
+    "CodexExecutablePath": "",
+    "MinAudioDurationSeconds": 1,
+    "MaxAudioDurationSeconds": 600
   },
   "OpenAI": {
     "ApiKey": "replace-with-your-openai-api-key",
@@ -252,10 +254,11 @@ Notes on that file:
 8. `OpenAI:Model` defaults to `whisper-1`.
 9. `OpenAI:BaseUrl` defaults to `https://api.openai.com/v1/`.
 10. `OpenAI:FfmpegPath` defaults to `ffmpeg`.
-11. `CodexTelegram:InitializeOnStart` controls whether the Codex gateway initializes during startup. Leave it `true` for normal bot use.
-12. `CodexTelegram:Context:WorkingDirectory` is the default Codex working directory.
-13. `CodexTelegram:Workspace:WorkspaceRoots` are the directories users may add as projects.
-14. The Codex submenu will query live model names and effort choices when the configured executable is reachable.
+11. `TelegramBot:MinAudioDurationSeconds` and `TelegramBot:MaxAudioDurationSeconds` reject suspiciously short or long Telegram audio before download.
+12. `CodexTelegram:InitializeOnStart` controls whether the Codex gateway initializes during startup. Leave it `true` for normal bot use.
+13. `CodexTelegram:Context:WorkingDirectory` is the default Codex working directory.
+14. `CodexTelegram:Workspace:WorkspaceRoots` are the directories users may add as projects.
+15. The Codex submenu will query live model names and effort choices when the configured executable is reachable.
 
 ## First Launch Checklist
 
@@ -419,8 +422,9 @@ The bot handles more than plain text.
 1. Voice notes are transcribed before they are sent to Codex.
 2. Audio transcription requires an OpenAI API key.
 3. `ffmpeg` is used when the bot needs to transcode voice notes or unsupported audio formats.
-4. Images and documents are forwarded to Codex.
-5. Large media files still have practical upload and API limits, so keep expectations realistic.
+4. The bot rejects audio shorter than `TelegramBot:MinAudioDurationSeconds` or longer than `TelegramBot:MaxAudioDurationSeconds` before download.
+5. Images and documents are forwarded to Codex.
+6. Large media files still have practical upload and API limits, so keep expectations realistic.
 
 If voice transcription fails, check these first:
 
