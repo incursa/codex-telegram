@@ -127,6 +127,7 @@ Useful commands:
 - `/new <name>`, `/sessions`, `/use <sessionId>`
 - `/status`, `/tail [lines]`, `/stop`
 - `/model`, `/thinking`
+- `/doctor` for in-chat diagnostics when setup, routing, or queueing feels unclear
 - `/topic new <name>` in forum-enabled supergroups
 - Voice notes are transcribed and sent to the active session.
 

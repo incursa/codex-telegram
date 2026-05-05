@@ -21,10 +21,11 @@ Record the date, operator, OS, published asset or commit SHA, Codex CLI version,
 4. Send `/projects` and confirm the response does not expose unrelated local paths.
 5. Send `/project add <absolute repository path>` for a directory under an allowed workspace root.
 6. Send `/project current` and confirm the selected project is correct.
-7. Send `/new <short name>` and confirm the reply summarizes the session without noisy status/model/thinking buttons.
-8. Send a normal text prompt and confirm live output returns to the private chat.
-9. Send `/tail`, `/status`, `/model`, and `/thinking` and confirm each command is understandable without stale or truncated buttons.
-10. Send `/stop` and confirm pending queued messages for the session are cleared.
+7. Send `/doctor` and confirm it explains access, routing, active project/session state, workspace roots, queue state, and a plausible next action.
+8. Send `/new <short name>` and confirm the reply summarizes the session without noisy status/model/thinking buttons.
+9. Send a normal text prompt and confirm live output returns to the private chat.
+10. Send `/tail`, `/status`, `/model`, and `/thinking` and confirm each command is understandable without stale or truncated buttons.
+11. Send `/stop` and confirm pending queued messages for the session are cleared.
 
 ## Authorization
 
@@ -38,14 +39,15 @@ Record the date, operator, OS, published asset or commit SHA, Codex CLI version,
 
 1. Add the bot to a normal group and record the group chat ID with `/whoami`.
 2. Add that chat ID to `TelegramBot:AllowedChatIds`.
-3. Send plain text to the group root and confirm the bot explains that it was not sent to Codex.
-4. With privacy mode enabled, confirm `/send <text>` works and plain text behavior matches Telegram privacy expectations.
-5. If plain group text is part of the demo, disable privacy mode in BotFather, re-add the bot if needed, and confirm ordinary text routes only in the intended topic or private chat.
-6. In a forum-enabled supergroup, run `/topic new <name>` with the bot missing topic-management rights and confirm the error is understandable.
-7. Grant the needed topic rights and rerun `/topic new <name>`.
-8. Send messages in two topics and confirm each topic remains bound to its own session.
-9. Close, delete, or otherwise invalidate a test topic when practical and confirm topic-scoped output is not retried in the group root.
-10. Restart the process and confirm topic/session bindings rehydrate from local state.
+3. Send `/doctor` in the group root and confirm it clearly says root messages do not auto-route.
+4. Send plain text to the group root and confirm the bot explains that it was not sent to Codex.
+5. With privacy mode enabled, confirm `/send <text>` works and plain text behavior matches Telegram privacy expectations.
+6. If plain group text is part of the demo, disable privacy mode in BotFather, re-add the bot if needed, and confirm ordinary text routes only in the intended topic or private chat.
+7. In a forum-enabled supergroup, run `/topic new <name>` with the bot missing topic-management rights and confirm the error is understandable.
+8. Grant the needed topic rights and rerun `/topic new <name>`.
+9. Send messages in two topics and confirm each topic remains bound to its own session.
+10. Close, delete, or otherwise invalidate a test topic when practical and confirm topic-scoped output is not retried in the group root.
+11. Restart the process and confirm topic/session bindings rehydrate from local state.
 
 ## Voice And Attachments
 

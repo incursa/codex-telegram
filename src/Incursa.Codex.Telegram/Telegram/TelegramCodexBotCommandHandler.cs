@@ -219,6 +219,11 @@ public sealed class TelegramCodexBotCommandHandler
                 case "status":
                     await HandleStatusAsync(message, command.Arguments, sender, cancellationToken).ConfigureAwait(false);
                     break;
+                case "doctor":
+                case "diag":
+                case "diagnostics":
+                    await HandleDoctorAsync(message, sender, cancellationToken).ConfigureAwait(false);
+                    break;
                 case "outbound":
                     await HandleOutboundAsync(message, command.Arguments, sender, cancellationToken).ConfigureAwait(false);
                     break;
@@ -1201,6 +1206,24 @@ public sealed class TelegramCodexBotCommandHandler
         await ReplyAsync(sender, message, FormatOutboundStatus(status, message.ConversationScope.ChatId), null, cancellationToken).ConfigureAwait(false);
     }
 
+    private async Task HandleDoctorAsync(TelegramInboundMessage message, ITelegramBotMessageSender sender, CancellationToken cancellationToken)
+    {
+        StringBuilder builder = new();
+        builder.AppendLine("Codex Telegram doctor");
+        builder.AppendLine();
+        builder.AppendLine(FormatDoctorConversation(message));
+        builder.AppendLine();
+        await AppendDoctorProjectAndSessionAsync(builder, message, cancellationToken).ConfigureAwait(false);
+        builder.AppendLine();
+        AppendDoctorWorkspace(builder);
+        builder.AppendLine();
+        await AppendDoctorOutboundAsync(builder, message, cancellationToken).ConfigureAwait(false);
+        builder.AppendLine();
+        builder.AppendLine(await BuildDoctorNextActionAsync(message, cancellationToken).ConfigureAwait(false));
+
+        await ReplyAsync(sender, message, builder.ToString().TrimEnd(), null, cancellationToken).ConfigureAwait(false);
+    }
+
     private async Task HandleStopAsync(TelegramInboundMessage message, string arguments, ITelegramBotMessageSender sender, CancellationToken cancellationToken)
     {
         ResolvedSession resolved = string.IsNullOrWhiteSpace(arguments)
@@ -1562,6 +1585,7 @@ public sealed class TelegramCodexBotCommandHandler
             "/thinking <minimal|low|medium|high|xhigh> - change the selected session thinking effort",
             "/tail [count] - show recent output and keep following the session live",
             "/status [sessionId] - show session status",
+            "/doctor - explain authorization, routing, active project/session, workspace roots, and queue state",
             "/outbound - show outbound Telegram queue status",
             "/stop [sessionId] - gracefully stop a session",
             "/restart confirm - explain how to restart this standalone process",
@@ -1782,6 +1806,179 @@ public sealed class TelegramCodexBotCommandHandler
         }
 
         return builder.ToString().TrimEnd();
+    }
+
+    private string FormatDoctorConversation(TelegramInboundMessage message)
+    {
+        bool userAllowed = _options.AllowedUserIds.Contains(message.UserId);
+        bool chatNeedsAllowlist = !IsPrivateChat(message);
+        bool chatAllowed = !chatNeedsAllowlist || _options.AllowedChatIds.Contains(message.ChatId);
+        bool authorized = IsAuthorized(message);
+        string routing = CanRoutePlainText(message)
+            ? "Plain text, audio, and attachments can auto-route in this conversation."
+            : "Plain text and attachments do not auto-route from this chat root. Use /send <text>, open a forum topic, or message me privately.";
+
+        return string.Join(Environment.NewLine, [
+            "Conversation:",
+            $"- Chat: {message.ChatId.ToString(CultureInfo.InvariantCulture)} ({DescribeChat(message)})",
+            $"- Topic thread: {message.MessageThreadId?.ToString(CultureInfo.InvariantCulture) ?? "<none>"}",
+            $"- User allowlist: {(userAllowed ? "allowed" : "not allowed")}",
+            $"- Chat allowlist: {(chatNeedsAllowlist ? chatAllowed ? "allowed" : "not allowed" : "not required for private chat")}",
+            $"- Effective access: {(authorized ? "allowed" : "blocked except /whoami")}",
+            $"- Routing: {routing}"
+        ]);
+    }
+
+    private async Task AppendDoctorProjectAndSessionAsync(StringBuilder builder, TelegramInboundMessage message, CancellationToken cancellationToken)
+    {
+        builder.AppendLine("Project and session:");
+
+        try
+        {
+            IReadOnlyList<ProjectChoice> projects = await ListProjectChoicesAsync(cancellationToken).ConfigureAwait(false);
+            string? activeProject = await _stateStore.GetActiveProjectWorkingDirectoryAsync(message.ConversationScope, cancellationToken).ConfigureAwait(false);
+            ProjectChoice? project = string.IsNullOrWhiteSpace(activeProject)
+                ? null
+                : projects.FirstOrDefault(candidate => PathComparer.Equals(candidate.WorkingDirectory, activeProject));
+
+            builder.AppendLine($"- Known projects: {projects.Count.ToString(CultureInfo.InvariantCulture)}");
+            builder.AppendLine(project is null
+                ? "- Active project: <none>"
+                : $"- Active project: {project.Name} ({project.WorkingDirectory})");
+        }
+        catch (Exception exception)
+        {
+            builder.AppendLine($"- Project state: unavailable ({exception.Message})");
+        }
+
+        try
+        {
+            IReadOnlyCollection<CodexSessionSummary> sessions = await _sessionManager.ListSessionsAsync(cancellationToken).ConfigureAwait(false);
+            string? activeSessionId = await _stateStore.GetActiveSessionIdAsync(message.ConversationScope, cancellationToken).ConfigureAwait(false);
+            CodexSessionSummary? activeSession = string.IsNullOrWhiteSpace(activeSessionId)
+                ? null
+                : sessions.FirstOrDefault(session => string.Equals(session.Id, activeSessionId, StringComparison.OrdinalIgnoreCase));
+
+            builder.AppendLine($"- Known sessions: {sessions.Count.ToString(CultureInfo.InvariantCulture)}");
+            builder.AppendLine(activeSession is null
+                ? "- Active session: <none>"
+                : $"- Active session: {activeSession.Name} ({FormatStatusValue(activeSession.Status)}, {FormatRelativeAge(activeSession.LastActivityUtc)})");
+        }
+        catch (Exception exception)
+        {
+            builder.AppendLine($"- Session state: unavailable ({exception.Message})");
+        }
+    }
+
+    private void AppendDoctorWorkspace(StringBuilder builder)
+    {
+        builder.AppendLine("Workspace:");
+        try
+        {
+            CodexWorkspaceOverviewVm overview = _workspaceBrowser.GetWorkspaceOverview();
+            builder.AppendLine($"- Server platform: {overview.ServerPlatform}");
+            builder.AppendLine($"- Process directory: {overview.CurrentWorkingDirectory}");
+            builder.AppendLine($"- Default working directory: {overview.ConfiguredWorkingDirectory ?? "<none>"}");
+            builder.AppendLine($"- Workspace roots: {overview.WorkspaceRoots.Count.ToString(CultureInfo.InvariantCulture)}");
+
+            foreach (CodexWorkspaceRootVm root in overview.WorkspaceRoots.Take(4))
+            {
+                builder.AppendLine($"  - {root.Path} ({root.Status})");
+            }
+
+            if (overview.WorkspaceRoots.Count > 4)
+            {
+                builder.AppendLine($"  - ... {overview.WorkspaceRoots.Count - 4} more");
+            }
+        }
+        catch (Exception exception)
+        {
+            builder.AppendLine($"- Workspace state: unavailable ({exception.Message})");
+        }
+    }
+
+    private async Task AppendDoctorOutboundAsync(StringBuilder builder, TelegramInboundMessage message, CancellationToken cancellationToken)
+    {
+        builder.AppendLine("Outbound queue:");
+        try
+        {
+            TelegramOutboundQueueStatus status = await _outboundQueue.GetStatusAsync(cancellationToken).ConfigureAwait(false);
+            builder.AppendLine($"- Pending messages: {status.PendingMessageCount.ToString(CultureInfo.InvariantCulture)}");
+            builder.AppendLine($"- Pending chunks: {status.PendingChunkCount.ToString(CultureInfo.InvariantCulture)}");
+            builder.AppendLine($"- Pending destinations: {status.PendingDestinationCount.ToString(CultureInfo.InvariantCulture)}");
+
+            TelegramOutboundDestinationStatus? current = status.Destinations.FirstOrDefault(destination =>
+                destination.ChatId == message.ChatId
+                && destination.MessageThreadId == message.MessageThreadId);
+            if (current is not null)
+            {
+                builder.AppendLine($"- This conversation: {current.PendingMessageCount.ToString(CultureInfo.InvariantCulture)} messages, {current.PendingChunkCount.ToString(CultureInfo.InvariantCulture)} chunks");
+            }
+
+            if (status.GlobalBackoffUntilUtc is { } backoff)
+            {
+                builder.AppendLine($"- Global backoff until: {backoff:u}");
+            }
+        }
+        catch (Exception exception)
+        {
+            builder.AppendLine($"- Queue state: unavailable ({exception.Message})");
+        }
+    }
+
+    private async Task<string> BuildDoctorNextActionAsync(TelegramInboundMessage message, CancellationToken cancellationToken)
+    {
+        bool userAllowed = _options.AllowedUserIds.Contains(message.UserId);
+        if (!userAllowed)
+        {
+            return "Next: add this Telegram user ID to TelegramBot:AllowedUserIds, then restart or relaunch if your configuration source does not reload.";
+        }
+
+        if (!IsPrivateChat(message) && !_options.AllowedChatIds.Contains(message.ChatId))
+        {
+            return "Next: add this chat ID to TelegramBot:AllowedChatIds, or continue in a private chat.";
+        }
+
+        if (!CanRoutePlainText(message))
+        {
+            return "Next: use /send <text>, open a forum topic, or message me privately. I will not silently send group-root messages to Codex.";
+        }
+
+        try
+        {
+            string? activeProject = await _stateStore.GetActiveProjectWorkingDirectoryAsync(message.ConversationScope, cancellationToken).ConfigureAwait(false);
+            if (string.IsNullOrWhiteSpace(activeProject))
+            {
+                return "Next: use /projects or /project add <absolute directory path>, then /new <name>.";
+            }
+
+            string? activeSessionId = await _stateStore.GetActiveSessionIdAsync(message.ConversationScope, cancellationToken).ConfigureAwait(false);
+            if (string.IsNullOrWhiteSpace(activeSessionId))
+            {
+                return "Next: use /new <name>, or just send a message to start a session in the active project.";
+            }
+        }
+        catch
+        {
+            return "Next: use /projects and /sessions to refresh local state; check the terminal logs if either command fails.";
+        }
+
+        return "Next: send a normal message to continue, or use /status, /tail, /model, /thinking, and /outbound if something seems off.";
+    }
+
+    private static string DescribeChat(TelegramInboundMessage message)
+    {
+        if (IsPrivateChat(message))
+        {
+            return "private chat";
+        }
+
+        if (message.MessageThreadId is not null)
+        {
+            return $"{message.ChatType} topic";
+        }
+
+        return $"{message.ChatType} root";
     }
 
     private static string FormatModelSettings(CodexSessionModelSettings settings)

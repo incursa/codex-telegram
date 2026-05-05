@@ -85,6 +85,7 @@ This file tracks work that needs the repository owner, a live Telegram account, 
    - Start bot.
    - Show `/whoami`.
    - Show `/projects`.
+   - Show `/doctor`.
    - Create a session with `/new`.
    - Send one practical prompt.
    - Show `/tail` or `/status`.

@@ -359,7 +359,7 @@ Suggested sequence:
 4. Start a session with `/new <name>`.
 5. Send a plain text message.
 6. Confirm the bot replies with active-session output.
-7. Try `/tail`, `/status`, `/model`, and `/thinking`.
+7. Try `/doctor`, `/tail`, `/status`, `/model`, and `/thinking`.
 
 If that flow works, the core integration is healthy.
 
@@ -457,6 +457,7 @@ The bot's built-in help text is the final authority, but this is the practical s
 | `/thinking <minimal|low|medium|high|xhigh>` | Changes the reasoning effort for the selected session. | Use when you want more or less reasoning budget. |
 | `/tail [count]` | Shows recent output and keeps following the session. | Use while waiting on a live turn. |
 | `/status [sessionId]` | Shows session status. | Use when you want a quick health check. |
+| `/doctor` | Explains authorization, routing, active project/session, workspace roots, outbound queue state, and the next best action. | Use when setup, group routing, or output delivery feels unclear. |
 | `/outbound` | Shows outbound Telegram queue status. | Use when messages seem delayed or missing. |
 | `/stop [sessionId]` | Gracefully stops a session. | Use when you want to end work cleanly. |
 | `/restart confirm` | Explains that restart is managed outside this standalone process. | Use when you need the correct restart procedure for your terminal, service manager, or scheduled task. |

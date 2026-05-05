@@ -192,6 +192,70 @@ public sealed class TelegramCommandHandlerTests
     }
 
     [Fact]
+    public async Task HandleMessageAsync_DoctorExplainsPrivateChatSetupAndNextAction()
+    {
+        using CommandHandlerHarness harness = CommandHandlerHarness.Create();
+
+        await harness.Handler.HandleMessageAsync(
+            new TelegramInboundMessage(1234, 5555, "private", "/doctor"),
+            harness.Sender,
+            CancellationToken.None);
+
+        SentTelegramMessage sent = Assert.Single(harness.Sender.Sent);
+        Assert.Contains("Codex Telegram doctor", sent.Text);
+        Assert.Contains("Effective access: allowed", sent.Text);
+        Assert.Contains("Routing: Plain text, audio, and attachments can auto-route", sent.Text);
+        Assert.Contains("Active project: <none>", sent.Text);
+        Assert.Contains("Next: use /projects or /project add", sent.Text);
+    }
+
+    [Fact]
+    public async Task HandleMessageAsync_DoctorExplainsGroupRootRouting()
+    {
+        using CommandHandlerHarness harness = CommandHandlerHarness.Create(new TelegramBotOptions
+        {
+            AllowedUserIds = [1234],
+            AllowedChatIds = [-1005555],
+        });
+
+        await harness.Handler.HandleMessageAsync(
+            new TelegramInboundMessage(1234, -1005555, "supergroup", "/doctor"),
+            harness.Sender,
+            CancellationToken.None);
+
+        SentTelegramMessage sent = Assert.Single(harness.Sender.Sent);
+        Assert.Contains("supergroup root", sent.Text);
+        Assert.Contains("Plain text and attachments do not auto-route", sent.Text);
+        Assert.Contains("Next: use /send <text>", sent.Text);
+    }
+
+    [Fact]
+    public async Task HandleMessageAsync_DoctorExplainsReadyConversation()
+    {
+        using CommandHandlerHarness harness = CommandHandlerHarness.Create();
+        string projectPath = harness.Temp.CreateDirectory("repo");
+        TelegramConversationScope conversation = new(5555, null);
+        harness.ProjectCatalog.Projects.Add(new CodexProjectCatalogRecord
+        {
+            WorkingDirectory = projectPath,
+            AddedAt = DateTimeOffset.Parse("2026-05-04T00:00:00Z"),
+        });
+        harness.SessionManager.Sessions.Add(CreateSession("thread-1", "Demo session", projectPath));
+        await harness.StateStore.SetActiveProjectWorkingDirectoryAsync(conversation, projectPath, CancellationToken.None);
+        await harness.StateStore.SetActiveSessionIdAsync(conversation, "thread-1", CancellationToken.None);
+
+        await harness.Handler.HandleMessageAsync(
+            new TelegramInboundMessage(1234, conversation.ChatId, "private", "/doctor"),
+            harness.Sender,
+            CancellationToken.None);
+
+        SentTelegramMessage sent = Assert.Single(harness.Sender.Sent);
+        Assert.Contains("Active project: repo", sent.Text);
+        Assert.Contains("Active session: Demo session", sent.Text);
+        Assert.Contains("Next: send a normal message", sent.Text);
+    }
+
+    [Fact]
     public async Task HandleMessageAsync_NewSessionReplyDoesNotShowRedundantSessionControls()
     {
         using CommandHandlerHarness harness = CommandHandlerHarness.Create();

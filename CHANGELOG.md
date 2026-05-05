@@ -12,6 +12,7 @@
 - Added tests for button labels, authorization, outbound queue behavior, local settings, state persistence, and OpenAI transcription error boundaries.
 - Added checked-in Telegram fuzz corpus coverage for command-like text, emoji intent, Unicode boundaries, formatting-like input, chunking, and attachment mapping.
 - Added a scoped Telegram mutation-testing script and Stryker configuration for parser, chunker, attachment, sender, and topic-scope seams.
+- Added `/doctor` in-chat diagnostics for authorization, routing, project/session state, workspace roots, outbound queue status, and the next best action.
 - Added group-root plain-text guidance so allowed users are not left with a silent no-op when they accidentally send outside a topic.
 - Changed stale/deleted topic send failures to fail closed instead of retrying Codex output in the group root.
 - Reduced model/thinking update latency by avoiding a redundant model-list lookup after settings changes.
