@@ -60,6 +60,8 @@ gh secret set INCURSA_CONTRIBUTOR_AGREEMENTS_TOKEN --repo incursa/codex-telegram
 
 The workflow runs on `pull_request_target` and selected pull request comments. It does not check out or execute pull request code.
 
+Comments and statuses are published through `secrets.GITHUB_TOKEN`, so GitHub shows the actor as `github-actions[bot]`. The message text is customized for Incursa, but the bot name and avatar are not customizable without moving to a GitHub App or a dedicated machine-user token.
+
 If a contributor has not signed, the action comments with the contributor agreement link and the exact phrase to post:
 
 ```text
