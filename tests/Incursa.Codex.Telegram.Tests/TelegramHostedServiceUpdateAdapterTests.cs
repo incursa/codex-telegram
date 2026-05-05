@@ -179,6 +179,90 @@ public sealed class TelegramHostedServiceUpdateAdapterTests
     }
 
     [Fact]
+    public async Task HandleUpdateAsync_RejectsGroupRootAttachmentWithoutRequestingFile()
+    {
+        using Harness harness = Harness.Create();
+        Message telegramMessage = CreateMessage(caption: "read this", chatId: -1005555, chatType: ChatType.Supergroup);
+        telegramMessage.Document = new Document
+        {
+            FileId = "doc-file",
+            FileUniqueId = "doc-file-u",
+            FileName = "notes.pdf",
+            MimeType = "application/pdf",
+        };
+        Update update = new()
+        {
+            Id = 29,
+            Message = telegramMessage,
+        };
+
+        await harness.Service.HandleUpdateAsync(harness.FileClient, update, harness.Sender, CancellationToken.None);
+
+        Assert.Empty(harness.Handler.Messages);
+        Assert.Empty(harness.FileClient.RequestedFileIds);
+        Assert.Empty(harness.FileClient.DownloadedFileIds);
+        SentTelegramMessage sent = Assert.Single(harness.Sender.Sent);
+        Assert.Equal(new TelegramConversationScope(-1005555, null), sent.Conversation);
+        Assert.Contains("group root", sent.Text);
+        Assert.Contains("did not send it to Codex", sent.Text);
+    }
+
+    [Fact]
+    public async Task HandleUpdateAsync_ForwardsGroupRootCommandWithoutDownloadingAttachment()
+    {
+        using Harness harness = Harness.Create();
+        Message telegramMessage = CreateMessage(caption: "/projects", chatId: -1005555, chatType: ChatType.Supergroup);
+        telegramMessage.Document = new Document
+        {
+            FileId = "doc-file",
+            FileUniqueId = "doc-file-u",
+            FileName = "notes.pdf",
+            MimeType = "application/pdf",
+        };
+        Update update = new()
+        {
+            Id = 30,
+            Message = telegramMessage,
+        };
+
+        await harness.Service.HandleUpdateAsync(harness.FileClient, update, harness.Sender, CancellationToken.None);
+
+        TelegramInboundMessage message = Assert.Single(harness.Handler.Messages);
+        Assert.Equal("/projects", message.Text);
+        Assert.Null(message.Attachments);
+        Assert.Empty(harness.FileClient.RequestedFileIds);
+        Assert.Empty(harness.FileClient.DownloadedFileIds);
+        Assert.Empty(harness.Sender.Sent);
+    }
+
+    [Fact]
+    public async Task HandleUpdateAsync_DownloadsGroupRootSendCommandAttachment()
+    {
+        using Harness harness = Harness.Create();
+        Message telegramMessage = CreateMessage(caption: "/send inspect this", chatId: -1005555, chatType: ChatType.Supergroup);
+        telegramMessage.Document = new Document
+        {
+            FileId = "doc-file",
+            FileUniqueId = "doc-file-u",
+            FileName = "notes.pdf",
+            MimeType = "application/pdf",
+        };
+        Update update = new()
+        {
+            Id = 31,
+            Message = telegramMessage,
+        };
+
+        await harness.Service.HandleUpdateAsync(harness.FileClient, update, harness.Sender, CancellationToken.None);
+
+        TelegramInboundMessage message = Assert.Single(harness.Handler.Messages);
+        Assert.Equal("/send inspect this", message.Text);
+        Assert.Single(message.Attachments ?? []);
+        Assert.Equal(["doc-file"], harness.FileClient.RequestedFileIds);
+        Assert.Equal(["doc-file"], harness.FileClient.DownloadedFileIds);
+    }
+
+    [Fact]
     public async Task HandleUpdateAsync_MapsImageDocumentFallbackNameAndImageFlag()
     {
         using Harness harness = Harness.Create();

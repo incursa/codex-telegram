@@ -185,7 +185,13 @@ internal sealed class TelegramCodexBotHostedService : BackgroundService
 
             string? text = message.Text ?? message.Caption;
             IReadOnlyList<TelegramAttachmentDescriptor>? attachments = null;
-            if (HasAttachments(message))
+            AttachmentHandlingDecision attachmentDecision = await ResolveAttachmentHandlingAsync(message, sender, cancellationToken).ConfigureAwait(false);
+            if (attachmentDecision is AttachmentHandlingDecision.Reject)
+            {
+                return;
+            }
+
+            if (attachmentDecision is AttachmentHandlingDecision.Download)
             {
                 try
                 {
@@ -353,6 +359,40 @@ internal sealed class TelegramCodexBotHostedService : BackgroundService
             null,
             cancellationToken).ConfigureAwait(false);
         return false;
+    }
+
+    private static async Task<AttachmentHandlingDecision> ResolveAttachmentHandlingAsync(
+        Message message,
+        ITelegramBotMessageSender sender,
+        CancellationToken cancellationToken)
+    {
+        if (!HasAttachments(message))
+        {
+            return AttachmentHandlingDecision.Skip;
+        }
+
+        string chatType = message.Chat.Type.ToString();
+        if (TelegramRoutingPolicy.CanAutoRoute(chatType, message.MessageThreadId))
+        {
+            return AttachmentHandlingDecision.Download;
+        }
+
+        if (IsSendCommandWithArguments(message))
+        {
+            return AttachmentHandlingDecision.Download;
+        }
+
+        if (IsCommandMessage(message))
+        {
+            return AttachmentHandlingDecision.Skip;
+        }
+
+        await sender.SendTextMessageAsync(
+            new TelegramConversationScope(message.Chat.Id, message.MessageThreadId),
+            TelegramRoutingPolicy.BuildNotRoutedMessage(chatType),
+            null,
+            cancellationToken).ConfigureAwait(false);
+        return AttachmentHandlingDecision.Reject;
     }
 
     private string? BuildAudioRejectionMessage(TelegramAudioMessage audioMessage)
@@ -618,28 +658,45 @@ internal sealed class TelegramCodexBotHostedService : BackgroundService
     }
 
     private static bool IsWhoAmIMessage(Message message)
+        => TryGetCommand(message, out string commandToken, out _)
+            && commandToken.Equals("whoami", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsCommandMessage(Message message)
+        => TryGetCommand(message, out _, out _);
+
+    private static bool IsSendCommandWithArguments(Message message)
+        => TryGetCommand(message, out string commandToken, out string arguments)
+            && commandToken.Equals("send", StringComparison.OrdinalIgnoreCase)
+            && !string.IsNullOrWhiteSpace(arguments);
+
+    private static bool TryGetCommand(Message message, out string commandToken, out string arguments)
     {
         string? text = message.Text ?? message.Caption;
         if (string.IsNullOrWhiteSpace(text))
         {
+            commandToken = string.Empty;
+            arguments = string.Empty;
             return false;
         }
 
         string normalized = text.Trim();
         if (!normalized.StartsWith("/", StringComparison.Ordinal))
         {
+            commandToken = string.Empty;
+            arguments = string.Empty;
             return false;
         }
 
         int separatorIndex = normalized.IndexOfAny([' ', '\t', '\r', '\n']);
-        string commandToken = separatorIndex < 0 ? normalized[1..] : normalized[1..separatorIndex];
+        commandToken = separatorIndex < 0 ? normalized[1..] : normalized[1..separatorIndex];
+        arguments = separatorIndex < 0 ? string.Empty : normalized[(separatorIndex + 1)..].Trim();
         int mentionIndex = commandToken.IndexOf('@', StringComparison.Ordinal);
         if (mentionIndex >= 0)
         {
             commandToken = commandToken[..mentionIndex];
         }
 
-        return commandToken.Equals("whoami", StringComparison.OrdinalIgnoreCase);
+        return commandToken.Length > 0;
     }
 
     private static long GetSenderId(Message message)
@@ -657,6 +714,13 @@ internal sealed class TelegramCodexBotHostedService : BackgroundService
     private sealed record AttachmentDownloadRequest(string FileId, string FileName, string? ContentType, bool IsImage);
 
     private readonly record struct TelegramAudioMessage(string FileId, int DurationSeconds);
+
+    private enum AttachmentHandlingDecision
+    {
+        Skip,
+        Download,
+        Reject,
+    }
 }
 
 internal interface ITelegramUpdateFileClient
