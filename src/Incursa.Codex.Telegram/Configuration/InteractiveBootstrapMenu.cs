@@ -162,10 +162,13 @@ internal static class InteractiveBootstrapMenu
             Console.WriteLine($"API key: {FormatConfigured(snapshot.OpenAiApiKeyConfigured)}");
             Console.WriteLine($"Model: {FormatValue(snapshot.OpenAiModel, "whisper-1")}");
             Console.WriteLine($"ffmpeg path: {FormatValue(snapshot.OpenAiFfmpegPath, "ffmpeg")}");
+            Console.WriteLine($"Audio duration limits: {FormatSeconds(snapshot.MinAudioDurationSeconds ?? 1)} to {FormatSeconds(snapshot.MaxAudioDurationSeconds ?? 600)}");
             Console.WriteLine();
             Console.WriteLine("1. Set API key");
             Console.WriteLine("2. Pick transcription model");
             Console.WriteLine("3. Set ffmpeg path");
+            Console.WriteLine("4. Set minimum audio duration");
+            Console.WriteLine("5. Set maximum audio duration");
             Console.WriteLine("B. Back");
             Console.WriteLine();
 
@@ -190,6 +193,28 @@ internal static class InteractiveBootstrapMenu
                         store.SetOpenAiFfmpegPath,
                         store,
                         "ffmpeg");
+                    break;
+
+                case "4":
+                    SetInt32(
+                        "minimum audio duration seconds",
+                        snapshot.MinAudioDurationSeconds,
+                        1,
+                        0,
+                        60,
+                        store.SetMinAudioDurationSeconds,
+                        store);
+                    break;
+
+                case "5":
+                    SetInt32(
+                        "maximum audio duration seconds",
+                        snapshot.MaxAudioDurationSeconds,
+                        600,
+                        1,
+                        6 * 60 * 60,
+                        store.SetMaxAudioDurationSeconds,
+                        store);
                     break;
 
                 case "b":
@@ -893,6 +918,46 @@ internal static class InteractiveBootstrapMenu
         SaveAndPause(store);
     }
 
+    private static void SetInt32(
+        string label,
+        int? currentValue,
+        int defaultValue,
+        int minValue,
+        int maxValue,
+        Action<int?> assign,
+        LocalSettingsStore store)
+    {
+        string input = ReadLine($"{label} [{currentValue?.ToString(CultureInfo.InvariantCulture) ?? defaultValue.ToString(CultureInfo.InvariantCulture)}] (blank keeps; !clear restores default): ");
+        if (string.IsNullOrWhiteSpace(input))
+        {
+            return;
+        }
+
+        if (IsClear(input))
+        {
+            assign(null);
+            SaveAndPause(store);
+            return;
+        }
+
+        if (!int.TryParse(input, NumberStyles.Integer, CultureInfo.InvariantCulture, out int value))
+        {
+            Console.WriteLine($"'{input}' is not a valid integer.");
+            Pause();
+            return;
+        }
+
+        if (value < minValue || value > maxValue)
+        {
+            Console.WriteLine($"{label} must be between {minValue.ToString(CultureInfo.InvariantCulture)} and {maxValue.ToString(CultureInfo.InvariantCulture)}.");
+            Pause();
+            return;
+        }
+
+        assign(value);
+        SaveAndPause(store);
+    }
+
     private static bool TryParseLongList(string input, out long[] values, out string error)
     {
         string[] tokens = input.Split([',', ';', ' ', '\t', '\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
@@ -1065,6 +1130,9 @@ internal static class InteractiveBootstrapMenu
 
     private static string FormatStringList(IReadOnlyList<string> values, string fallback)
         => values.Count == 0 ? fallback : string.Join("; ", values);
+
+    private static string FormatSeconds(int seconds)
+        => seconds == 1 ? "1 second" : $"{seconds.ToString(CultureInfo.InvariantCulture)} seconds";
 
     private static string GetDefaultDataRoot()
     {

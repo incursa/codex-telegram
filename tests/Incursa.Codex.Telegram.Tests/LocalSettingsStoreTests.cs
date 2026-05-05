@@ -21,6 +21,8 @@ public sealed class LocalSettingsStoreTests
         store.SetOpenAiApiKey("openai-key");
         store.SetOpenAiModel("gpt-4o-mini-transcribe");
         store.SetOpenAiFfmpegPath("C:\\tools\\ffmpeg.exe");
+        store.SetMinAudioDurationSeconds(2);
+        store.SetMaxAudioDurationSeconds(120);
         store.SetCodexPathOverride("C:\\tools\\codex.exe");
         store.SetInitializeOnStart(false);
         store.SetWorkingDirectory(workingDirectory);
@@ -42,6 +44,8 @@ public sealed class LocalSettingsStoreTests
         Assert.True(snapshot.OpenAiApiKeyConfigured);
         Assert.Equal("gpt-4o-mini-transcribe", snapshot.OpenAiModel);
         Assert.Equal("C:\\tools\\ffmpeg.exe", snapshot.OpenAiFfmpegPath);
+        Assert.Equal(2, snapshot.MinAudioDurationSeconds);
+        Assert.Equal(120, snapshot.MaxAudioDurationSeconds);
         Assert.Equal("C:\\tools\\codex.exe", snapshot.CodexPathOverride);
         Assert.False(snapshot.InitializeOnStart);
         Assert.Equal(workingDirectory, snapshot.WorkingDirectory);
@@ -97,5 +101,28 @@ public sealed class LocalSettingsStoreTests
         LocalSettingsSnapshot snapshot = LocalSettingsStore.Load(settingsPath).GetSnapshot();
 
         Assert.Equal("C:\\tools\\codex.exe", snapshot.TelegramBotCodexExecutablePath);
+    }
+
+    [Fact]
+    public void LoadReadsAudioDurationLimitsFromNumbersOrStrings()
+    {
+        using TemporaryDirectory temp = TemporaryDirectory.Create();
+        string settingsPath = Path.Combine(temp.Path, "appsettings.Local.json");
+
+        File.WriteAllText(
+            settingsPath,
+            """
+            {
+              "TelegramBot": {
+                "MinAudioDurationSeconds": "2",
+                "MaxAudioDurationSeconds": 300
+              }
+            }
+            """);
+
+        LocalSettingsSnapshot snapshot = LocalSettingsStore.Load(settingsPath).GetSnapshot();
+
+        Assert.Equal(2, snapshot.MinAudioDurationSeconds);
+        Assert.Equal(300, snapshot.MaxAudioDurationSeconds);
     }
 }

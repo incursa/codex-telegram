@@ -8,6 +8,8 @@ internal sealed record LocalSettingsSnapshot(
     bool OpenAiApiKeyConfigured,
     string? OpenAiModel,
     string? OpenAiFfmpegPath,
+    int? MinAudioDurationSeconds,
+    int? MaxAudioDurationSeconds,
     string? CodexPathOverride,
     string? TelegramBotCodexExecutablePath,
     bool InitializeOnStart,

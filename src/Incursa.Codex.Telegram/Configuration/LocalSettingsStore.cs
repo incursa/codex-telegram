@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 
@@ -58,6 +59,8 @@ internal sealed class LocalSettingsStore
             !string.IsNullOrWhiteSpace(GetString("OpenAI", "ApiKey")),
             GetString("OpenAI", "Model"),
             GetString("OpenAI", "FfmpegPath"),
+            GetInt32("TelegramBot", "MinAudioDurationSeconds"),
+            GetInt32("TelegramBot", "MaxAudioDurationSeconds"),
             GetString("Codex", "CodexPathOverride"),
             GetString("TelegramBot", "CodexExecutablePath"),
             GetBool("CodexTelegram", "InitializeOnStart") ?? true,
@@ -101,6 +104,12 @@ internal sealed class LocalSettingsStore
 
     public void SetOpenAiFfmpegPath(string? value)
         => SetString(value, "OpenAI", "FfmpegPath");
+
+    public void SetMinAudioDurationSeconds(int? value)
+        => SetNullableInt32(value, "TelegramBot", "MinAudioDurationSeconds");
+
+    public void SetMaxAudioDurationSeconds(int? value)
+        => SetNullableInt32(value, "TelegramBot", "MaxAudioDurationSeconds");
 
     public void SetCodexPathOverride(string? value)
         => SetString(value, "Codex", "CodexPathOverride");
@@ -163,6 +172,28 @@ internal sealed class LocalSettingsStore
 
         if (value.TryGetValue(out string? stringValue)
             && bool.TryParse(stringValue, out bool parsed))
+        {
+            return parsed;
+        }
+
+        return null;
+    }
+
+    private int? GetInt32(params string[] path)
+    {
+        JsonNode? node = GetNode(path);
+        if (node is not JsonValue value)
+        {
+            return null;
+        }
+
+        if (value.TryGetValue(out int intValue))
+        {
+            return intValue;
+        }
+
+        if (value.TryGetValue(out string? stringValue)
+            && int.TryParse(stringValue, NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsed))
         {
             return parsed;
         }
@@ -254,6 +285,9 @@ internal sealed class LocalSettingsStore
         => SetNode(JsonValue.Create(value), path);
 
     private void SetNullableBool(bool? value, params string[] path)
+        => SetNode(value.HasValue ? JsonValue.Create(value.Value) : null, path);
+
+    private void SetNullableInt32(int? value, params string[] path)
         => SetNode(value.HasValue ? JsonValue.Create(value.Value) : null, path);
 
     private void SetStringArray(IEnumerable<string> values, params string[] path)
