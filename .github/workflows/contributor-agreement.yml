@@ -1,0 +1,45 @@
+name: Contributor Agreement
+
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize, ready_for_review]
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: read
+  statuses: write
+
+jobs:
+  contributor-agreement:
+    name: Agreement Gate
+    runs-on: ubuntu-24.04
+    if: >-
+      github.event_name == 'pull_request_target' ||
+      (
+        github.event_name == 'issue_comment' &&
+        github.event.issue.pull_request &&
+        (
+          github.event.comment.body == 'recheck contributor agreement' ||
+          github.event.comment.body == 'I have read the Incursa Contributor Agreement and I hereby assign my contribution rights as described.'
+        )
+      )
+
+    steps:
+      - name: Check contributor agreement
+        uses: incursa/contributor-agreement-action@v0.1.0
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          storage-token: ${{ secrets.INCURSA_CONTRIBUTOR_AGREEMENTS_TOKEN }}
+          storage-owner: incursa
+          storage-repo: contributor-agreements
+          storage-path: signatures/incursa-contributor-agreement-v1.json
+          storage-branch: main
+          agreement-id: incursa-contributor-agreement-v1
+          agreement-url: ${{ github.server_url }}/${{ github.repository }}/blob/main/CONTRIBUTOR-AGREEMENT.md
+          allowlist: SamuelMcAravey,dependabot[bot],github-actions[bot],renovate[bot],copilot-pull-request-reviewer[bot]
+          signature-comment: I have read the Incursa Contributor Agreement and I hereby assign my contribution rights as described.
+          recheck-comment: recheck contributor agreement
+          fail-on-unlinked-commit-author: true

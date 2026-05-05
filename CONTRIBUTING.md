@@ -16,6 +16,14 @@ All pull requests and code-bearing issue comments are accepted only under [CONTR
 
 If you are contributing on behalf of an employer or another organization, confirm that you have authority before opening the pull request. For corporate contribution questions, contact oss@incursa.com.
 
+Pull requests are checked by the `Contributor Agreement` workflow. If the workflow asks you to sign, read the agreement and comment exactly:
+
+```text
+I have read the Incursa Contributor Agreement and I hereby assign my contribution rights as described.
+```
+
+Maintainers can re-run the check by commenting `recheck contributor agreement`. The automation setup is documented in [docs/contributor-agreement-automation.md](docs/contributor-agreement-automation.md).
+
 ## Local Setup
 
 Required tools:
