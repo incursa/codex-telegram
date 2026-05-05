@@ -38,8 +38,9 @@ Use `docs/demo-readiness.md` as the go/no-go scorecard that ties these owner act
    - Whether macOS and Linux artifacts are release claims or best-effort artifacts.
 
 6. Confirm the public security contact.
-   - Email, private disclosure process, or GitHub Security Advisory flow.
-   - Whether `SECURITY.md` should continue to say "report privately to the repository owner."
+   - General OSS contact: `oss@incursa.com`.
+   - Security contact: `security@incursa.com`.
+   - Whether GitHub private vulnerability reporting is enabled before public visibility.
    - Expected response posture for early public issues.
 
 ## Required Before Repository Visibility Change
@@ -52,6 +53,7 @@ Use `docs/demo-readiness.md` as the go/no-go scorecard that ties these owner act
    - Whether discussions should be enabled.
 
 2. Run a final tracked-file secret scan.
+   - Run `scripts\Test-TrackedSecretScan.ps1`.
    - Confirm no bot token is tracked.
    - Confirm no OpenAI API key is tracked.
    - Confirm no personal `appsettings.Local.json` is tracked.

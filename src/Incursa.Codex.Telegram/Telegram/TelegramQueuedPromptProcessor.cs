@@ -4,7 +4,7 @@ using Microsoft.Extensions.Logging;
 
 namespace Incursa.Codex.Telegram.Telegram;
 
-public interface ITelegramQueuedPromptProcessor
+internal interface ITelegramQueuedPromptProcessor
 {
     Task<bool> ProcessNextAsync(CancellationToken cancellationToken);
 }

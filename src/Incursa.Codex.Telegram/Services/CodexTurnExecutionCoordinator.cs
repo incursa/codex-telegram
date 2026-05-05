@@ -7,7 +7,7 @@ using Microsoft.Extensions.Logging;
 
 namespace Incursa.Codex.Telegram.Services;
 
-public interface ICodexTurnExecutionCoordinator
+internal interface ICodexTurnExecutionCoordinator
 {
     bool HasActiveTurn { get; }
 

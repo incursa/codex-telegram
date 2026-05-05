@@ -10,6 +10,9 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
+// Top-level statements synthesize a Program type, but there is no source declaration to XML-document.
+#pragma warning disable CS1591
+
 ApplicationCommandLine commandLine = ApplicationCommandLine.Parse(args);
 if (commandLine.ShowHelp)
 {
@@ -117,10 +120,22 @@ builder.Services.PostConfigure<TelegramBotOptions>(options =>
         options.AllowedChatIds = ParseInt64List(Environment.GetEnvironmentVariable("TELEGRAM_ALLOWED_CHAT_IDS"));
     }
 
-    options.PollingTimeoutSeconds = Math.Clamp(options.PollingTimeoutSeconds, 1, 120);
-    options.MaxTelegramMessageLength = Math.Clamp(options.MaxTelegramMessageLength, 1, 4000);
-    options.MinAudioDurationSeconds = Math.Clamp(options.MinAudioDurationSeconds, 0, 60);
-    options.MaxAudioDurationSeconds = Math.Clamp(options.MaxAudioDurationSeconds, 1, 6 * 60 * 60);
+    options.PollingTimeoutSeconds = Math.Clamp(
+        options.PollingTimeoutSeconds,
+        TelegramBotLimits.MinPollingTimeoutSeconds,
+        TelegramBotLimits.MaxPollingTimeoutSeconds);
+    options.MaxTelegramMessageLength = Math.Clamp(
+        options.MaxTelegramMessageLength,
+        TelegramBotLimits.MinTelegramMessageLength,
+        TelegramBotLimits.MaxTelegramMessageLength);
+    options.MinAudioDurationSeconds = Math.Clamp(
+        options.MinAudioDurationSeconds,
+        TelegramBotLimits.MinAudioDurationSeconds,
+        TelegramBotLimits.MaxMinimumAudioDurationSeconds);
+    options.MaxAudioDurationSeconds = Math.Clamp(
+        options.MaxAudioDurationSeconds,
+        TelegramBotLimits.MinMaximumAudioDurationSeconds,
+        TelegramBotLimits.MaxAudioDurationSeconds);
     if (options.MaxAudioDurationSeconds < options.MinAudioDurationSeconds)
     {
         options.MaxAudioDurationSeconds = options.MinAudioDurationSeconds;
@@ -129,24 +144,51 @@ builder.Services.PostConfigure<TelegramBotOptions>(options =>
 
 builder.Services.PostConfigure<TelegramOutboundOptions>(options =>
 {
-    options.GroupMinimumSendIntervalSeconds = Math.Clamp(options.GroupMinimumSendIntervalSeconds, 1, 120);
-    options.PrivateMinimumSendIntervalSeconds = Math.Clamp(options.PrivateMinimumSendIntervalSeconds, 1, 120);
-    options.GlobalMaxMessagesPerSecond = Math.Clamp(options.GlobalMaxMessagesPerSecond, 1, 25);
-    options.MaxMessageChars = Math.Clamp(options.MaxMessageChars, 500, 3500);
-    options.MaxBufferedCharsPerDestination = Math.Clamp(options.MaxBufferedCharsPerDestination, options.MaxMessageChars, 250000);
-    options.MaxBufferedMessagesPerDestination = Math.Clamp(options.MaxBufferedMessagesPerDestination, 1, 1000);
-    options.FlushIntervalMilliseconds = Math.Clamp(options.FlushIntervalMilliseconds, 50, 10000);
-    options.AgentMessageUpdateMinChars = Math.Clamp(options.AgentMessageUpdateMinChars, 12, options.MaxMessageChars);
+    options.GroupMinimumSendIntervalSeconds = Math.Clamp(
+        options.GroupMinimumSendIntervalSeconds,
+        TelegramOutboundLimits.MinGroupSendIntervalSeconds,
+        TelegramOutboundLimits.MaxGroupSendIntervalSeconds);
+    options.PrivateMinimumSendIntervalSeconds = Math.Clamp(
+        options.PrivateMinimumSendIntervalSeconds,
+        TelegramOutboundLimits.MinPrivateSendIntervalSeconds,
+        TelegramOutboundLimits.MaxPrivateSendIntervalSeconds);
+    options.GlobalMaxMessagesPerSecond = Math.Clamp(
+        options.GlobalMaxMessagesPerSecond,
+        TelegramOutboundLimits.MinGlobalMessagesPerSecond,
+        TelegramOutboundLimits.MaxGlobalMessagesPerSecond);
+    options.MaxMessageChars = Math.Clamp(
+        options.MaxMessageChars,
+        TelegramOutboundLimits.MinMessageChars,
+        TelegramOutboundLimits.MaxMessageChars);
+    options.MaxBufferedCharsPerDestination = Math.Clamp(
+        options.MaxBufferedCharsPerDestination,
+        options.MaxMessageChars,
+        TelegramOutboundLimits.MaxBufferedCharsPerDestination);
+    options.MaxBufferedMessagesPerDestination = Math.Clamp(
+        options.MaxBufferedMessagesPerDestination,
+        TelegramOutboundLimits.MinBufferedMessagesPerDestination,
+        TelegramOutboundLimits.MaxBufferedMessagesPerDestination);
+    options.FlushIntervalMilliseconds = Math.Clamp(
+        options.FlushIntervalMilliseconds,
+        TelegramOutboundLimits.MinFlushIntervalMilliseconds,
+        TelegramOutboundLimits.MaxFlushIntervalMilliseconds);
+    options.AgentMessageUpdateMinChars = Math.Clamp(
+        options.AgentMessageUpdateMinChars,
+        TelegramOutboundLimits.MinAgentMessageUpdateChars,
+        options.MaxMessageChars);
     options.AgentMessageUpdateMaxChars = Math.Clamp(options.AgentMessageUpdateMaxChars, options.AgentMessageUpdateMinChars, options.MaxMessageChars);
-    options.BatchWindowSeconds = Math.Clamp(options.BatchWindowSeconds, 0, 120);
+    options.BatchWindowSeconds = Math.Clamp(
+        options.BatchWindowSeconds,
+        TelegramOutboundLimits.MinBatchWindowSeconds,
+        TelegramOutboundLimits.MaxBatchWindowSeconds);
 });
 
 builder.Services.PostConfigure<OpenAiSpeechToTextOptions>(options =>
 {
     options.ApiKey = DefaultIfWhiteSpace(options.ApiKey, Environment.GetEnvironmentVariable("OPENAI_API_KEY"));
-    options.Model = DefaultIfWhiteSpace(options.Model, "whisper-1");
-    options.BaseUrl = DefaultIfWhiteSpace(options.BaseUrl, "https://api.openai.com/v1/");
-    options.FfmpegPath = DefaultIfWhiteSpace(options.FfmpegPath, "ffmpeg");
+    options.Model = DefaultIfWhiteSpace(options.Model, OpenAiSpeechToTextDefaults.Model);
+    options.BaseUrl = DefaultIfWhiteSpace(options.BaseUrl, OpenAiSpeechToTextDefaults.BaseUrl);
+    options.FfmpegPath = DefaultIfWhiteSpace(options.FfmpegPath, OpenAiSpeechToTextDefaults.FfmpegPath);
 });
 
 builder.Services.AddSingleton(TimeProvider.System);

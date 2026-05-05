@@ -193,7 +193,47 @@ public sealed class OutboundTelegramQueueTests
         Assert.Contains("2 updates", sent.Text);
         Assert.Contains("first update", sent.Text);
         Assert.Contains("second update", sent.Text);
-        Assert.Contains("Use /tail 100 for more detail.", sent.Text);
+        Assert.DoesNotContain("Use /tail", sent.Text);
+    }
+
+    [Fact]
+    public async Task ProcessNextAsync_BatchedReleaseSectionsPreserveNumberedLists()
+    {
+        TestTelegramSender sender = new();
+        OutboundTelegramScheduler scheduler = CreateScheduler(sender, new TelegramOutboundOptions
+        {
+            BatchWindowSeconds = 0,
+            PrivateMinimumSendIntervalSeconds = 0,
+            GroupMinimumSendIntervalSeconds = 0,
+            MaxMessageChars = 3500,
+        });
+
+        string humanWork = string.Join(Environment.NewLine, [
+            "Human Work",
+            string.Empty,
+            "1. Decide support boundary.",
+            "2. Run and record live Telegram private-chat checks at minimum.",
+            "3. Confirm BotFather settings, privacy mode, and workspace roots."
+        ]);
+        string notDone = string.Join(Environment.NewLine, [
+            "Not Done",
+            string.Empty,
+            "- Push current head and capture workflow URLs.",
+            "- Record owner evidence."
+        ]);
+
+        await scheduler.EnqueueAsync(CreateMessage(CodexOutboundMessageKind.Update, humanWork), CancellationToken.None);
+        await scheduler.EnqueueAsync(CreateMessage(CodexOutboundMessageKind.Completion, notDone), CancellationToken.None);
+
+        Assert.True(await scheduler.ProcessNextAsync(CancellationToken.None));
+
+        string text = Assert.Single(sender.Sent).Text;
+        Assert.Contains("1. Decide support boundary.", text);
+        Assert.Contains("2. Run and record live Telegram private-chat checks at minimum.", text);
+        Assert.Contains("3. Confirm BotFather settings, privacy mode, and workspace roots.", text);
+        Assert.Contains("- Push current head and capture workflow URLs.", text);
+        Assert.Contains("- Record owner evidence.", text);
+        Assert.DoesNotContain(Environment.NewLine + "---" + Environment.NewLine, text);
     }
 
     [Fact]
@@ -217,7 +257,7 @@ public sealed class OutboundTelegramQueueTests
     }
 
     [Fact]
-    public async Task ProcessNextAsync_ShortensLongSessionIdAndNormalizesBatchItems()
+    public async Task ProcessNextAsync_ShortensLongSessionIdAndPreservesBatchedMultilineItems()
     {
         TestTelegramSender sender = new();
         OutboundTelegramScheduler scheduler = CreateScheduler(sender, new TelegramOutboundOptions
@@ -235,8 +275,8 @@ public sealed class OutboundTelegramQueueTests
         string text = Assert.Single(sender.Sent).Text;
         Assert.StartsWith("[thread-a]\n", text, StringComparison.Ordinal);
         Assert.Contains("first line", text);
-        Assert.DoesNotContain("second line", text);
-        Assert.Contains(new string('x', 237) + "...", text);
+        Assert.Contains("second line", text);
+        Assert.Contains(longLine, text);
     }
 
     [Fact]

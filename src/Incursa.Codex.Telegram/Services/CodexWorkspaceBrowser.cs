@@ -4,7 +4,7 @@ using Microsoft.Extensions.Options;
 
 namespace Incursa.Codex.Telegram.Services;
 
-public sealed class CodexWorkspaceBrowser
+internal sealed class CodexWorkspaceBrowser
 {
     private static readonly StringComparer PathComparer = OperatingSystem.IsWindows()
         ? StringComparer.OrdinalIgnoreCase

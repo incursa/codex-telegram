@@ -6,7 +6,7 @@ using Microsoft.Extensions.Options;
 
 namespace Incursa.Codex.Telegram.Services;
 
-public interface ICodexSessionManager
+internal interface ICodexSessionManager
 {
     Task<IReadOnlyCollection<CodexSessionSummary>> ListSessionsAsync(CancellationToken cancellationToken);
 
@@ -39,9 +39,9 @@ public interface ICodexSessionManager
     Task ForgetAsync(string sessionId, CancellationToken cancellationToken);
 }
 
-public sealed record CreateCodexSessionRequest(string Name, string? WorkingDirectory);
+internal sealed record CreateCodexSessionRequest(string Name, string? WorkingDirectory);
 
-public sealed record CodexSessionModelSettings(
+internal sealed record CodexSessionModelSettings(
     string SessionId,
     string SessionName,
     string? Model,
@@ -49,7 +49,7 @@ public sealed record CodexSessionModelSettings(
     IReadOnlyList<CodexModelVm> AvailableModels,
     IReadOnlyList<CodexReasoningEffort> AvailableReasoningEfforts);
 
-public sealed record CodexSessionSummary(
+internal sealed record CodexSessionSummary(
     string Id,
     string Name,
     CodexSessionStatus Status,
@@ -59,7 +59,7 @@ public sealed record CodexSessionSummary(
     int? ExitCode,
     string? LastError);
 
-public enum CodexSessionStatus
+internal enum CodexSessionStatus
 {
     Starting,
     Running,

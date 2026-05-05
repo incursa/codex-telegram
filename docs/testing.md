@@ -10,7 +10,7 @@ Run this before public demos, release tags, and pushes that affect runtime behav
 .\scripts\Test-ReleaseReadiness.ps1 -Runtime win-x64
 ```
 
-That gate builds, tests, publishes, formats, audits packages, and runs the checked-in Telegram fuzz corpus.
+That gate builds, tests, formats, audits packages, runs a tracked-file secret scan, runs the checked-in Telegram fuzz corpus, and publishes unless `-SkipPublish` is passed.
 
 ## Telegram Fuzz Corpus
 
@@ -52,10 +52,10 @@ The profiles are:
 - `handler`: Telegram command handling and raw Telegram update adaptation.
 - `queue`: outbound queueing, queued prompt dispatch, and turn output relay behavior.
 
-Latest local mutation evidence from the May 4, 2026 Telegram hardening pass:
+Latest local mutation evidence from the May 5, 2026 release-readiness pass:
 
 - `core`: 82.35%, improved from 64.71% after adding sender failure/rate-limit/button coverage plus parser and attachment display-name edge cases.
-- `handler`: 33.68%, improved from 15.22% after adding command, callback, audio, topic, project, session, model, thinking, status, tail, outbound, lifecycle, authorization, attachment, and raw update-adapter coverage.
+- `handler`: 38.51%, improved from 15.22% after adding command, callback, audio, topic, project, session, model, thinking, status, tail, outbound, lifecycle, authorization, attachment, and raw update-adapter coverage.
 - `queue`: 70.71%, improved from 13.11% after adding queue scheduler, queued prompt processor, hosted service, turn output relay, runtime option update, cancellation, backoff boundary, compaction, and relay cleanup coverage.
 
 Mutation testing is not part of the normal release gate because it is slower and best used as focused quality evidence after meaningful Telegram behavior changes.

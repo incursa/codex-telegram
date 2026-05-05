@@ -5,7 +5,7 @@ using Microsoft.Extensions.Options;
 
 namespace Incursa.Codex.Telegram.Services;
 
-public interface ICodexGateway
+internal interface ICodexGateway
 {
     Task<CodexRuntimeStateVm> GetRuntimeAsync(CancellationToken cancellationToken = default);
 

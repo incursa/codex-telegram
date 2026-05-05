@@ -6,7 +6,7 @@ using Microsoft.Extensions.Options;
 
 namespace Incursa.Codex.Telegram.Services;
 
-public interface ICodexThreadManifestStore
+internal interface ICodexThreadManifestStore
 {
     Task<CodexThreadManifestRecord?> ReadAsync(string threadId, CancellationToken cancellationToken);
 
@@ -303,7 +303,7 @@ internal sealed class CodexThreadManifestStore
 
 }
 
-public sealed record CodexThreadManifestRecord
+internal sealed record CodexThreadManifestRecord
 {
     public string ThreadId { get; set; } = string.Empty;
 
@@ -356,7 +356,7 @@ public sealed record CodexThreadManifestRecord
     public DateTimeOffset UpdatedAt { get; set; }
 }
 
-public sealed record CodexThreadFileRecord
+internal sealed record CodexThreadFileRecord
 {
     public string Id { get; set; } = string.Empty;
 

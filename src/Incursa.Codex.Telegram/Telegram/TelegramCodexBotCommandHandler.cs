@@ -10,7 +10,7 @@ using Microsoft.Extensions.Options;
 
 namespace Incursa.Codex.Telegram.Telegram;
 
-public interface ITelegramBotMessageSender
+internal interface ITelegramBotMessageSender
 {
     Task SendTextMessageAsync(
         TelegramConversationScope conversation,
@@ -41,7 +41,7 @@ internal interface ITelegramCodexBotUpdateHandler
         CancellationToken cancellationToken);
 }
 
-public sealed record TelegramInboundMessage(
+internal sealed record TelegramInboundMessage(
     long UserId,
     long ChatId,
     string ChatType,
@@ -54,7 +54,7 @@ public sealed record TelegramInboundMessage(
     public TelegramConversationScope ConversationScope => new(ChatId, MessageThreadId);
 }
 
-public sealed record TelegramInboundCallback(
+internal sealed record TelegramInboundCallback(
     string Id,
     long UserId,
     long ChatId,
@@ -66,9 +66,9 @@ public sealed record TelegramInboundCallback(
     public TelegramConversationScope ConversationScope => new(ChatId, MessageThreadId);
 }
 
-public sealed record TelegramReplyButton(string Text, string CallbackData);
+internal sealed record TelegramReplyButton(string Text, string CallbackData);
 
-public sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHandler
+internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHandler
 {
     private static readonly StringComparer PathComparer = OperatingSystem.IsWindows()
         ? StringComparer.OrdinalIgnoreCase
@@ -1107,6 +1107,7 @@ public sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHand
             return;
         }
 
+        await EditCallbackProgressAsync(sender, message, "Loading model settings...", cancellationToken).ConfigureAwait(false);
         CodexSessionModelSettings settings = await _sessionManager.GetModelSettingsAsync(resolved.Session.Id, cancellationToken).ConfigureAwait(false);
         await ReplyAsync(sender, message, "Model settings:" + Environment.NewLine + FormatModelSettings(settings), BuildModelSelectionButtons(settings), cancellationToken, includeNavigationButtons: false).ConfigureAwait(false);
     }
@@ -1131,6 +1132,7 @@ public sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHand
             return;
         }
 
+        await EditCallbackProgressAsync(sender, message, "Updating model settings...", cancellationToken).ConfigureAwait(false);
         string model = parts[1];
         if (int.TryParse(model, NumberStyles.Integer, CultureInfo.InvariantCulture, out int modelIndex))
         {
@@ -1163,6 +1165,7 @@ public sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHand
             return;
         }
 
+        await EditCallbackProgressAsync(sender, message, "Loading thinking settings...", cancellationToken).ConfigureAwait(false);
         CodexSessionModelSettings settings = await _sessionManager.GetModelSettingsAsync(resolved.Session.Id, cancellationToken).ConfigureAwait(false);
         await ReplyAsync(sender, message, "Thinking settings:" + Environment.NewLine + FormatModelSettings(settings), BuildThinkingSelectionButtons(settings), cancellationToken, includeNavigationButtons: false).ConfigureAwait(false);
     }
@@ -1187,6 +1190,7 @@ public sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHand
             return;
         }
 
+        await EditCallbackProgressAsync(sender, message, "Updating thinking settings...", cancellationToken).ConfigureAwait(false);
         CodexSessionModelSettings settings = await _sessionManager.UpdateModelSettingsAsync(resolved.Session.Id, null, parts[1], cancellationToken).ConfigureAwait(false);
         await ReplyAsync(sender, message, "Thinking settings:" + Environment.NewLine + FormatModelSettings(settings), BuildThinkingSelectionButtons(settings), cancellationToken, includeNavigationButtons: false).ConfigureAwait(false);
     }
@@ -1496,6 +1500,25 @@ public sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHand
         }
     }
 
+    private static async Task EditCallbackProgressAsync(
+        ITelegramBotMessageSender sender,
+        TelegramInboundMessage message,
+        string text,
+        CancellationToken cancellationToken)
+    {
+        if (!message.SourceMessageId.HasValue)
+        {
+            return;
+        }
+
+        await sender.EditTextMessageAsync(
+            message.ConversationScope,
+            message.SourceMessageId.Value,
+            text,
+            buttons: null,
+            cancellationToken: cancellationToken).ConfigureAwait(false);
+    }
+
     private bool IsAuthorized(TelegramInboundCallback callback)
         => TelegramAuthorization.IsAuthorized(
             callback.UserId,
@@ -1605,7 +1628,7 @@ public sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHand
             "/forget <sessionId> - hide a stopped/exited session without deleting logs",
             "Plain text and audio in a private chat or topic stay on that conversation's session; if the conversation has none yet, the first message starts one and live output follows automatically.",
             "In forum topics, if plain text gets no response, Telegram bot privacy is likely hiding non-command messages; use /send <text> or disable privacy for this bot.",
-            "Images, documents, and other attachments are forwarded to Codex; voice notes are transcribed with Whisper first.",
+            "Images, documents, and other attachments are forwarded to Codex; voice notes are transcribed with the configured OpenAI transcription model first.",
             "Voice/text control phrase: Codex settings model gpt-5.4-mini thinking high: <prompt>"
         ]);
 
@@ -2005,10 +2028,10 @@ public sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHand
 
         if (settings.AvailableModels.Count > 0)
         {
-            builder.AppendLine("Use /model <model> <thinking>. Examples:");
+            builder.AppendLine("Use /model <model> thinking <effort>. Examples:");
             foreach (CodexModelVm model in settings.AvailableModels.Take(8))
             {
-                builder.AppendLine($"- /model {model.Id} {model.DefaultReasoningEffort}");
+                builder.AppendLine($"- /model {model.Id} thinking {model.DefaultReasoningEffort}");
             }
         }
 

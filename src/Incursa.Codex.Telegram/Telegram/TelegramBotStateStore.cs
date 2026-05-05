@@ -5,7 +5,7 @@ using Microsoft.Extensions.Options;
 
 namespace Incursa.Codex.Telegram.Telegram;
 
-public interface ITelegramBotStateStore
+internal interface ITelegramBotStateStore
 {
     Task<string?> GetActiveSessionIdAsync(TelegramConversationScope conversation, CancellationToken cancellationToken);
 
@@ -49,7 +49,7 @@ public interface ITelegramBotStateStore
     Task RemoveQueuedPromptsForSessionAsync(string sessionId, CancellationToken cancellationToken);
 }
 
-public sealed record TelegramConversationState(
+internal sealed record TelegramConversationState(
     TelegramConversationScope Scope,
     string? ActiveSessionId,
     string? ActiveProjectWorkingDirectory,

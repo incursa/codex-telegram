@@ -2,6 +2,8 @@
 
 This app is a standalone console process. It does not restart itself from Telegram. Use the terminal, scheduled task, service manager, or container/runtime supervisor that starts the process.
 
+For normal project/session usage after the process is running, use [usage.md](usage.md).
+
 ## Start
 
 From a published Windows binary:
@@ -74,7 +76,9 @@ Use these Telegram commands during operation:
 2. `/project current` to confirm the working directory binding.
 3. `/status` to confirm the active session state.
 4. `/outbound` to inspect delayed Telegram output.
-5. `/tail 100` to inspect recent session output.
+5. `/tail` to inspect recent session output.
+
+If Telegram output looks delayed, batched, or incomplete, use `/outbound` and `/tail` before changing configuration. Those commands separate delivery/backlog questions from Codex session-output questions.
 
 Use these local commands before a release or demo:
 

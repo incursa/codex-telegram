@@ -329,7 +329,7 @@ public sealed class TelegramTurnOutputRelayTests
     }
 
     [Fact]
-    public async Task PublishTurnEventAsync_CompletesWithGenericMessageWhenAllAgentTextWasAlreadyPublished()
+    public async Task PublishTurnEventAsync_CompletesWithBareFinishedMarkerWhenAllAgentTextWasAlreadyPublished()
     {
         FakeOutboundTelegramQueue queue = new();
         TelegramThreadFollowRegistry followRegistry = FollowThread();
@@ -349,7 +349,7 @@ public sealed class TelegramTurnOutputRelayTests
         Assert.Collection(
             queue.Messages,
             message => Assert.Equal("all done.", message.Text),
-            message => Assert.Equal("Turn completed." + Environment.NewLine + Environment.NewLine + "~~ fin ~~", message.Text));
+            message => Assert.Equal("~~ fin ~~", message.Text));
     }
 
     [Fact]

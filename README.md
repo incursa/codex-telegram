@@ -1,179 +1,384 @@
-# Incursa.Codex.Telegram
+# Incursa Codex Telegram
 
-Incursa.Codex.Telegram is a lightweight Telegram bot host for a local Codex installation. It runs as a console app, stores state locally, and lets an allowlisted Telegram user create/select Codex sessions for local repositories.
+Incursa Codex Telegram lets you talk to a local Codex CLI session from a private Telegram chat. It runs on your own machine, stores state locally, and only accepts messages from allowlisted Telegram users.
 
-The app does not bundle Codex, Telegram credentials, OpenAI credentials, or `ffmpeg`. Operators provide those on the machine that runs the bot.
+Use it when you want to start, steer, and inspect Codex work from your phone without exposing your whole machine to Telegram users.
 
-If you are setting this up for the first time, start with [docs/getting-started.md](docs/getting-started.md). It walks through BotFather setup, allowlists, configuration, first launch, private-chat usage, group usage, and troubleshooting in one place.
-For operations and restart behavior, use [docs/operations.md](docs/operations.md). Before a public demo or release tag, use the scorecard in [docs/demo-readiness.md](docs/demo-readiness.md), run the manual validation checklist in [docs/manual-test-plan.md](docs/manual-test-plan.md), and track owner-only release work in [docs/release-owner-actions.md](docs/release-owner-actions.md).
+## Demo
 
-## Prerequisites
+The first public demo should be a short phone screen recording of a private chat
+with the bot.
 
-- .NET 10 SDK for source builds, or a published self-contained binary.
-- Local `codex` installed, on `PATH` or configured via `Codex:CodexPathOverride` or `TelegramBot:CodexExecutablePath`, with `CODEX_PATH` as a fallback, and already authenticated.
-- A Telegram bot token from BotFather.
-- Your numeric Telegram user ID. Start with `/whoami` while the bot is temporarily reachable, or use another trusted method to get it.
-- `OPENAI_API_KEY` or `OpenAI:ApiKey` for voice-note transcription.
-- `ffmpeg` on `PATH` if you want Telegram voice notes and unsupported audio formats transcoded before upload.
+Recommended demo flow:
 
-OpenAI's transcription API supports `whisper-1`, `gpt-4o-transcribe`, `gpt-4o-mini-transcribe`, and related transcription models. File uploads are limited to 25 MB, with supported formats documented in the [speech-to-text guide](https://platform.openai.com/docs/guides/speech-to-text?lang=curl) and [audio API reference](https://platform.openai.com/docs/api-reference/audio/createTranscription.class).
+1. Open a private Telegram chat with the bot.
+2. Run `/doctor` to show routing, authorization, project, session, and queue state.
+3. Create a session with `/new release-demo`.
+4. Send a normal text prompt.
+5. Send a voice note and show the transcription flowing into Codex.
+6. Use `/tail` or `/status` to inspect the active session.
 
-## Configuration
+Recommended screenshots:
 
-The default startup path is an interactive bootstrap/admin menu:
+1. Bootstrap/admin menu.
+2. Private chat `/doctor`.
+3. Private chat `/new` and live Codex output.
+4. Optional `/model` or `/thinking` controls.
 
-```powershell
-.\artifacts\publish\win-x64\codex-telegram.exe
-```
+See [menus and screenshots](docs/menus.md) for the full screenshot plan.
 
-Use the menu to set the Telegram bot token, admin user IDs, optional chat allowlist, OpenAI transcription key/model, Codex executable path, Codex defaults, workspace roots, and local state root. The menu writes `appsettings.Local.json` in the current directory and never displays stored secret values.
-The menu also shows a startup summary before launching and uses simple pickers for the common model and thinking-effort values, so you do not have to remember every ID or preset from scratch.
-When Codex is reachable, the Codex submenu queries the live model list and model-specific effort choices before falling back to curated examples.
+## Download
 
-After configuration, choose `Start bot` from the menu, or use `--run` for quiet service-style startup:
+Download the latest release binary for your operating system:
 
-```powershell
-.\artifacts\publish\win-x64\codex-telegram.exe --run
-```
+| Platform | Download | Checksum |
+| --- | --- | --- |
+| Windows x64 | [codex-telegram-win-x64.exe](https://github.com/incursa/codex-telegram/releases/latest/download/codex-telegram-win-x64.exe) | [sha256](https://github.com/incursa/codex-telegram/releases/latest/download/codex-telegram-win-x64.exe.sha256) |
+| Linux x64 | [codex-telegram-linux-x64](https://github.com/incursa/codex-telegram/releases/latest/download/codex-telegram-linux-x64) | [sha256](https://github.com/incursa/codex-telegram/releases/latest/download/codex-telegram-linux-x64.sha256) |
+| macOS arm64 | [codex-telegram-osx-arm64](https://github.com/incursa/codex-telegram/releases/latest/download/codex-telegram-osx-arm64) | [sha256](https://github.com/incursa/codex-telegram/releases/latest/download/codex-telegram-osx-arm64.sha256) |
 
-Other supported app switches:
+All releases are listed at [GitHub Releases](https://github.com/incursa/codex-telegram/releases).
 
-```powershell
-.\artifacts\publish\win-x64\codex-telegram.exe --menu
-.\artifacts\publish\win-x64\codex-telegram.exe --help
-```
+The release binaries are self-contained .NET applications. You do not need to install the .NET runtime just to run a published binary.
 
-You can still use these configuration approaches:
+## What You Need
 
-- User secrets while developing:
+Before starting, have these ready:
 
-```powershell
-dotnet user-secrets set --project src\Incursa.Codex.Telegram "TelegramBot:Enabled" "true"
-dotnet user-secrets set --project src\Incursa.Codex.Telegram "TelegramBot:Token" "<telegram-bot-token>"
-dotnet user-secrets set --project src\Incursa.Codex.Telegram "TelegramBot:AllowedUserIds:0" "<your-user-id>"
-dotnet user-secrets set --project src\Incursa.Codex.Telegram "OpenAI:ApiKey" "<openai-api-key>"
-dotnet user-secrets set --project src\Incursa.Codex.Telegram "CodexTelegram:Workspace:WorkspaceRoots:0" "C:\src"
-```
+1. A Telegram account.
+2. A Telegram bot token from `@BotFather`.
+3. A local Codex CLI installation that already works in a terminal.
+4. At least one local repository or workspace directory you want Codex to use.
+5. Optional: an OpenAI API key and `ffmpeg` if you want Telegram voice notes transcribed.
 
-- Environment variables for a published binary:
+This app does not bundle Codex, Telegram credentials, OpenAI credentials, or `ffmpeg`.
 
-```powershell
-$env:TELEGRAM_BOT_TOKEN = "<telegram-bot-token>"
-$env:TELEGRAM_ALLOWED_USER_IDS = "<your-user-id>"
-$env:OPENAI_API_KEY = "<openai-api-key>"
-$env:CODEX_PATH = "C:\path\to\codex.exe"
-$env:CODEX_TELEGRAM_TelegramBot__Enabled = "true"
-$env:CODEX_TELEGRAM_CodexTelegram__Workspace__WorkspaceRoots__0 = "C:\src"
-```
+For Codex CLI setup, use OpenAI's official [Codex CLI docs](https://developers.openai.com/codex/cli).
 
-- `appsettings.Local.json` in the current working directory for the process you start. Use `appsettings.Local.example.json` as the shape, but keep the real local file untracked.
+## Quick Start
 
-Important settings:
+This path gets you from a downloaded binary to a working private Telegram chat.
 
-- `TelegramBot:AllowedUserIds`: required user allowlist for all control.
-- `TelegramBot:AllowedChatIds`: required chat allowlist for group and forum-topic control; private chats use the user allowlist only.
-- `TelegramBot:DefaultWorkingDirectory`: fallback working directory for new sessions.
-- `CodexTelegram:Workspace:WorkspaceRoots`: directories users may add as projects.
-- `CodexTelegram:Context:WorkingDirectory`: default Codex working directory.
-- `CodexTelegram:Workspace:DataRoot`: local JSON state root. Defaults to the user's application data folder, which is `%AppData%\Incursa\CodexTelegram` on Windows.
-- `Codex:CodexPathOverride`, `TelegramBot:CodexExecutablePath`, or `CODEX_PATH`: optional path to the local `codex` executable.
-- `TelegramBot:MinAudioDurationSeconds` and `TelegramBot:MaxAudioDurationSeconds`: reject suspiciously short or long Telegram audio before download.
-- `OpenAI:FfmpegPath`: optional `ffmpeg` path override if it is not on `PATH`.
-- `OpenAI:Model`: defaults to `whisper-1`.
+### 1. Optional: Verify The Download
 
-## Run From Source
+Download the matching `.sha256` file next to the binary before you rename or move the binary.
+
+Windows:
 
 ```powershell
-dotnet run --project src\Incursa.Codex.Telegram
+Get-FileHash .\codex-telegram-win-x64.exe -Algorithm SHA256
+Get-Content .\codex-telegram-win-x64.exe.sha256
 ```
 
-That opens the bootstrap/admin menu. To start directly without the menu:
+Linux:
+
+```bash
+shasum -a 256 -c ./codex-telegram-linux-x64.sha256
+```
+
+macOS:
+
+```bash
+shasum -a 256 -c ./codex-telegram-osx-arm64.sha256
+```
+
+### 2. Put The Binary In A Stable Folder
+
+Windows example:
 
 ```powershell
-dotnet run --project src\Incursa.Codex.Telegram -- --run
+New-Item -ItemType Directory -Force C:\tools\codex-telegram | Out-Null
+Move-Item .\codex-telegram-win-x64.exe C:\tools\codex-telegram\codex-telegram.exe
+Set-Location C:\tools\codex-telegram
 ```
 
-The running bot keeps the process alive in the terminal without framework log noise. Stop it with Ctrl+C.
+Linux example:
 
-## Publish A Single Binary
+```bash
+mkdir -p ~/tools/codex-telegram
+mv ./codex-telegram-linux-x64 ~/tools/codex-telegram/codex-telegram
+chmod +x ~/tools/codex-telegram/codex-telegram
+cd ~/tools/codex-telegram
+```
+
+macOS arm64 example:
+
+```bash
+mkdir -p ~/tools/codex-telegram
+mv ./codex-telegram-osx-arm64 ~/tools/codex-telegram/codex-telegram
+chmod +x ~/tools/codex-telegram/codex-telegram
+cd ~/tools/codex-telegram
+```
+
+If macOS blocks the binary because it was downloaded from the internet, verify the checksum first. If you trust the release, remove the quarantine attribute:
+
+```bash
+xattr -d com.apple.quarantine ~/tools/codex-telegram/codex-telegram
+```
+
+### 3. Confirm Codex Works Locally
+
+Run Codex once in a normal terminal before involving Telegram:
 
 ```powershell
-.\scripts\Publish.ps1 -Runtime win-x64
+codex --version
+codex
 ```
 
-The output is:
+If `codex` is not on `PATH`, keep the full path handy. The setup menu can store a Codex executable path override.
+
+### 4. Create A Telegram Bot
+
+In Telegram:
+
+1. Open a chat with `@BotFather`.
+2. Send `/newbot`.
+3. Choose a display name.
+4. Choose a username ending in `bot`.
+5. Copy the bot token.
+
+Keep the token private. Anyone with the token can control the bot account.
+
+Recommended BotFather settings for a first private-chat release:
+
+1. Use `/setdescription` and `/setabouttext` to explain that this bot controls a local Codex installation.
+2. Keep group joins disabled unless you intentionally want group support.
+3. Keep privacy mode enabled unless you intentionally need ordinary group text routed to Codex.
+4. Add commands later after the private-chat flow works.
+
+Copy-paste BotFather text, command lists, and privacy recommendations are in [BotFather setup](docs/botfather.md).
+
+## First Launch
+
+Run the app from the folder that should own its local `appsettings.Local.json`.
+
+Windows:
+
+```powershell
+.\codex-telegram.exe
+```
+
+Linux/macOS:
+
+```bash
+./codex-telegram
+```
+
+The default startup path opens an interactive bootstrap/admin menu.
+
+In the menu:
+
+1. Set the Telegram bot token.
+2. Enable Telegram polling.
+3. Set the Codex executable path if `codex` is not on `PATH`.
+4. Set at least one workspace root, such as `C:\src` or `/home/you/src`.
+5. Set the default working directory to the repository you want to use first.
+6. Set OpenAI transcription settings only if you want voice notes.
+7. Leave the local data root blank unless you need a custom state folder.
+
+The menu writes `appsettings.Local.json` in the current directory. Keep that file local and untracked.
+
+## Find Your Telegram User ID
+
+The bot uses an allowlist. You need your numeric Telegram user ID before normal use.
+
+Bootstrap path:
+
+1. Start the bot with the token configured.
+2. Leave the user allowlist empty only long enough to discover your ID.
+3. In a private chat with the bot, send:
 
 ```text
-artifacts\publish\win-x64\codex-telegram.exe
+/whoami
 ```
 
-Other runtime identifiers can be passed with `-Runtime`, for example `linux-x64` or `osx-arm64`, when the .NET SDK has the required runtime packs.
+4. Copy the numeric user ID.
+5. Stop the bot with Ctrl+C.
+6. Start the app again, open the menu, and add your user ID under Telegram/admin settings.
+7. Start the bot again.
 
-## First Run
+After the allowlist is configured, unauthorized users are ignored.
 
-1. Start the process.
-2. In the menu, set the Telegram bot token and enable Telegram polling.
-3. If you do not know your numeric Telegram user ID, start once and send `/whoami`; the app allows that command before the admin allowlist is configured.
-4. Return to the menu and add your numeric Telegram user ID under `Telegram and admins`.
-5. Set the OpenAI API key if you want voice transcription.
-6. Set the Codex executable path if `codex` is not already on `PATH`; the menu uses that path when it queries Codex for live model discovery.
-7. Set workspace roots and a default working directory.
-8. Leave `CodexTelegram:Workspace:DataRoot` blank if you want the default `%AppData%\Incursa\CodexTelegram` location, or set it now if you need a different durable folder.
-9. Choose `Start bot`, then send `/projects` or `/project add <absolute-directory>`.
-10. Send `/new <session name>`, then send normal messages to continue the active Codex session.
+## Start The Bot
 
-Useful commands:
+For normal operation, run with `--run` so the menu is skipped.
 
-- `/projects`, `/project add <path>`, `/project current`
-- `/new <name>`, `/sessions`, `/use <sessionId>`
-- `/status`, `/tail [lines]`, `/stop`
-- `/model`, `/thinking`
-- `/doctor` for in-chat diagnostics when setup, routing, or queueing feels unclear
-- `/topic new <name>` in forum-enabled supergroups
-- Voice notes are transcribed and sent to the active session.
-
-## Local State
-
-State is stored under `CodexTelegram:Workspace:DataRoot`, defaulting to the user's application data folder:
-
-- `projects.json`
-- `telegram-state.json`
-- per-thread manifests
-
-Secrets are not written to those state files.
-
-The active Telegram conversation-to-session follow map is rehydrated from `telegram-state.json` on startup, but it is still derived state. If you move `DataRoot`, keep the old folder until you confirm the new one is being loaded.
-
-## Development
+Windows:
 
 ```powershell
-dotnet build CodexTelegram.slnx
-dotnet test CodexTelegram.slnx
-dotnet publish src\Incursa.Codex.Telegram\Incursa.Codex.Telegram.csproj -c Release -r win-x64 -o artifacts\publish\win-x64 /p:AssemblyName=codex-telegram
+.\codex-telegram.exe --run
 ```
 
-The local release-readiness preflight is:
+Linux/macOS:
 
-```powershell
-.\scripts\Test-ReleaseReadiness.ps1 -Runtime win-x64
+```bash
+./codex-telegram --run
 ```
 
-The Telegram corpus gate can also be run directly when changing command parsing, chunking, attachments, or emoji/text handling:
+Keep that terminal open, or run the app under your preferred service manager.
 
-```powershell
-.\scripts\Test-TelegramFuzzCorpus.ps1 -Configuration Release
+## Your First Private Codex Chat
+
+In the private Telegram chat:
+
+1. Confirm setup:
+
+```text
+/doctor
 ```
 
-Automated fuzz and mutation guidance is tracked in [docs/testing.md](docs/testing.md).
-Public-demo readiness is tracked in [docs/demo-readiness.md](docs/demo-readiness.md).
-Manual Telegram validation is tracked in [docs/manual-test-plan.md](docs/manual-test-plan.md).
-Owner-only release tasks are tracked in [docs/release-owner-actions.md](docs/release-owner-actions.md).
-Operational restart and local-state guidance is tracked in [docs/operations.md](docs/operations.md).
+2. List projects:
+
+```text
+/projects
+```
+
+3. Add or select a project:
+
+```text
+/project add C:\src\your-repo
+```
+
+Use a Unix path on Linux/macOS, for example:
+
+```text
+/project add /home/you/src/your-repo
+```
+
+4. Start a new Codex session:
+
+```text
+/new release-demo
+```
+
+5. Send a normal message:
+
+```text
+Summarize this repository and tell me the next safest setup check to run.
+```
+
+6. Inspect recent output:
+
+```text
+/tail
+```
+
+At this point you have a working private Telegram chat connected to a local Codex session.
+
+## Voice Notes
+
+Voice notes are optional. They require:
+
+1. `OpenAI:ApiKey` or `OPENAI_API_KEY`.
+2. A transcription-capable `OpenAI:Model`.
+3. `ffmpeg` available on `PATH`, or configured with `OpenAI:FfmpegPath`.
+
+Suggested first voice test:
+
+```text
+Please review the current project and tell me the three most important setup risks. Keep it concise and do not edit files.
+```
+
+The bot transcribes the voice note, shows the transcription, and sends the transcribed text to the active Codex session.
+
+## Day-To-Day Commands
+
+| Command | Use |
+| --- | --- |
+| `/doctor` | Explain authorization, routing, active project/session, workspace roots, queue state, and next action. |
+| `/help` | Show the built-in command summary. |
+| `/whoami` | Show Telegram user, chat, and topic IDs for setup and troubleshooting. |
+| `/projects` | List known local project directories. |
+| `/project add <path>` | Add and select a repository or workspace. |
+| `/project current` | Confirm the active project for this Telegram conversation. |
+| `/new <name>` | Create and select a fresh Codex session. |
+| `/sessions` | Show active and Telegram-managed sessions. |
+| `/sessions all [count]` | Show older Codex history. |
+| `/use <sessionId>` | Resume an existing session. |
+| `/send <text>` | Send text when plain text is not automatically routed, especially in groups. |
+| `/steer <text>` | Add guidance to a currently active turn. |
+| `/model` | Show or change the active session model. |
+| `/thinking` | Show or change reasoning effort. |
+| `/status` | Show active session status. |
+| `/tail [lines]` | Show recent output and keep following the session; defaults to 40 lines. |
+| `/outbound` | Inspect delayed or batched Telegram output. |
+| `/stop` | Gracefully stop a session. |
+| `/restart confirm` | Show standalone-process restart guidance. |
+| `/topic ...` | Manage forum-topic sessions in allowed supergroups. |
+
+For a fuller operator guide, see [docs/usage.md](docs/usage.md).
+For every command, parameter, and expected behavior, see [docs/command-reference.md](docs/command-reference.md).
+
+## How Output Delivery Works
+
+Telegram output is rate-limited and batched so active Codex sessions do not flood your chat.
+
+Practical rules:
+
+1. Use `/tail` before assuming Telegram scrollback contains the full transcript.
+2. Use `/outbound` if messages seem delayed.
+3. Batched messages are concatenated with simple spacing and preserve multi-line content, including numbered lists and headings.
+4. If the local outbound buffer is compacted, the bot sends an explicit compaction notice.
+5. A final `~~ fin ~~` marker means the turn reached a terminal event.
+
+## Local State And Safety
+
+The app stores local state under `CodexTelegram:Workspace:DataRoot`. By default, that is the user's application data folder.
+
+State includes:
+
+1. `projects.json`
+2. `telegram-state.json`
+3. Per-thread manifests
+
+Secrets should stay in `appsettings.Local.json`, user secrets, environment variables, or another secret store. Secrets are not supposed to be written to the state files.
+
+Security rules:
+
+1. Keep `TelegramBot:AllowedUserIds` narrow.
+2. Keep `TelegramBot:AllowedChatIds` empty unless you intentionally want group or forum-topic access.
+3. Set explicit workspace roots and a default working directory before enabling polling.
+4. Review Codex sandbox and approval settings before exposing sensitive repositories.
+5. Rotate the BotFather token if it is exposed.
+
+## Supported Modes
+
+Private chat is the primary supported operating mode and the recommended first setup path.
+
+Groups and forum topics are available for advanced workflows, but they require:
+
+1. An allowed Telegram user.
+2. An allowed group chat ID.
+3. BotFather privacy settings that match the desired behavior.
+4. Topic-management rights if the bot should create forum topics.
+
+Start privately first. Add groups only after the private flow works.
+
+## Support And Security
+
+For general open-source project questions, contact oss@incursa.com.
+
+For security issues, use GitHub private vulnerability reporting when it is enabled for this repository. If that is unavailable, contact security@incursa.com. Do not include secrets, private transcripts, exploit details, or local credential paths in public issues.
+
+## More Documentation
+
+User and operator docs:
+
+- [Getting started guide](docs/getting-started.md)
+- [Day-to-day usage](docs/usage.md)
+- [Operations](docs/operations.md)
+- [BotFather setup](docs/botfather.md)
+- [Command reference](docs/command-reference.md)
+- [Menus and screenshots](docs/menus.md)
+- [Manual Telegram test plan](docs/manual-test-plan.md)
+- [Demo readiness scorecard](docs/demo-readiness.md)
+- [Security](SECURITY.md)
+
+Developer and maintainer docs:
+
+- [Development guide](docs/development.md)
+- [Contributing](CONTRIBUTING.md)
+- [Testing and quality](docs/testing.md)
+- [Release owner actions](docs/release-owner-actions.md)
 
 This repository is intentionally console-only. The ASP.NET Core web console, SignalR UI, and MCP endpoint belong in the separate `codex-remote` project.
-
-## GitHub Actions
-
-- Pull requests run build and test validation on Windows, Linux, and macOS.
-- Pushes to `main` publish artifacts for Windows x64, Linux x64, and macOS arm64.
-- Tag pushes that start with `v` also create a GitHub Release and upload the published artifacts with a version-style title.

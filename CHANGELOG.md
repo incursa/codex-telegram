@@ -16,6 +16,15 @@
 - Added group-root plain-text guidance so allowed users are not left with a silent no-op when they accidentally send outside a topic.
 - Changed stale/deleted topic send failures to fail closed instead of retrying Codex output in the group root.
 - Reduced model/thinking update latency by avoiding a redundant model-list lookup after settings changes.
+- Preserved full multi-line content in batched Telegram output instead of reducing each queued update to its first line.
+- Reworked the README as a product-facing setup and download guide, with developer workflow details moved to a dedicated development guide.
+- Added BotFather, command-reference, and menu/button documentation for first-time public users.
+- Aligned model-setting examples on the canonical `/model <model> thinking <effort>` form.
+- Removed `---` separators from batched Telegram output so queued multi-line content reads as one continuous update.
+- Removed the batched-output `/tail 100` footer and redundant successful `Turn completed.` text before the `~~ fin ~~` marker.
+- Made model and thinking button callbacks edit the tapped menu immediately while settings are loading or updating.
+- Added XML documentation and named limit/default constants across the Telegram outbound queue, bot options, Codex option contracts, DTO contracts, and small Telegram routing/value-object surfaces.
+- Enabled XML documentation generation for the app project and tightened non-configuration app seams to internal visibility.
 
 Known boundaries:
 

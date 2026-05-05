@@ -12,6 +12,8 @@ The flow is:
 5. Start the bot in private chat first.
 6. Add group and forum-topic support only after the private flow works.
 
+After that first setup succeeds, use [usage.md](usage.md) for the normal day-to-day operator workflow.
+
 ## What This App Does
 
 `Incursa.Codex.Telegram` is a console host for a local Codex installation.
@@ -72,6 +74,8 @@ Optional BotFather steps that are worth doing:
 3. `/setuserpic` to give the bot a recognizable avatar.
 4. `/setcommands` if you want Telegram's UI to show a command list.
 5. `/revoke` if you ever leak the token and need to rotate it.
+
+Copy-paste BotFather text, command lists, and recommended first-release settings are in [botfather.md](botfather.md).
 
 If you expect to use the bot in groups or forums, also review:
 
@@ -276,6 +280,7 @@ When you launch the app for the first time, work through this list in order.
 10. Start the bot.
 
 If the menu shows warnings, do not ignore them casually. They usually mean one of the required pieces is still missing.
+If you leave workspace roots or the default working directory unset, the runtime falls back to the process current directory. That is convenient for a first local run, but public demos and shared machines should use explicit roots.
 
 ## Run It
 
@@ -353,6 +358,7 @@ The bootstrap menu offers direct pickers for the common values in items 3 and 4,
 
 After the bot is running, test it in a private chat before you move on to groups.
 For release or public-demo validation, use the fuller checklist in [manual-test-plan.md](manual-test-plan.md). Owner-only tasks such as BotFather choices, screenshots, and visibility decisions are tracked in [release-owner-actions.md](release-owner-actions.md).
+For everyday operation after this smoke test, use [usage.md](usage.md).
 
 Suggested sequence:
 
@@ -436,6 +442,8 @@ If voice transcription fails, check these first:
 ## Command Reference
 
 The bot's built-in help text is the final authority, but this is the practical summary.
+For workflow-oriented usage after setup, see [usage.md](usage.md).
+For a complete parameter-by-parameter reference, see [command-reference.md](command-reference.md).
 
 | Command | What it does | When to use it |
 | --- | --- | --- |

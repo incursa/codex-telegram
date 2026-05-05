@@ -323,6 +323,7 @@ public sealed class TelegramCommandHandlerTests
         Assert.Contains("/sessions", sent.Text);
         Assert.Contains("/model", sent.Text);
         Assert.Contains("/outbound", sent.Text);
+        Assert.Contains("configured OpenAI transcription model", sent.Text);
         Assert.Equal(["Sessions", "Projects", "Help"], FlattenButtonLabels(sent));
     }
 
@@ -743,6 +744,23 @@ public sealed class TelegramCommandHandlerTests
     }
 
     [Fact]
+    public async Task HandleMessageAsync_TailWithoutCountUsesDefaultLineCount()
+    {
+        using CommandHandlerHarness harness = CommandHandlerHarness.Create();
+        TelegramConversationScope conversation = new(5555, null);
+        harness.SessionManager.Sessions.Add(CreateSession("thread-1", "Demo session", harness.Temp.Path));
+        await harness.StateStore.SetActiveSessionIdAsync(conversation, "thread-1", CancellationToken.None);
+
+        await harness.Handler.HandleMessageAsync(
+            new TelegramInboundMessage(1234, conversation.ChatId, "private", "/tail"),
+            harness.Sender,
+            CancellationToken.None);
+
+        Assert.Equal(("thread-1", 40), Assert.Single(harness.SessionManager.TailRequests));
+        Assert.Equal("tail output", Assert.Single(harness.Sender.Sent).Text);
+    }
+
+    [Fact]
     public async Task HandleMessageAsync_OutboundStatusShowsQueueDetails()
     {
         using CommandHandlerHarness harness = CommandHandlerHarness.Create();
@@ -1005,9 +1023,21 @@ public sealed class TelegramCommandHandlerTests
             harness.Sender.Edited,
             edited =>
             {
+                Assert.Equal(10, edited.MessageId);
+                Assert.Equal("Loading model settings...", edited.Text);
+                Assert.Null(edited.Buttons);
+            },
+            edited =>
+            {
                 Assert.Contains("Model settings:", edited.Text);
                 Assert.Contains("[x] GPT-5.4 Mini", FlattenButtonLabels(edited));
                 Assert.Contains("Back", FlattenButtonLabels(edited));
+            },
+            edited =>
+            {
+                Assert.Equal(11, edited.MessageId);
+                Assert.Equal("Loading thinking settings...", edited.Text);
+                Assert.Null(edited.Buttons);
             },
             edited =>
             {
@@ -1026,21 +1056,28 @@ public sealed class TelegramCommandHandlerTests
         harness.SessionManager.UpdateModelSettingsCompletion = updateCompletion;
 
         Task operation = harness.Handler.HandleCallbackAsync(
-            new TelegramInboundCallback("callback-1", 1234, 5555, "private", "modelset:thread-1|gpt-5.4-mini"),
+            new TelegramInboundCallback("callback-1", 1234, 5555, "private", "modelset:thread-1|gpt-5.4-mini", SourceMessageId: 22),
             harness.Sender,
             CancellationToken.None);
 
-        await WaitUntilAsync(() => harness.Sender.CallbackAnswers.Count == 1);
+        await WaitUntilAsync(() =>
+            harness.Sender.CallbackAnswers.Count == 1
+            && harness.Sender.Edited.Count == 1
+            && harness.SessionManager.UpdateRequests.Count == 1);
         Assert.Equal("Updated model.", Assert.Single(harness.Sender.CallbackAnswers).Text);
         Assert.False(operation.IsCompleted);
         Assert.Empty(harness.Sender.Sent);
+        Assert.Equal("Updating model settings...", Assert.Single(harness.Sender.Edited).Text);
         Assert.Equal(("thread-1", (string?)"gpt-5.4-mini", (string?)null), Assert.Single(harness.SessionManager.UpdateRequests));
 
         updateCompletion.SetResult(CreateModelSettings("thread-1", "Demo session", "gpt-5.4-mini", "high"));
         await operation;
 
-        SentTelegramMessage sent = Assert.Single(harness.Sender.Sent);
-        Assert.Contains("Model settings:", sent.Text);
+        Assert.Empty(harness.Sender.Sent);
+        Assert.Collection(
+            harness.Sender.Edited,
+            edited => Assert.Equal("Updating model settings...", edited.Text),
+            edited => Assert.Contains("Model settings:", edited.Text));
     }
 
     [Fact]
@@ -1052,21 +1089,28 @@ public sealed class TelegramCommandHandlerTests
         harness.SessionManager.UpdateModelSettingsCompletion = updateCompletion;
 
         Task operation = harness.Handler.HandleCallbackAsync(
-            new TelegramInboundCallback("callback-1", 1234, 5555, "private", "thinkingset:thread-1|xhigh"),
+            new TelegramInboundCallback("callback-1", 1234, 5555, "private", "thinkingset:thread-1|xhigh", SourceMessageId: 23),
             harness.Sender,
             CancellationToken.None);
 
-        await WaitUntilAsync(() => harness.Sender.CallbackAnswers.Count == 1);
+        await WaitUntilAsync(() =>
+            harness.Sender.CallbackAnswers.Count == 1
+            && harness.Sender.Edited.Count == 1
+            && harness.SessionManager.UpdateRequests.Count == 1);
         Assert.Equal("Updated thinking.", Assert.Single(harness.Sender.CallbackAnswers).Text);
         Assert.False(operation.IsCompleted);
         Assert.Empty(harness.Sender.Sent);
+        Assert.Equal("Updating thinking settings...", Assert.Single(harness.Sender.Edited).Text);
         Assert.Equal(("thread-1", (string?)null, (string?)"xhigh"), Assert.Single(harness.SessionManager.UpdateRequests));
 
         updateCompletion.SetResult(CreateModelSettings("thread-1", "Demo session", "gpt-5.4-mini", "XHigh"));
         await operation;
 
-        SentTelegramMessage sent = Assert.Single(harness.Sender.Sent);
-        Assert.Contains("Thinking settings:", sent.Text);
+        Assert.Empty(harness.Sender.Sent);
+        Assert.Collection(
+            harness.Sender.Edited,
+            edited => Assert.Equal("Updating thinking settings...", edited.Text),
+            edited => Assert.Contains("Thinking settings:", edited.Text));
     }
 
     [Fact]

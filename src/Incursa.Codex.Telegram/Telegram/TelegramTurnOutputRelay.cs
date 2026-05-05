@@ -6,11 +6,23 @@ using Microsoft.Extensions.Options;
 
 namespace Incursa.Codex.Telegram.Telegram;
 
-public interface ITelegramTurnOutputRelay
+/// <summary>
+/// Publishes Codex turn events to every Telegram conversation following the thread.
+/// </summary>
+internal interface ITelegramTurnOutputRelay
 {
+    /// <summary>
+    /// Publishes one Codex timeline entry to Telegram followers.
+    /// </summary>
+    /// <param name="entry">Timeline entry to publish.</param>
+    /// <param name="cancellationToken">Cancellation token for request aborts.</param>
+    /// <returns>A task that completes when the entry has been queued or ignored.</returns>
     Task PublishTurnEventAsync(CodexTimelineEntryVm entry, CancellationToken cancellationToken);
 }
 
+/// <summary>
+/// Converts Codex timeline entries into rate-limited Telegram outbound messages.
+/// </summary>
 internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
 {
     private const string AgentMessageDeltaType = "item.agentMessage.delta";
@@ -26,6 +38,13 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
     private readonly TelegramOutboundOptions _options;
     private readonly ILogger<TelegramTurnOutputRelay> _logger;
 
+    /// <summary>
+    /// Initializes a new instance of the <see cref="TelegramTurnOutputRelay"/> class.
+    /// </summary>
+    /// <param name="outboundQueue">Outbound Telegram queue.</param>
+    /// <param name="followRegistry">Registry of Telegram conversations following Codex threads.</param>
+    /// <param name="options">Outbound delivery options.</param>
+    /// <param name="logger">Logger for enqueue failures.</param>
     public TelegramTurnOutputRelay(
         IOutboundTelegramQueue outboundQueue,
         ITelegramThreadFollowRegistry followRegistry,
@@ -38,6 +57,7 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
         _logger = logger;
     }
 
+    /// <inheritdoc />
     public async Task PublishTurnEventAsync(CodexTimelineEntryVm entry, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(entry.ThreadId))
@@ -65,6 +85,8 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
         {
             if (_agentMessageBuffersByThreadId.TryRemove(entry.ThreadId, out AgentMessageProgressBuffer? buffer))
             {
+                // Terminal events are the only point where we know whether already-streamed assistant
+                // text duplicates the final response or whether there is unpublished tail text to flush.
                 bufferedAgentMessage = buffer.Flush();
             }
         }
@@ -244,9 +266,10 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
         {
             if (bufferedAgentMessage?.PublishedAny == true && TextEquals(entry.Body, bufferedAgentMessage.FullText))
             {
+                // Avoid repeating a full final response that was already streamed through live deltas.
                 return !string.IsNullOrWhiteSpace(bufferedAgentMessage.UnpublishedText)
                     ? bufferedAgentMessage.UnpublishedText
-                    : "Turn completed.";
+                    : null;
             }
 
             return entry.Body;
@@ -257,7 +280,7 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
             return bufferedAgentMessage.UnpublishedText;
         }
 
-        return bufferedAgentMessage?.PublishedAny == true ? "Turn completed." : null;
+        return null;
     }
 
     private static string AppendTurnFinishedMarker(string? text)
@@ -396,6 +419,8 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
             int limit = Math.Min(text.Length, startIndex + safeMax);
             int minimumBoundary = startIndex + safeMin;
 
+            // Prefer human-readable boundaries so live Telegram updates do not chop sentences
+            // unless the assistant has already produced a very long uninterrupted segment.
             int boundary = FindPreferredBoundary(text, startIndex, minimumBoundary, limit, ch => ch == '\n', requireFollowingWhitespace: false);
             if (boundary > startIndex)
             {

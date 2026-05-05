@@ -4,7 +4,7 @@ using Microsoft.Extensions.Options;
 
 namespace Incursa.Codex.Telegram.Services;
 
-public interface ICodexProjectCatalogStore
+internal interface ICodexProjectCatalogStore
 {
     Task<IReadOnlyList<CodexProjectCatalogRecord>> ListAsync(CancellationToken cancellationToken);
 
@@ -170,7 +170,7 @@ internal sealed class CodexProjectCatalogStore : ICodexProjectCatalogStore
         => string.IsNullOrWhiteSpace(workingDirectory) ? null : Path.GetFullPath(workingDirectory);
 }
 
-public sealed record CodexProjectCatalogRecord
+internal sealed record CodexProjectCatalogRecord
 {
     public string WorkingDirectory { get; set; } = string.Empty;
 

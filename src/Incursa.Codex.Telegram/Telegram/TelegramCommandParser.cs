@@ -1,7 +1,15 @@
 namespace Incursa.Codex.Telegram.Telegram;
 
-public sealed class TelegramCommandParser
+/// <summary>
+/// Parses raw Telegram text into the bot's command shape.
+/// </summary>
+internal sealed class TelegramCommandParser
 {
+    /// <summary>
+    /// Parses a Telegram text message as either a slash command or ordinary prompt text.
+    /// </summary>
+    /// <param name="text">Raw Telegram message text.</param>
+    /// <returns>Parsed command information.</returns>
     public ParsedTelegramCommand Parse(string? text)
     {
         string normalized = string.IsNullOrWhiteSpace(text) ? string.Empty : text.Trim();
@@ -16,6 +24,8 @@ public sealed class TelegramCommandParser
         int mentionIndex = commandToken.IndexOf('@', StringComparison.Ordinal);
         if (mentionIndex >= 0)
         {
+            // Telegram sends group commands as /command@botname; the command handler only needs
+            // the command verb because authorization and routing are checked separately.
             commandToken = commandToken[..mentionIndex];
         }
 
@@ -23,4 +33,11 @@ public sealed class TelegramCommandParser
     }
 }
 
-public sealed record ParsedTelegramCommand(bool IsCommand, string Name, string Arguments, string Text);
+/// <summary>
+/// Parsed Telegram command or plain-text prompt.
+/// </summary>
+/// <param name="IsCommand">Whether the raw text was a slash command.</param>
+/// <param name="Name">Lowercase command name without a leading slash or bot mention.</param>
+/// <param name="Arguments">Command argument text.</param>
+/// <param name="Text">Normalized original text.</param>
+internal sealed record ParsedTelegramCommand(bool IsCommand, string Name, string Arguments, string Text);

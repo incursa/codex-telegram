@@ -18,6 +18,7 @@ try {
     & (Join-Path $repoRoot "scripts\Test-TelegramFuzzCorpus.ps1") -Configuration $Configuration -NoRestore -NoBuild
     dotnet format $solutionPath --verify-no-changes --no-restore
     dotnet list $solutionPath package --vulnerable --include-transitive
+    & (Join-Path $repoRoot "scripts\Test-TrackedSecretScan.ps1")
 
     if (-not $SkipPublish) {
         & (Join-Path $repoRoot "scripts\Publish.ps1") -Runtime $Runtime -Configuration $Configuration -OutputDirectory $publishOutput
