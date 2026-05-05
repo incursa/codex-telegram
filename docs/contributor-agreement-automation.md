@@ -8,6 +8,8 @@ incursa/contributor-agreement-action@v0.1.0
 
 The action checks pull request contributors, comments with the required signing instructions, records signatures in a private repository, and publishes the `Contributor Agreement` commit status that branch rulesets can require.
 
+This document also serves as a safe target for contributor-agreement workflow smoke tests.
+
 ## Storage
 
 Signatures are stored outside this repository in the private repository:
