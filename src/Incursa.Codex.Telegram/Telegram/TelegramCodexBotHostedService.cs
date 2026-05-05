@@ -696,7 +696,7 @@ internal sealed class TelegramCodexBotHostedService : BackgroundService
             commandToken = commandToken[..mentionIndex];
         }
 
-        return commandToken.Length > 0;
+        return true;
     }
 
     private static long GetSenderId(Message message)

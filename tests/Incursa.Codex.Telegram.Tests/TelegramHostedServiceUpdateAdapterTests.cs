@@ -236,6 +236,34 @@ public sealed class TelegramHostedServiceUpdateAdapterTests
     }
 
     [Fact]
+    public async Task HandleUpdateAsync_ForwardsOddGroupRootSlashCommandWithoutDownloadingAttachment()
+    {
+        using Harness harness = Harness.Create();
+        Message telegramMessage = CreateMessage(caption: "/@codex_bot diagnostics", chatId: -1005555, chatType: ChatType.Supergroup);
+        telegramMessage.Document = new Document
+        {
+            FileId = "doc-file",
+            FileUniqueId = "doc-file-u",
+            FileName = "notes.pdf",
+            MimeType = "application/pdf",
+        };
+        Update update = new()
+        {
+            Id = 32,
+            Message = telegramMessage,
+        };
+
+        await harness.Service.HandleUpdateAsync(harness.FileClient, update, harness.Sender, CancellationToken.None);
+
+        TelegramInboundMessage message = Assert.Single(harness.Handler.Messages);
+        Assert.Equal("/@codex_bot diagnostics", message.Text);
+        Assert.Null(message.Attachments);
+        Assert.Empty(harness.FileClient.RequestedFileIds);
+        Assert.Empty(harness.FileClient.DownloadedFileIds);
+        Assert.Empty(harness.Sender.Sent);
+    }
+
+    [Fact]
     public async Task HandleUpdateAsync_DownloadsGroupRootSendCommandAttachment()
     {
         using Harness harness = Harness.Create();
