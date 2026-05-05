@@ -857,6 +857,142 @@ public sealed class TelegramCommandHandlerTests
     }
 
     [Fact]
+    public async Task HandleCallbackAsync_NavigationSessionsHelpAndUnknownTargetsRespond()
+    {
+        using CommandHandlerHarness harness = CommandHandlerHarness.Create();
+        harness.SessionManager.Sessions.Add(CreateSession("thread-1", "Demo session", harness.Temp.Path));
+        await harness.StateStore.TrackSessionAsync("thread-1", CancellationToken.None);
+
+        await harness.Handler.HandleCallbackAsync(
+            new TelegramInboundCallback("callback-sessions", 1234, 5555, "private", "nav:sessions"),
+            harness.Sender,
+            CancellationToken.None);
+        await harness.Handler.HandleCallbackAsync(
+            new TelegramInboundCallback("callback-help", 1234, 5555, "private", "nav:help"),
+            harness.Sender,
+            CancellationToken.None);
+        await harness.Handler.HandleCallbackAsync(
+            new TelegramInboundCallback("callback-unknown", 1234, 5555, "private", "nav:missing"),
+            harness.Sender,
+            CancellationToken.None);
+
+        Assert.Equal(["Opening menu.", "Opening menu.", "Opening menu."], harness.Sender.CallbackAnswers.Select(answer => answer.Text));
+        Assert.Collection(
+            harness.Sender.Sent,
+            sent => Assert.Contains("Demo session", sent.Text),
+            sent => Assert.Contains("Commands:", sent.Text),
+            sent => Assert.Equal("Unsupported navigation action.", sent.Text));
+    }
+
+    [Fact]
+    public async Task HandleCallbackAsync_UseAndProjectSelectionEditSourceMessage()
+    {
+        using CommandHandlerHarness harness = CommandHandlerHarness.Create();
+        string projectPath = harness.Temp.CreateDirectory("repo");
+        TelegramConversationScope conversation = new(5555, null);
+        harness.ProjectCatalog.Projects.Add(new CodexProjectCatalogRecord
+        {
+            WorkingDirectory = projectPath,
+            AddedAt = DateTimeOffset.Parse("2026-05-04T00:00:00Z"),
+        });
+        harness.SessionManager.Sessions.Add(CreateSession("thread-1", "Demo session", projectPath));
+
+        await harness.Handler.HandleCallbackAsync(
+            new TelegramInboundCallback("callback-use", 1234, conversation.ChatId, "private", "use:thread-1", SourceMessageId: 42),
+            harness.Sender,
+            CancellationToken.None);
+        await harness.Handler.HandleCallbackAsync(
+            new TelegramInboundCallback("callback-project", 1234, conversation.ChatId, "private", "project:1", SourceMessageId: 43),
+            harness.Sender,
+            CancellationToken.None);
+
+        Assert.Equal(["Selected.", "Selected project."], harness.Sender.CallbackAnswers.Select(answer => answer.Text));
+        Assert.Equal("thread-1", await harness.StateStore.GetActiveSessionIdAsync(conversation, CancellationToken.None));
+        Assert.Equal(projectPath, await harness.StateStore.GetActiveProjectWorkingDirectoryAsync(conversation, CancellationToken.None));
+        Assert.Empty(harness.Sender.Sent);
+        Assert.Collection(
+            harness.Sender.Edited,
+            edited =>
+            {
+                Assert.Equal(42, edited.MessageId);
+                Assert.Contains("Selected Demo session.", edited.Text);
+            },
+            edited =>
+            {
+                Assert.Equal(43, edited.MessageId);
+                Assert.Contains("Selected project repo.", edited.Text);
+            });
+    }
+
+    [Fact]
+    public async Task HandleCallbackAsync_StatusBackTailAndStopUseRequestedSession()
+    {
+        using CommandHandlerHarness harness = CommandHandlerHarness.Create();
+        harness.SessionManager.Sessions.Add(CreateSession("thread-1", "Demo session", harness.Temp.Path));
+
+        await harness.Handler.HandleCallbackAsync(
+            new TelegramInboundCallback("callback-status", 1234, 5555, "private", "status:thread-1", SourceMessageId: 10),
+            harness.Sender,
+            CancellationToken.None);
+        await harness.Handler.HandleCallbackAsync(
+            new TelegramInboundCallback("callback-back", 1234, 5555, "private", "back:thread-1", SourceMessageId: 11),
+            harness.Sender,
+            CancellationToken.None);
+        await harness.Handler.HandleCallbackAsync(
+            new TelegramInboundCallback("callback-tail", 1234, 5555, "private", "tail:thread-1", SourceMessageId: 12),
+            harness.Sender,
+            CancellationToken.None);
+        await harness.Handler.HandleCallbackAsync(
+            new TelegramInboundCallback("callback-stop", 1234, 5555, "private", "stop:thread-1", SourceMessageId: 13),
+            harness.Sender,
+            CancellationToken.None);
+
+        Assert.Equal(["Status.", "Back.", "Tail.", "Stopping."], harness.Sender.CallbackAnswers.Select(answer => answer.Text));
+        Assert.Equal([("thread-1", 40)], harness.SessionManager.TailRequests);
+        Assert.Equal(["thread-1"], harness.SessionManager.StopRequests);
+        Assert.Empty(harness.Sender.Sent);
+        Assert.Collection(
+            harness.Sender.Edited,
+            edited => Assert.Contains("Demo session", edited.Text),
+            edited => Assert.Contains("Demo session", edited.Text),
+            edited => Assert.Equal("tail output", edited.Text),
+            edited => Assert.Contains("Stopped Demo session.", edited.Text));
+    }
+
+    [Fact]
+    public async Task HandleCallbackAsync_ModelAndThinkingMenusEditSourceMessage()
+    {
+        using CommandHandlerHarness harness = CommandHandlerHarness.Create();
+        harness.SessionManager.Sessions.Add(CreateSession("thread-1", "Demo session", harness.Temp.Path));
+
+        await harness.Handler.HandleCallbackAsync(
+            new TelegramInboundCallback("callback-model", 1234, 5555, "private", "model:thread-1", SourceMessageId: 10),
+            harness.Sender,
+            CancellationToken.None);
+        await harness.Handler.HandleCallbackAsync(
+            new TelegramInboundCallback("callback-thinking", 1234, 5555, "private", "thinking:thread-1", SourceMessageId: 11),
+            harness.Sender,
+            CancellationToken.None);
+
+        Assert.Equal(["Model settings.", "Thinking settings."], harness.Sender.CallbackAnswers.Select(answer => answer.Text));
+        Assert.Empty(harness.Sender.Sent);
+        Assert.Collection(
+            harness.Sender.Edited,
+            edited =>
+            {
+                Assert.Contains("Model settings:", edited.Text);
+                Assert.Contains("[x] GPT-5.4 Mini", FlattenButtonLabels(edited));
+                Assert.Contains("Back", FlattenButtonLabels(edited));
+            },
+            edited =>
+            {
+                Assert.Contains("Thinking settings:", edited.Text);
+                Assert.Contains("[x] High", FlattenButtonLabels(edited));
+                Assert.Contains("Back", FlattenButtonLabels(edited));
+            });
+    }
+
+    [Fact]
     public async Task HandleCallbackAsync_ModelSelectionAnswersBeforeSettingsUpdateFinishes()
     {
         using CommandHandlerHarness harness = CommandHandlerHarness.Create();
@@ -968,6 +1104,9 @@ public sealed class TelegramCommandHandlerTests
     private static IReadOnlyList<string> FlattenButtonLabels(SentTelegramMessage message)
         => message.Buttons?.SelectMany(row => row.Select(button => button.Text)).ToArray() ?? [];
 
+    private static IReadOnlyList<string> FlattenButtonLabels(EditedTelegramMessage message)
+        => message.Buttons?.SelectMany(row => row.Select(button => button.Text)).ToArray() ?? [];
+
     private static bool IsSessionControlLabel(string label)
         => label.StartsWith("Tail", StringComparison.OrdinalIgnoreCase)
             || label.StartsWith("Status", StringComparison.OrdinalIgnoreCase)
@@ -1072,6 +1211,8 @@ public sealed class TelegramCommandHandlerTests
 
         public List<(string SessionId, int LineCount)> TailRequests { get; } = [];
 
+        public List<string> StopRequests { get; } = [];
+
         public TaskCompletionSource<CodexSessionModelSettings>? UpdateModelSettingsCompletion { get; set; }
 
         public Task<IReadOnlyCollection<CodexSessionSummary>> ListSessionsAsync(CancellationToken cancellationToken)
@@ -1135,7 +1276,10 @@ public sealed class TelegramCommandHandlerTests
         }
 
         public Task StopAsync(string sessionId, CancellationToken cancellationToken)
-            => Task.CompletedTask;
+        {
+            StopRequests.Add(sessionId);
+            return Task.CompletedTask;
+        }
 
         public Task KillAsync(string sessionId, CancellationToken cancellationToken)
             => Task.CompletedTask;
