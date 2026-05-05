@@ -1,0 +1,5 @@
+# Default owner for all repository changes.
+#
+# The main-branch ruleset requires Code Owner review, so this entry makes
+# Samuel the required reviewer for every protected pull request.
+* @SamuelMcAravey

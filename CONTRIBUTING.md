@@ -10,6 +10,12 @@ This repository is a standalone Telegram bot host for a local Codex installation
 4. Read [docs/development.md](docs/development.md) for source build, test, publish, and GitHub Actions workflow.
 5. Check [docs/testing.md](docs/testing.md) for the relevant automated gate.
 
+## Contributor Agreement
+
+All pull requests and code-bearing issue comments are accepted only under [CONTRIBUTOR-AGREEMENT.md](CONTRIBUTOR-AGREEMENT.md). Do not submit a contribution unless you can make the copyright assignment and grants described there.
+
+If you are contributing on behalf of an employer or another organization, confirm that you have authority before opening the pull request. For corporate contribution questions, contact oss@incursa.com.
+
 ## Local Setup
 
 Required tools:
@@ -81,6 +87,8 @@ Good pull requests include:
 4. Manual Telegram evidence when claiming real bot behavior that automated tests cannot prove.
 5. No unrelated formatting churn.
 6. A clean tracked-file secret scan before sharing public-release branches.
+
+Protected changes to `main` must go through a pull request and require Code Owner review. The default Code Owner is listed in [.github/CODEOWNERS](.github/CODEOWNERS).
 
 For public-facing behavior, avoid claims that are broader than the evidence. If a flow has only been validated in private chat, describe it as private-chat evidence until group, forum, voice, attachment, or platform checks have been run.
 

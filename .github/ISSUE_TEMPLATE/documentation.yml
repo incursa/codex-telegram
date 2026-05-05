@@ -1,0 +1,25 @@
+name: Documentation Issue
+description: Report unclear, stale, or missing documentation.
+title: "[Docs]: "
+labels:
+  - documentation
+body:
+  - type: textarea
+    id: page
+    attributes:
+      label: Page Or Section
+      description: Link to the README or docs page, or name the section.
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What was confusing, missing, or incorrect?
+    validations:
+      required: true
+  - type: textarea
+    id: suggested-fix
+    attributes:
+      label: Suggested Fix
+      description: Optional. What would have made the documentation clearer?

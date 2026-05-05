@@ -1,0 +1,42 @@
+name: Feature Request
+description: Propose a focused product or developer workflow improvement.
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What workflow or limitation should this solve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: Describe the smallest useful behavior change.
+    validations:
+      required: true
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Affected Surface
+      options:
+        - Setup and onboarding
+        - Telegram commands
+        - Telegram menus
+        - Message queueing and output
+        - Voice or attachments
+        - Group or forum topics
+        - Codex process integration
+        - Documentation
+        - Release packaging
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives Considered
+      description: Optional. Mention workarounds or smaller alternatives.

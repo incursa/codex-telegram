@@ -1,0 +1,50 @@
+name: Setup Help
+description: Ask for help getting the bot installed or configured.
+title: "[Setup]: "
+labels:
+  - question
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not paste bot tokens, OpenAI keys, Codex auth files, private transcripts, or full local paths that reveal sensitive repository names.
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Release version, commit SHA, or source build.
+      placeholder: v1.0.6
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - Windows
+        - macOS
+        - Linux
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: goal
+    attributes:
+      label: Goal
+      description: What are you trying to set up?
+    validations:
+      required: true
+  - type: textarea
+    id: attempted
+    attributes:
+      label: What You Tried
+      description: Include sanitized commands and config keys, not secrets.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: error
+    attributes:
+      label: Sanitized Error Output
+      description: Optional. Redact secrets and private path details.
+      render: text

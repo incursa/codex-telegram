@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security Vulnerability
+    url: https://github.com/incursa/codex-telegram/security/policy
+    about: Report security issues privately instead of opening a public issue.
+  - name: General Open Source Support
+    url: mailto:oss@incursa.com
+    about: Ask non-security questions that do not fit an issue template.
