@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.0.6 - 2026-05-05
 
 - Added a standalone bootstrap/admin menu for local configuration.
 - Added live Codex model discovery for setup, with curated fallback examples.
