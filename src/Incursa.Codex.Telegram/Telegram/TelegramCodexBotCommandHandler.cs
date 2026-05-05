@@ -804,7 +804,8 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         CodexSessionSummary session,
         string? text,
         ITelegramBotMessageSender sender,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool allowUnreadableThreadRecovery = true)
     {
         string trimmed = text?.Trim() ?? string.Empty;
         await _stateStore.TrackSessionAsync(session.Id, cancellationToken).ConfigureAwait(false);
@@ -878,6 +879,55 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             await QueuePromptAsync(message, session, trimmed, sender, cancellationToken).ConfigureAwait(false);
             return true;
         }
+        catch (Exception exception) when (allowUnreadableThreadRecovery && IsUnreadableCodexThreadException(exception))
+        {
+            return await RecoverUnreadableSessionAndRetryAsync(
+                message,
+                session,
+                trimmed,
+                exception,
+                sender,
+                cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private async Task<bool> RecoverUnreadableSessionAndRetryAsync(
+        TelegramInboundMessage message,
+        CodexSessionSummary staleSession,
+        string text,
+        Exception exception,
+        ITelegramBotMessageSender sender,
+        CancellationToken cancellationToken)
+    {
+        _logger.LogWarning(
+            exception,
+            "Selected Codex session {SessionId} for chat {ChatId} topic {MessageThreadId} could not be resumed because its local thread store is unreadable. Clearing the conversation selection and creating a replacement session.",
+            staleSession.Id,
+            message.ChatId,
+            message.MessageThreadId);
+
+        await _stateStore.ClearActiveSessionAsync(message.ConversationScope, cancellationToken).ConfigureAwait(false);
+        string? workingDirectory = await ResolvePreferredWorkingDirectoryAsync(message.ConversationScope, cancellationToken).ConfigureAwait(false);
+        CodexSessionSummary replacement = await _sessionManager.CreateSessionAsync(
+            new CreateCodexSessionRequest("Telegram session", workingDirectory),
+            cancellationToken).ConfigureAwait(false);
+        await _stateStore.SetActiveSessionIdAsync(message.ConversationScope, replacement.Id, cancellationToken).ConfigureAwait(false);
+        _followRegistry.FollowThread(message.ConversationScope, replacement.Id);
+
+        await ReplyAsync(
+            sender,
+            message.ConversationScope,
+            $"The selected Codex session {GetShortSessionId(staleSession.Id)} could not be resumed because its local transcript was empty or unreadable. I started a fresh session and will send this message there.",
+            BuildSessionButtons([replacement], includeUse: false),
+            cancellationToken).ConfigureAwait(false);
+
+        return await SendOrQueueAsync(
+            message,
+            replacement,
+            text,
+            sender,
+            cancellationToken,
+            allowUnreadableThreadRecovery: false).ConfigureAwait(false);
     }
 
     private Task<CodexThreadExecutionVm> StartSessionSendAsync(
@@ -1327,7 +1377,21 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             return new ResolvedSession(null, "No active session is selected in this conversation. Use /sessions, /new <name>, /use <sessionId>, or just send a message to start a new session.");
         }
 
-        CodexSessionSummary? session = await _sessionManager.GetSessionAsync(activeSessionId, cancellationToken).ConfigureAwait(false);
+        CodexSessionSummary? session;
+        try
+        {
+            session = await _sessionManager.GetSessionAsync(activeSessionId, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (IsUnreadableCodexThreadException(exception))
+        {
+            _logger.LogWarning(
+                exception,
+                "Clearing selected Codex session {SessionId} because its local thread store is unreadable.",
+                activeSessionId);
+            await _stateStore.ClearActiveSessionAsync(conversation, cancellationToken).ConfigureAwait(false);
+            return new ResolvedSession(null, "The selected session could not be read and was cleared. Use /sessions, /new <name>, /use <sessionId>, or send a message to start a new session.");
+        }
+
         if (session is null)
         {
             await _stateStore.ClearActiveSessionAsync(conversation, cancellationToken).ConfigureAwait(false);
@@ -2309,6 +2373,26 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
 
     private static string GetShortSessionId(string sessionId)
         => sessionId.Length <= 8 ? sessionId : sessionId[..8];
+
+    private static bool IsUnreadableCodexThreadException(Exception exception)
+    {
+        for (Exception? current = exception; current is not null; current = current.InnerException)
+        {
+            string message = current.Message;
+            bool mentionsThreadRead = message.Contains("failed to read thread", StringComparison.OrdinalIgnoreCase)
+                || message.Contains("thread-store internal error", StringComparison.OrdinalIgnoreCase);
+            bool mentionsEmptyRollout = message.Contains("rollout", StringComparison.OrdinalIgnoreCase)
+                && message.Contains("is empty", StringComparison.OrdinalIgnoreCase);
+
+            if ((mentionsThreadRead && mentionsEmptyRollout)
+                || (mentionsThreadRead && message.Contains(".jsonl", StringComparison.OrdinalIgnoreCase)))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
 
     private static TopicCreationRequest ParseTopicCreationRequest(string arguments)
     {

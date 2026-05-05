@@ -475,6 +475,42 @@ public sealed class TelegramCommandHandlerTests
     }
 
     [Fact]
+    public async Task HandleMessageAsync_AudioCreatesFreshSessionWhenSelectedThreadStoreIsUnreadable()
+    {
+        using CommandHandlerHarness harness = CommandHandlerHarness.Create();
+        string projectPath = harness.Temp.CreateDirectory("repo");
+        string audioPath = Path.Combine(harness.Temp.Path, "voice.ogg");
+        TelegramConversationScope conversation = new(5555, null);
+        await File.WriteAllBytesAsync(audioPath, [1, 2, 3]);
+        harness.ProjectCatalog.Projects.Add(new CodexProjectCatalogRecord
+        {
+            WorkingDirectory = projectPath,
+            AddedAt = DateTimeOffset.Parse("2026-05-04T00:00:00Z"),
+        });
+        harness.SessionManager.Sessions.Add(CreateSession("thread-stale", "Stale session", projectPath));
+        harness.SessionManager.SendExceptions.Enqueue(new InvalidOperationException(
+            @"failed to read thread: thread-store internal error: failed to read thread C:\Users\Samuel\.codex\sessions\2026\05\05\rollout-2026-05-05T13-35-46-thread-stale.jsonl: rollout at C:\Users\Samuel\.codex\sessions\2026\05\05\rollout-2026-05-05T13-35-46-thread-stale.jsonl is empty"));
+        await harness.StateStore.SetActiveProjectWorkingDirectoryAsync(conversation, projectPath, CancellationToken.None);
+        await harness.StateStore.SetActiveSessionIdAsync(conversation, "thread-stale", CancellationToken.None);
+
+        await harness.Handler.HandleMessageAsync(
+            new TelegramInboundMessage(1234, conversation.ChatId, "private", null, AudioFilePath: audioPath),
+            harness.Sender,
+            CancellationToken.None);
+
+        Assert.False(File.Exists(audioPath));
+        Assert.Equal("thread-1", await harness.StateStore.GetActiveSessionIdAsync(conversation, CancellationToken.None));
+        Assert.Equal(projectPath, Assert.Single(harness.SessionManager.CreateRequests).WorkingDirectory);
+        Assert.Equal(["thread-1"], harness.SessionManager.SendSessionIds);
+        Assert.Equal("transcribed text", Assert.Single(harness.SessionManager.SendRequests));
+        Assert.Collection(
+            harness.Sender.Sent,
+            sent => Assert.Contains("Here's what I transcribed:", sent.Text),
+            sent => Assert.Contains("could not be resumed", sent.Text),
+            sent => Assert.Contains("Sent to Telegram session.", sent.Text));
+    }
+
+    [Fact]
     public async Task HandleMessageAsync_AudioFailureAndEmptyTranscriptDoNotRouteToCodex()
     {
         using CommandHandlerHarness failureHarness = CommandHandlerHarness.Create();
@@ -1276,6 +1312,10 @@ public sealed class TelegramCommandHandlerTests
 
         public List<object> SendRequests { get; } = [];
 
+        public List<string> SendSessionIds { get; } = [];
+
+        public Queue<Exception> SendExceptions { get; } = [];
+
         public List<(string SessionId, string? Model, string? ReasoningEffort)> UpdateRequests { get; } = [];
 
         public List<(string SessionId, int LineCount)> TailRequests { get; } = [];
@@ -1300,14 +1340,26 @@ public sealed class TelegramCommandHandlerTests
 
         public Task<CodexThreadExecutionVm> SendAsync(string sessionId, string input, CancellationToken cancellationToken)
         {
+            ThrowNextSendExceptionIfPresent();
+            SendSessionIds.Add(sessionId);
             SendRequests.Add(input);
             return Task.FromResult(new CodexThreadExecutionVm(sessionId, "turn-1", "running", null));
         }
 
         public Task<CodexThreadExecutionVm> SendAsync(string sessionId, IReadOnlyList<CodexInputItem> input, CancellationToken cancellationToken)
         {
+            ThrowNextSendExceptionIfPresent();
+            SendSessionIds.Add(sessionId);
             SendRequests.Add(input);
             return Task.FromResult(new CodexThreadExecutionVm(sessionId, "turn-1", "running", null));
+        }
+
+        private void ThrowNextSendExceptionIfPresent()
+        {
+            if (SendExceptions.TryDequeue(out Exception? exception))
+            {
+                throw exception;
+            }
         }
 
         public Task SteerAsync(string sessionId, string input, CancellationToken cancellationToken)
