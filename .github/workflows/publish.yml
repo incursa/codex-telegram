@@ -123,6 +123,7 @@ jobs:
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
           TAG_NAME: ${{ github.ref_name }}
           RELEASE_DIR: ${{ runner.temp }}/release-assets
         run: |
@@ -135,4 +136,4 @@ jobs:
             throw "No release assets were downloaded."
           }
 
-          gh release create $env:TAG_NAME $assets --title $version --generate-notes
+          gh release create $env:TAG_NAME $assets --title $version --generate-notes --repo $env:GH_REPO
