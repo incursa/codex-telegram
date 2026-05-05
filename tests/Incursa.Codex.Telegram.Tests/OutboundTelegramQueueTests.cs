@@ -190,9 +190,10 @@ public sealed class OutboundTelegramQueueTests
         Assert.True(processed);
         SentTelegramMessage sent = Assert.Single(sender.Sent);
         Assert.Equal(1234, sent.Conversation.ChatId);
-        Assert.Contains("2 updates", sent.Text);
+        Assert.StartsWith("first update", sent.Text, StringComparison.Ordinal);
         Assert.Contains("first update", sent.Text);
         Assert.Contains("second update", sent.Text);
+        Assert.DoesNotContain("2 updates", sent.Text);
         Assert.DoesNotContain("Use /tail", sent.Text);
     }
 
@@ -237,7 +238,7 @@ public sealed class OutboundTelegramQueueTests
     }
 
     [Fact]
-    public async Task ProcessNextAsync_UsesCodexHeaderWhenBatchedMessagesHaveNoSessionId()
+    public async Task ProcessNextAsync_BatchedMessagesWithoutSessionIdStartWithContent()
     {
         TestTelegramSender sender = new();
         OutboundTelegramScheduler scheduler = CreateScheduler(sender, new TelegramOutboundOptions
@@ -252,12 +253,14 @@ public sealed class OutboundTelegramQueueTests
         Assert.True(await scheduler.ProcessNextAsync(CancellationToken.None));
 
         string text = Assert.Single(sender.Sent).Text;
-        Assert.StartsWith("[Codex]\n", text, StringComparison.Ordinal);
-        Assert.Contains("2 updates", text);
+        Assert.StartsWith("first", text, StringComparison.Ordinal);
+        Assert.Contains("second", text);
+        Assert.DoesNotContain("[Codex]", text);
+        Assert.DoesNotContain("2 updates", text);
     }
 
     [Fact]
-    public async Task ProcessNextAsync_ShortensLongSessionIdAndPreservesBatchedMultilineItems()
+    public async Task ProcessNextAsync_PreservesBatchedMultilineItemsWithoutSessionHeader()
     {
         TestTelegramSender sender = new();
         OutboundTelegramScheduler scheduler = CreateScheduler(sender, new TelegramOutboundOptions
@@ -273,10 +276,11 @@ public sealed class OutboundTelegramQueueTests
         Assert.True(await scheduler.ProcessNextAsync(CancellationToken.None));
 
         string text = Assert.Single(sender.Sent).Text;
-        Assert.StartsWith("[thread-a]\n", text, StringComparison.Ordinal);
+        Assert.StartsWith("first line", text, StringComparison.Ordinal);
         Assert.Contains("first line", text);
         Assert.Contains("second line", text);
         Assert.Contains(longLine, text);
+        Assert.DoesNotContain("[thread-a]", text);
     }
 
     [Fact]
@@ -338,7 +342,10 @@ public sealed class OutboundTelegramQueueTests
         await scheduler.EnqueueAsync(CreateMessage(CodexOutboundMessageKind.Error, "urgent update", priority: OutboundPriority.High), CancellationToken.None);
 
         Assert.True(await scheduler.ProcessNextAsync(CancellationToken.None));
-        Assert.Contains("2 updates", Assert.Single(sender.Sent).Text);
+        string text = Assert.Single(sender.Sent).Text;
+        Assert.StartsWith("normal update", text, StringComparison.Ordinal);
+        Assert.Contains("urgent update", text);
+        Assert.DoesNotContain("2 updates", text);
     }
 
     [Fact]

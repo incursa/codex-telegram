@@ -244,9 +244,6 @@ internal sealed class OutboundTelegramScheduler : BackgroundService, IOutboundTe
     private const int GlobalSendBudgetWindowSeconds = 1;
     private const int DefaultRateLimitBackoffSeconds = 5;
     private const int SchedulerFailureDelaySeconds = 1;
-    private const int ShortSessionIdMaxCharacters = 16;
-    private const int ShortSessionIdPrefixCharacters = 8;
-
     private readonly ConcurrentDictionary<TelegramDestinationKey, DestinationBuffer> _buffers = new();
     private readonly ConcurrentDictionary<TelegramSendBudgetKey, BudgetState> _chatBudgets = new();
     private readonly Queue<DateTimeOffset> _globalSendTimestamps = new();
@@ -775,15 +772,7 @@ internal sealed class OutboundTelegramScheduler : BackgroundService, IOutboundTe
                 return messages[0].Text;
             }
 
-            string? sessionId = messages.FirstOrDefault(message => !string.IsNullOrWhiteSpace(message.SessionId))?.SessionId;
-            string header = string.IsNullOrWhiteSpace(sessionId) ? "[Codex]" : $"[{Shorten(sessionId!)}]";
-            List<string> lines =
-            [
-                header,
-                $"{messages.Count} updates",
-                string.Empty,
-            ];
-
+            List<string> lines = [];
             for (int index = 0; index < messages.Count; index++)
             {
                 if (index > 0)
@@ -796,9 +785,6 @@ internal sealed class OutboundTelegramScheduler : BackgroundService, IOutboundTe
 
             return string.Join(Environment.NewLine, lines);
         }
-
-        private static string Shorten(string value)
-            => value.Length <= ShortSessionIdMaxCharacters ? value : value[..ShortSessionIdPrefixCharacters];
 
         private static string FormatBatchItem(string value)
             => value.Replace("\r\n", "\n", StringComparison.Ordinal).Trim();

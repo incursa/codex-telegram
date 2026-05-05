@@ -22,6 +22,7 @@
 - Aligned model-setting examples on the canonical `/model <model> thinking <effort>` form.
 - Removed `---` separators from batched Telegram output so queued multi-line content reads as one continuous update.
 - Removed the batched-output `/tail 100` footer and redundant successful `Turn completed.` text before the `~~ fin ~~` marker.
+- Removed the batched-output update-count and session-ID header so grouped Telegram sends start directly with Codex content.
 - Made model and thinking button callbacks edit the tapped menu immediately while settings are loading or updating.
 - Added XML documentation and named limit/default constants across the Telegram outbound queue, bot options, Codex option contracts, DTO contracts, and small Telegram routing/value-object surfaces.
 - Enabled XML documentation generation for the app project and tightened non-configuration app seams to internal visibility.
