@@ -90,6 +90,8 @@ Good pull requests include:
 
 Protected changes to `main` must go through a pull request and require Code Owner review. The default Code Owner is listed in [.github/CODEOWNERS](.github/CODEOWNERS).
 
+Pull requests must be current with `main`, pass the required CI status checks, resolve review threads, and merge by squash commit only. Merge commits and rebase merges are disabled for this repository.
+
 For public-facing behavior, avoid claims that are broader than the evidence. If a flow has only been validated in private chat, describe it as private-chat evidence until group, forum, voice, attachment, or platform checks have been run.
 
 ## Manual Telegram Evidence
