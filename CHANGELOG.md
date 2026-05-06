@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.8 - 2026-05-06
+
+- Aligned the application version, default Codex client version, setup defaults, and issue-template examples for the first public release candidate.
+
 ## 1.0.7 - 2026-05-06
 
 - Updated `Incursa.OpenAI.Codex` to 1.0.20.

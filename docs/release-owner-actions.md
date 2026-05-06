@@ -18,7 +18,7 @@ Completed repo-side setup:
 8. All tags are protected by a ruleset; only repository admins can intentionally bypass.
 9. `Contributor Agreement` is a required status check on `main`.
 10. Contributor agreement signatures are stored in the private `incursa/contributor-agreements` repository through the org secret `INCURSA_CONTRIBUTOR_AGREEMENTS_TOKEN`.
-11. Release `v1.0.7` exists with Windows, Linux, and macOS arm64 binaries plus checksums and license assets.
+11. Release `v1.0.8` is the current public release target; the publish workflow produces Windows, Linux, and macOS arm64 binaries plus checksums and license assets.
 12. Publish workflow is configured to emit GitHub artifact attestations for release binaries after the repository is public.
 
 Known repo-side limitation:
@@ -103,10 +103,10 @@ Remaining owner-owned work is the live Telegram evidence, sanitized demo assets,
    - Confirm release binary artifact attestations are visible after the next tagged publish.
    - Do not rely only on local validation before changing visibility.
 
-6. Decide first public versioning.
-   - First tag name: `v1.0.6`.
+6. Confirm first public versioning.
+   - Current public release target: `v1.0.8`.
    - Release type: full release, not prerelease.
-   - Release notes: generated from GitHub for the first release.
+   - Release notes: generated from GitHub for the first public release.
 
 ## Optional Owner Tasks
 
