@@ -6,24 +6,9 @@ Use it when you want to start, steer, and inspect Codex work from your phone wit
 
 ## Demo
 
-The first public demo should be a short phone screen recording of a private chat
-with the bot.
+Watch a two-minute private-chat demo showing a local Codex session controlled from Telegram with project selection, text prompts, and voice input.
 
-Recommended demo flow:
-
-1. Open a private Telegram chat with the bot.
-2. Run `/doctor` to show routing, authorization, project, session, and queue state.
-3. Create a session with `/new release-demo`.
-4. Send a normal text prompt.
-5. Send a voice note and show the transcription flowing into Codex.
-6. Use `/tail` or `/status` to inspect the active session.
-
-Recommended screenshots:
-
-1. Bootstrap/admin menu.
-2. Private chat `/doctor`.
-3. Private chat `/new` and live Codex output.
-4. Optional `/model` or `/thinking` controls.
+[![Watch the Codex Telegram demo](docs/assets/codex-telegram-demo-thumbnail.png)](docs/assets/codex-telegram-demo.mp4)
 
 See [menus and screenshots](docs/menus.md) for the full screenshot plan.
 
