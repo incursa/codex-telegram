@@ -40,77 +40,9 @@ For Codex CLI setup, use OpenAI's official [Codex CLI docs](https://developers.o
 
 ## Quick Start
 
-This path gets you from a downloaded binary to a working private Telegram chat.
+Start by creating a Telegram bot, then follow the complete setup path for your operating system.
 
-### 1. Optional: Verify The Download
-
-Download the matching `.sha256` file next to the binary before you rename or move the binary.
-
-Windows:
-
-```powershell
-Get-FileHash .\codex-telegram-win-x64.exe -Algorithm SHA256
-Get-Content .\codex-telegram-win-x64.exe.sha256
-```
-
-Linux:
-
-```bash
-shasum -a 256 -c ./codex-telegram-linux-x64.sha256
-```
-
-macOS:
-
-```bash
-shasum -a 256 -c ./codex-telegram-osx-arm64.sha256
-```
-
-### 2. Put The Binary In A Stable Folder
-
-Windows example:
-
-```powershell
-New-Item -ItemType Directory -Force C:\tools\codex-telegram | Out-Null
-Move-Item .\codex-telegram-win-x64.exe C:\tools\codex-telegram\codex-telegram.exe
-Set-Location C:\tools\codex-telegram
-```
-
-Linux example:
-
-```bash
-mkdir -p ~/tools/codex-telegram
-mv ./codex-telegram-linux-x64 ~/tools/codex-telegram/codex-telegram
-chmod +x ~/tools/codex-telegram/codex-telegram
-cd ~/tools/codex-telegram
-```
-
-macOS arm64 example:
-
-```bash
-mkdir -p ~/tools/codex-telegram
-mv ./codex-telegram-osx-arm64 ~/tools/codex-telegram/codex-telegram
-chmod +x ~/tools/codex-telegram/codex-telegram
-cd ~/tools/codex-telegram
-```
-
-If macOS blocks the binary because it was downloaded from the internet, verify the checksum first. If you trust the release, remove the quarantine attribute:
-
-```bash
-xattr -d com.apple.quarantine ~/tools/codex-telegram/codex-telegram
-```
-
-### 3. Confirm Codex Works Locally
-
-Run Codex once in a normal terminal before involving Telegram:
-
-```powershell
-codex --version
-codex
-```
-
-If `codex` is not on `PATH`, keep the full path handy. The setup menu can store a Codex executable path override.
-
-### 4. Create A Telegram Bot
+### Create A Telegram Bot
 
 In Telegram:
 
@@ -131,118 +63,254 @@ Recommended BotFather settings for a first private-chat release:
 
 Copy-paste BotFather text, command lists, and privacy recommendations are in [BotFather setup](docs/botfather.md).
 
-## First Launch
+### Windows
 
-Run the app from the folder that should own its local `appsettings.Local.json`.
+Use this path if the bot will run on Windows x64.
 
-Windows:
+1. Download `codex-telegram-win-x64.exe` and `codex-telegram-win-x64.exe.sha256` from the [latest release](https://github.com/incursa/codex-telegram/releases/latest).
+2. Optional but recommended: verify the checksum before renaming or moving the file.
+
+```powershell
+Get-FileHash .\codex-telegram-win-x64.exe -Algorithm SHA256
+Get-Content .\codex-telegram-win-x64.exe.sha256
+```
+
+3. Put the binary in a stable folder.
+
+```powershell
+New-Item -ItemType Directory -Force C:\tools\codex-telegram | Out-Null
+Move-Item .\codex-telegram-win-x64.exe C:\tools\codex-telegram\codex-telegram.exe
+Set-Location C:\tools\codex-telegram
+```
+
+4. Confirm Codex works locally before involving Telegram.
+
+```powershell
+codex --version
+codex
+```
+
+5. Start the setup menu from the folder that should own `appsettings.Local.json`.
 
 ```powershell
 .\codex-telegram.exe
 ```
 
-Linux/macOS:
+6. In the setup menu, configure the required local settings.
 
-```bash
-./codex-telegram
+Use these values as a starting point:
+
+```text
+Telegram bot token: <token from BotFather>
+Telegram polling: enabled
+Codex executable path: leave blank if codex is on PATH, otherwise set the full codex.exe path
+Workspace root: C:\src
+Default working directory: C:\src\your-repo
+OpenAI transcription: only if you want voice notes
+Local data root: leave blank unless you need a custom state folder
 ```
-
-The default startup path opens an interactive bootstrap/admin menu.
-
-In the menu:
-
-1. Set the Telegram bot token.
-2. Enable Telegram polling.
-3. Set the Codex executable path if `codex` is not on `PATH`.
-4. Set at least one workspace root, such as `C:\src` or `/home/you/src`.
-5. Set the default working directory to the repository you want to use first.
-6. Set OpenAI transcription settings only if you want voice notes.
-7. Leave the local data root blank unless you need a custom state folder.
 
 The menu writes `appsettings.Local.json` in the current directory. Keep that file local and untracked.
 
-## Find Your Telegram User ID
+7. Find your Telegram user ID.
 
-The bot uses an allowlist. You need your numeric Telegram user ID before normal use.
-
-Bootstrap path:
-
-1. Start the bot with the token configured.
-2. Leave the user allowlist empty only long enough to discover your ID.
-3. In a private chat with the bot, send:
+Start the bot with the token configured and leave the user allowlist empty only long enough to discover your ID. In a private chat with the bot, send:
 
 ```text
 /whoami
 ```
 
-4. Copy the numeric user ID.
-5. Stop the bot with Ctrl+C.
-6. Start the app again, open the menu, and add your user ID under Telegram/admin settings.
-7. Start the bot again.
+Copy the numeric user ID, stop the bot with Ctrl+C, start the setup menu again, and add the ID under Telegram/admin settings. After the allowlist is configured, unauthorized users are ignored.
 
-After the allowlist is configured, unauthorized users are ignored.
-
-## Start The Bot
-
-For normal operation, run with `--run` so the menu is skipped.
-
-Windows:
+8. Start normal operation with the menu skipped.
 
 ```powershell
 .\codex-telegram.exe --run
 ```
 
-Linux/macOS:
+Keep that terminal open, or run the app under your preferred Windows service manager.
+
+9. In the private Telegram chat, run the first private Codex session.
+
+```text
+/doctor
+/projects
+/project add C:\src\your-repo
+/new release-demo
+Summarize this repository and tell me the next safest setup check to run.
+/tail
+```
+
+At this point you have a working private Telegram chat connected to a local Codex session.
+
+### Linux
+
+Use this path if the bot will run on Linux x64.
+
+1. Download `codex-telegram-linux-x64` and `codex-telegram-linux-x64.sha256` from the [latest release](https://github.com/incursa/codex-telegram/releases/latest).
+2. Or download both files directly with `curl`.
+
+```bash
+curl -fL -o codex-telegram-linux-x64 https://github.com/incursa/codex-telegram/releases/latest/download/codex-telegram-linux-x64
+curl -fL -o codex-telegram-linux-x64.sha256 https://github.com/incursa/codex-telegram/releases/latest/download/codex-telegram-linux-x64.sha256
+```
+
+3. Optional but recommended: verify the checksum before renaming or moving the file.
+
+```bash
+shasum -a 256 -c ./codex-telegram-linux-x64.sha256
+```
+
+4. Put the binary in a stable folder and mark it executable.
+
+```bash
+mkdir -p ~/tools/codex-telegram
+mv ./codex-telegram-linux-x64 ~/tools/codex-telegram/codex-telegram
+chmod +x ~/tools/codex-telegram/codex-telegram
+cd ~/tools/codex-telegram
+```
+
+5. Confirm Codex works locally before involving Telegram.
+
+```bash
+codex --version
+codex
+```
+
+6. Start the setup menu from the folder that should own `appsettings.Local.json`.
+
+```bash
+./codex-telegram
+```
+
+7. In the setup menu, configure the required local settings.
+
+Use these values as a starting point:
+
+```text
+Telegram bot token: <token from BotFather>
+Telegram polling: enabled
+Codex executable path: leave blank if codex is on PATH, otherwise set the full codex path
+Workspace root: /home/you/src
+Default working directory: /home/you/src/your-repo
+OpenAI transcription: only if you want voice notes
+Local data root: leave blank unless you need a custom state folder
+```
+
+The menu writes `appsettings.Local.json` in the current directory. Keep that file local and untracked.
+
+8. Find your Telegram user ID.
+
+Start the bot with the token configured and leave the user allowlist empty only long enough to discover your ID. In a private chat with the bot, send:
+
+```text
+/whoami
+```
+
+Copy the numeric user ID, stop the bot with Ctrl+C, start the setup menu again, and add the ID under Telegram/admin settings. After the allowlist is configured, unauthorized users are ignored.
+
+9. Start normal operation with the menu skipped.
 
 ```bash
 ./codex-telegram --run
 ```
 
-Keep that terminal open, or run the app under your preferred service manager.
+Keep that terminal open, or run the app under systemd, tmux, screen, or another process supervisor.
 
-## Your First Private Codex Chat
-
-In the private Telegram chat:
-
-1. Confirm setup:
+10. In the private Telegram chat, run the first private Codex session.
 
 ```text
 /doctor
-```
-
-2. List projects:
-
-```text
 /projects
-```
-
-3. Add or select a project:
-
-```text
-/project add C:\src\your-repo
-```
-
-Use a Unix path on Linux/macOS, for example:
-
-```text
 /project add /home/you/src/your-repo
-```
-
-4. Start a new Codex session:
-
-```text
 /new release-demo
-```
-
-5. Send a normal message:
-
-```text
 Summarize this repository and tell me the next safest setup check to run.
+/tail
 ```
 
-6. Inspect recent output:
+At this point you have a working private Telegram chat connected to a local Codex session.
+
+### macOS
+
+Use this path if the bot will run on Apple Silicon macOS.
+
+1. Download `codex-telegram-osx-arm64` and `codex-telegram-osx-arm64.sha256` from the [latest release](https://github.com/incursa/codex-telegram/releases/latest).
+2. Optional but recommended: verify the checksum before renaming or moving the file.
+
+```bash
+shasum -a 256 -c ./codex-telegram-osx-arm64.sha256
+```
+
+3. Put the binary in a stable folder and mark it executable.
+
+```bash
+mkdir -p ~/tools/codex-telegram
+mv ./codex-telegram-osx-arm64 ~/tools/codex-telegram/codex-telegram
+chmod +x ~/tools/codex-telegram/codex-telegram
+cd ~/tools/codex-telegram
+```
+
+4. If macOS blocks the binary because it was downloaded from the internet, verify the checksum first. If you trust the release, remove the quarantine attribute.
+
+```bash
+xattr -d com.apple.quarantine ~/tools/codex-telegram/codex-telegram
+```
+
+5. Confirm Codex works locally before involving Telegram.
+
+```bash
+codex --version
+codex
+```
+
+6. Start the setup menu from the folder that should own `appsettings.Local.json`.
+
+```bash
+./codex-telegram
+```
+
+7. In the setup menu, configure the required local settings.
+
+Use these values as a starting point:
 
 ```text
+Telegram bot token: <token from BotFather>
+Telegram polling: enabled
+Codex executable path: leave blank if codex is on PATH, otherwise set the full codex path
+Workspace root: /Users/you/src
+Default working directory: /Users/you/src/your-repo
+OpenAI transcription: only if you want voice notes
+Local data root: leave blank unless you need a custom state folder
+```
+
+The menu writes `appsettings.Local.json` in the current directory. Keep that file local and untracked.
+
+8. Find your Telegram user ID.
+
+Start the bot with the token configured and leave the user allowlist empty only long enough to discover your ID. In a private chat with the bot, send:
+
+```text
+/whoami
+```
+
+Copy the numeric user ID, stop the bot with Ctrl+C, start the setup menu again, and add the ID under Telegram/admin settings. After the allowlist is configured, unauthorized users are ignored.
+
+9. Start normal operation with the menu skipped.
+
+```bash
+./codex-telegram --run
+```
+
+Keep that terminal open, or run the app under launchd, tmux, screen, or another process supervisor.
+
+10. In the private Telegram chat, run the first private Codex session.
+
+```text
+/doctor
+/projects
+/project add /Users/you/src/your-repo
+/new release-demo
+Summarize this repository and tell me the next safest setup check to run.
 /tail
 ```
 
