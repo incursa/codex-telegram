@@ -1,5 +1,5 @@
 # Default owner for all repository changes.
 #
-# The main-branch ruleset requires Code Owner review, so this entry makes
-# Samuel the required reviewer for every protected pull request.
+# The Maintainer Review workflow routes outside-authored pull requests to
+# Samuel while still keeping repository ownership explicit for GitHub surfaces.
 * @SamuelMcAravey

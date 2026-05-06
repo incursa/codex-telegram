@@ -97,7 +97,7 @@ Good pull requests include:
 5. No unrelated formatting churn.
 6. A clean tracked-file secret scan before opening a pull request.
 
-Protected changes to `main` must go through a pull request and require Code Owner review. The default Code Owner is listed in [.github/CODEOWNERS](.github/CODEOWNERS).
+Protected changes to `main` must go through a pull request. Pull requests authored by Samuel may pass the `Maintainer Review` gate automatically; pull requests from other authors must be approved by Samuel on the current head commit. The default repository owner is listed in [.github/CODEOWNERS](.github/CODEOWNERS).
 
 Pull requests must be current with `main`, pass the required CI status checks, resolve review threads, and merge by squash commit only. Merge commits and rebase merges are disabled for this repository.
 
