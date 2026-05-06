@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 1.0.10 - 2026-05-06
+
 - Updated `Incursa.OpenAI.Codex` to 1.1.0 and switched `/usage` to the SDK account rate-limit API.
 - Changed `/status` to show a compact five-hour and weekly Codex usage line without being suppressed by a cached inline-usage miss.
 - Updated BotFather and command documentation for the `/usage` command and compact status usage text.

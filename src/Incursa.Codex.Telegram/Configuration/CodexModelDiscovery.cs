@@ -32,7 +32,7 @@ internal static class CodexModelDiscovery
             CodexPathOverride = executablePath,
             ClientName = ClientName,
             ClientTitle = ClientTitle,
-            ClientVersion = typeof(CodexModelDiscovery).Assembly.GetName().Version?.ToString() ?? "1.0.9",
+            ClientVersion = typeof(CodexModelDiscovery).Assembly.GetName().Version?.ToString() ?? "1.0.10",
         };
 
         try
