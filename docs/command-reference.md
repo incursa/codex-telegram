@@ -198,7 +198,7 @@ Expected behavior:
 2. Creates a Codex session with the supplied name.
 3. Selects it for the current conversation.
 4. Starts following live output for that session.
-5. Includes a compact `Rate limits` line when Codex account-window data is available quickly.
+5. Includes a compact `Rate limits` line when Codex account data is available quickly.
 
 ### Plain Text Message
 
@@ -343,11 +343,11 @@ Expected behavior:
 1. Defaults to the active session.
 2. Shows status, working directory, model, thinking effort, created time, last activity, and use command.
 3. Shows exit code or last error when present.
-4. Includes a compact `Rate limits` line when Codex account-window data is available quickly.
+4. Includes a compact `Rate limits` line with five-hour and weekly block percentages and reset times when Codex account data is available.
 
 ### `/usage`
 
-Shows Codex account-window usage reported by the local Codex app-server.
+Shows Codex account usage reported by the local Codex app-server.
 
 Syntax:
 
@@ -357,9 +357,9 @@ Syntax:
 
 Expected behavior:
 
-1. Reads Codex account rate-limit windows from the local Codex app-server.
-2. Shows remaining percentage for the short window, usually five hours.
-3. Shows remaining percentage for the long window, usually weekly.
+1. Reads Codex account rate-limit data from the local Codex app-server.
+2. Shows remaining percentage for the five-hour block.
+3. Shows remaining percentage for the weekly block.
 4. Shows reset timing and local reset time when Codex reports reset timestamps.
 5. Fails with clear setup text if the local Codex executable is missing or the app-server does not expose account usage.
 
@@ -424,7 +424,7 @@ Syntax:
 Expected behavior:
 
 1. Shows current model and thinking effort.
-2. Includes a compact `Rate limits` line when Codex account-window data is available quickly.
+2. Includes a compact `Rate limits` line when Codex account data is available quickly.
 3. Shows available thinking efforts when known.
 4. Shows up to eight model buttons when available.
 5. Marks the selected model with `[x]`.
@@ -464,7 +464,7 @@ Expected behavior:
 1. Updates the selected session settings.
 2. Leaves unspecified values unchanged.
 3. Returns the updated model settings.
-4. Includes a compact `Rate limits` line when Codex account-window data is available quickly.
+4. Includes a compact `Rate limits` line when Codex account data is available quickly.
 5. Rejects invalid model or effort values reported by Codex.
 
 ### `/thinking`

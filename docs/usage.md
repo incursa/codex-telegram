@@ -33,7 +33,7 @@ Use this short checklist at the start of a real work session:
 3. Send `/project current` before asking Codex to edit files.
 4. Send `/new <short name>` when the work should not continue an older thread.
 5. Send `/status` before assuming a long-running turn is stuck.
-6. Send `/usage` when you need current Codex account-window remaining percentages and reset times.
+6. Send `/usage` when you need current five-hour and weekly Codex usage percentages and reset times.
 7. Send `/tail` before assuming Telegram scrollback contains the complete transcript.
 
 ## Daily Private-Chat Flow
@@ -67,7 +67,7 @@ Use `/steer <text>` only while a turn is active. It is for steering an in-progre
 ## Model And Thinking Controls
 
 Use `/model` and `/thinking` to inspect or change the selected session's Codex model settings.
-Session, status, model, and thinking replies include a compact `Rate limits` line when Codex reports account-window data quickly. Use `/usage` for the full window details and setup errors.
+Session, status, model, and thinking replies include a compact `Rate limits` line when Codex account data is available. Use `/usage` for full details and setup errors.
 
 Common flow:
 
@@ -109,7 +109,7 @@ Useful checks:
 1. `/status` shows the selected session and compact rate-limit state when available.
 2. `/outbound` shows pending Telegram output.
 3. `/tail` shows recent session output.
-4. `/usage` shows Codex account usage remaining and reset windows.
+4. `/usage` shows five-hour and weekly Codex usage and reset times.
 5. `/stop` clears pending queued messages for the stopped session.
 
 Queueing is per session and per Telegram conversation. Separate forum topics can continue independently when they are bound to different sessions.

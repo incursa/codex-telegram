@@ -82,6 +82,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
     private const int DefaultSessionListLimit = 8;
     private static readonly TimeSpan TelegramSendStartTimeout = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan InlineUsageSummaryTimeout = TimeSpan.FromMilliseconds(750);
+    private static readonly TimeSpan StatusUsageSummaryTimeout = TimeSpan.FromSeconds(3);
     private static readonly TimeSpan InlineUsageSummaryCacheDuration = TimeSpan.FromSeconds(30);
 
     private readonly TelegramCommandParser _parser;
@@ -1282,7 +1283,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         }
 
         CodexSessionModelSettings settings = await _sessionManager.GetModelSettingsAsync(resolved.Session.Id, cancellationToken).ConfigureAwait(false);
-        string? usageSummary = await TryBuildAccountUsageSummaryAsync(cancellationToken).ConfigureAwait(false);
+        string? usageSummary = await TryBuildStatusAccountUsageSummaryAsync(cancellationToken).ConfigureAwait(false);
         await ReplyAsync(sender, message, FormatStatus(resolved.Session, settings, usageSummary), BuildSessionButtons([resolved.Session]), cancellationToken).ConfigureAwait(false);
     }
 
@@ -1971,10 +1972,36 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         return builder.ToString().TrimEnd();
     }
 
-    private async Task<string?> TryBuildAccountUsageSummaryAsync(CancellationToken cancellationToken)
+    /// <summary>
+    /// Builds the best-effort compact account usage line for fast control replies.
+    /// </summary>
+    /// <param name="cancellationToken">Cancellation token for the lookup.</param>
+    /// <returns>Compact usage text, or <see langword="null" /> when usage is unavailable or too slow.</returns>
+    private Task<string?> TryBuildAccountUsageSummaryAsync(CancellationToken cancellationToken)
+        => TryBuildAccountUsageSummaryAsync(InlineUsageSummaryTimeout, useCachedMissingSummary: true, cancellationToken);
+
+    /// <summary>
+    /// Builds the compact account usage line for the explicit status command.
+    /// </summary>
+    /// <param name="cancellationToken">Cancellation token for the lookup.</param>
+    /// <returns>Compact usage text, or <see langword="null" /> when usage is unavailable.</returns>
+    private Task<string?> TryBuildStatusAccountUsageSummaryAsync(CancellationToken cancellationToken)
+        => TryBuildAccountUsageSummaryAsync(StatusUsageSummaryTimeout, useCachedMissingSummary: false, cancellationToken);
+
+    /// <summary>
+    /// Builds and caches the compact account usage line with caller-specific timeout behavior.
+    /// </summary>
+    /// <param name="timeoutDuration">Maximum time to wait for the Codex app-server.</param>
+    /// <param name="useCachedMissingSummary">Whether a cached missing result is good enough for this caller.</param>
+    /// <param name="cancellationToken">Cancellation token for the lookup.</param>
+    /// <returns>Compact usage text, or <see langword="null" /> when usage is unavailable.</returns>
+    private async Task<string?> TryBuildAccountUsageSummaryAsync(
+        TimeSpan timeoutDuration,
+        bool useCachedMissingSummary,
+        CancellationToken cancellationToken)
     {
         DateTimeOffset now = DateTimeOffset.UtcNow;
-        if (_hasCachedUsageSummary && _cachedUsageSummaryExpiresAtUtc > now)
+        if (CanUseCachedUsageSummary(now, useCachedMissingSummary))
         {
             return _cachedUsageSummary;
         }
@@ -1983,12 +2010,12 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         try
         {
             now = DateTimeOffset.UtcNow;
-            if (_hasCachedUsageSummary && _cachedUsageSummaryExpiresAtUtc > now)
+            if (CanUseCachedUsageSummary(now, useCachedMissingSummary))
             {
                 return _cachedUsageSummary;
             }
 
-            _cachedUsageSummary = await FetchAccountUsageSummaryAsync(cancellationToken).ConfigureAwait(false);
+            _cachedUsageSummary = await FetchAccountUsageSummaryAsync(timeoutDuration, cancellationToken).ConfigureAwait(false);
             _cachedUsageSummaryExpiresAtUtc = now.Add(InlineUsageSummaryCacheDuration);
             _hasCachedUsageSummary = true;
             return _cachedUsageSummary;
@@ -1999,10 +2026,27 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         }
     }
 
-    private async Task<string?> FetchAccountUsageSummaryAsync(CancellationToken cancellationToken)
+    /// <summary>
+    /// Checks whether the cached usage summary is acceptable for the current caller.
+    /// </summary>
+    /// <param name="now">Current UTC time.</param>
+    /// <param name="useCachedMissingSummary">Whether cached missing data should suppress another lookup.</param>
+    /// <returns><see langword="true" /> when the cache can be reused.</returns>
+    private bool CanUseCachedUsageSummary(DateTimeOffset now, bool useCachedMissingSummary)
+        => _hasCachedUsageSummary
+            && _cachedUsageSummaryExpiresAtUtc > now
+            && (useCachedMissingSummary || !string.IsNullOrWhiteSpace(_cachedUsageSummary));
+
+    /// <summary>
+    /// Fetches and formats a compact usage line from Codex within a bounded timeout.
+    /// </summary>
+    /// <param name="timeoutDuration">Maximum time to wait for Codex.</param>
+    /// <param name="cancellationToken">Cancellation token for the lookup.</param>
+    /// <returns>Compact usage text, or <see langword="null" /> when usage cannot be shown inline.</returns>
+    private async Task<string?> FetchAccountUsageSummaryAsync(TimeSpan timeoutDuration, CancellationToken cancellationToken)
     {
         using CancellationTokenSource timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeout.CancelAfter(InlineUsageSummaryTimeout);
+        timeout.CancelAfter(timeoutDuration);
 
         try
         {
@@ -2045,8 +2089,8 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         }
 
         List<string> windows = [];
-        AddUsageWindowSummary(windows, "Primary window", primaryBucket.Primary, usage.RetrievedAtUtc);
-        AddUsageWindowSummary(windows, "Secondary window", primaryBucket.Secondary, usage.RetrievedAtUtc);
+        AddUsageWindowSummary(windows, "primary block", primaryBucket.Primary, usage.RetrievedAtUtc);
+        AddUsageWindowSummary(windows, "secondary block", primaryBucket.Secondary, usage.RetrievedAtUtc);
         if (windows.Count == 0)
         {
             return null;
@@ -2073,13 +2117,13 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             return;
         }
 
-        string label = FormatWindowLabel(fallbackLabel, window.WindowDurationMinutes);
+        string label = FormatWindowSummaryLabel(fallbackLabel, window.WindowDurationMinutes);
         int remainingPercent = Math.Clamp(100 - window.UsedPercent, 0, 100);
         StringBuilder builder = new();
-        builder.Append($"{label}: {remainingPercent.ToString(CultureInfo.InvariantCulture)}% remaining");
+        builder.Append($"{label}: {remainingPercent.ToString(CultureInfo.InvariantCulture)}%");
         if (window.ResetsAtUtc is { } resetsAtUtc)
         {
-            builder.Append($"; resets {FormatResetDistance(retrievedAtUtc, resetsAtUtc)}");
+            builder.Append($", resets {FormatCompactResetTime(retrievedAtUtc, resetsAtUtc)}");
         }
 
         windows.Add(builder.ToString());
@@ -2119,6 +2163,48 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             _ when windowDurationMinutes.Value % 60 == 0 => $"{(windowDurationMinutes.Value / 60).ToString(CultureInfo.InvariantCulture)}-hour window",
             _ => $"{windowDurationMinutes.Value.ToString(CultureInfo.InvariantCulture)}-minute window",
         };
+    }
+
+    /// <summary>
+    /// Formats a short block label for compact status and menu usage summaries.
+    /// </summary>
+    /// <param name="fallbackLabel">Label to use when Codex does not report a duration.</param>
+    /// <param name="windowDurationMinutes">Reported window duration in minutes.</param>
+    /// <returns>Short block label.</returns>
+    private static string FormatWindowSummaryLabel(string fallbackLabel, long? windowDurationMinutes)
+    {
+        if (!windowDurationMinutes.HasValue || windowDurationMinutes.Value <= 0)
+        {
+            return fallbackLabel;
+        }
+
+        return windowDurationMinutes.Value switch
+        {
+            300 => "5-hour block",
+            10080 => "weekly block",
+            _ when windowDurationMinutes.Value % 1440 == 0 => $"{(windowDurationMinutes.Value / 1440).ToString(CultureInfo.InvariantCulture)}-day block",
+            _ when windowDurationMinutes.Value % 60 == 0 => $"{(windowDurationMinutes.Value / 60).ToString(CultureInfo.InvariantCulture)}-hour block",
+            _ => $"{windowDurationMinutes.Value.ToString(CultureInfo.InvariantCulture)}-minute block",
+        };
+    }
+
+    /// <summary>
+    /// Formats a compact local reset timestamp for one-line usage summaries.
+    /// </summary>
+    /// <param name="retrievedAtUtc">UTC time when the usage data was retrieved.</param>
+    /// <param name="resetsAtUtc">UTC reset time reported by Codex.</param>
+    /// <returns>Local reset time using the shortest unambiguous format.</returns>
+    private static string FormatCompactResetTime(DateTimeOffset retrievedAtUtc, DateTimeOffset resetsAtUtc)
+    {
+        DateTimeOffset retrievedAtLocal = retrievedAtUtc.ToLocalTime();
+        DateTimeOffset resetsAtLocal = resetsAtUtc.ToLocalTime();
+        string format = resetsAtLocal.Date == retrievedAtLocal.Date
+            ? "h:mm tt"
+            : resetsAtLocal.Year == retrievedAtLocal.Year
+                ? "MMM d h:mm tt"
+                : "yyyy-MM-dd h:mm tt";
+
+        return resetsAtLocal.ToString(format, CultureInfo.InvariantCulture);
     }
 
     private static string FormatResetDistance(DateTimeOffset retrievedAtUtc, DateTimeOffset resetsAtUtc)

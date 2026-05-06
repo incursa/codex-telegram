@@ -76,7 +76,7 @@ Use these Telegram commands during operation:
 2. `/project current` to confirm the working directory binding.
 3. `/status` to confirm the active session state.
 4. `/outbound` to inspect delayed Telegram output.
-5. `/usage` to inspect Codex account-window remaining percentages and reset timing.
+5. `/usage` to inspect five-hour and weekly Codex usage percentages and reset timing.
 6. `/tail` to inspect recent session output.
 
 If Telegram output looks delayed, batched, or incomplete, use `/outbound` and `/tail` before changing configuration. Those commands separate delivery/backlog questions from Codex session-output questions.

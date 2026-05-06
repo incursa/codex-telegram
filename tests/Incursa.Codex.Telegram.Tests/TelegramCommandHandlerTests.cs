@@ -305,7 +305,7 @@ public sealed class TelegramCommandHandlerTests
         Assert.Equal("Release smoke", request.Name);
         Assert.Equal(projectPath, request.WorkingDirectory);
         Assert.Contains("Created and selected Release smoke.", sent.Text);
-        Assert.Contains("Rate limits (pro): 5-hour window: 83% remaining; resets in 2h 30m; Weekly window: 52% remaining; resets in 4d 0h", sent.Text);
+        AssertCompactUsageSummary(sent.Text);
         Assert.Equal(["Sessions", "Projects", "Help"], FlattenButtonLabels(sent));
         Assert.DoesNotContain(FlattenButtonLabels(sent), label => IsSessionControlLabel(label));
         Assert.DoesNotContain(FlattenButtonLabels(sent), label => label.StartsWith("Use", StringComparison.OrdinalIgnoreCase));
@@ -708,7 +708,7 @@ public sealed class TelegramCommandHandlerTests
         Assert.Equal(("thread-1", (string?)"gpt-5.4-mini", (string?)"medium"), Assert.Single(harness.SessionManager.UpdateRequests));
         string text = Assert.Single(harness.Sender.Sent).Text;
         Assert.Contains("Updated model settings:", text);
-        Assert.Contains("Rate limits (pro): 5-hour window: 83% remaining; resets in 2h 30m; Weekly window: 52% remaining; resets in 4d 0h", text);
+        AssertCompactUsageSummary(text);
     }
 
     [Fact]
@@ -772,7 +772,28 @@ public sealed class TelegramCommandHandlerTests
 
         Assert.Contains("Demo session", Assert.Single(statusHarness.Sender.Sent).Text);
         Assert.Contains("Status: idle", statusHarness.Sender.Sent.Single().Text);
-        Assert.Contains("Rate limits (pro): 5-hour window: 83% remaining; resets in 2h 30m; Weekly window: 52% remaining; resets in 4d 0h", statusHarness.Sender.Sent.Single().Text);
+        AssertCompactUsageSummary(statusHarness.Sender.Sent.Single().Text);
+
+        using CommandHandlerHarness cachedMissHarness = CommandHandlerHarness.Create();
+        cachedMissHarness.SessionManager.Sessions.Add(CreateSession("thread-1", "Demo session", cachedMissHarness.Temp.Path));
+        await cachedMissHarness.StateStore.SetActiveSessionIdAsync(conversation, "thread-1", CancellationToken.None);
+        cachedMissHarness.AccountUsage.ExceptionToThrow = new OperationCanceledException();
+
+        await cachedMissHarness.Handler.HandleMessageAsync(
+            new TelegramInboundMessage(1234, conversation.ChatId, "private", "/model"),
+            cachedMissHarness.Sender,
+            CancellationToken.None);
+
+        cachedMissHarness.Sender.Sent.Clear();
+        cachedMissHarness.AccountUsage.ExceptionToThrow = null;
+        SetUsageWindows(cachedMissHarness);
+
+        await cachedMissHarness.Handler.HandleMessageAsync(
+            new TelegramInboundMessage(1234, conversation.ChatId, "private", "/status"),
+            cachedMissHarness.Sender,
+            CancellationToken.None);
+
+        AssertCompactUsageSummary(Assert.Single(cachedMissHarness.Sender.Sent).Text);
 
         using CommandHandlerHarness tailHarness = CommandHandlerHarness.Create();
         tailHarness.SessionManager.Sessions.Add(CreateSession("thread-1", "Demo session", tailHarness.Temp.Path));
@@ -1274,6 +1295,12 @@ public sealed class TelegramCommandHandlerTests
                         DateTimeOffset.Parse("2026-05-10T12:00:00Z", CultureInfo.InvariantCulture),
                         10080)),
             ]);
+
+    private static void AssertCompactUsageSummary(string text)
+    {
+        Assert.Contains("Rate limits (pro): 5-hour block: 83%, resets", text);
+        Assert.Contains("weekly block: 52%, resets", text);
+    }
 
     private static async Task WaitUntilAsync(Func<bool> predicate)
     {
