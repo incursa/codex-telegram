@@ -7,7 +7,7 @@ For Telegram buttons and menus, use [menus.md](menus.md).
 
 ## Normal Start
 
-1. Start the bot from the directory that owns `appsettings.Local.json`.
+1. Start the bot from its app folder, or use the full executable path; settings resolve beside the executable by default.
 2. Use `--run` for normal unattended operation.
 3. Confirm the process stays running.
 4. In Telegram, send `/doctor` if anything feels unclear.
@@ -179,4 +179,4 @@ Conversation/session bindings rehydrate from `telegram-state.json`. A mid-turn C
 4. Start new workflows in private chat before using groups.
 5. Use `/doctor` before changing config blindly.
 6. Rotate the BotFather token if it is exposed.
-7. Set explicit workspace roots and a default working directory before shared or recorded use; otherwise the app falls back to the process current directory.
+7. Set explicit workspace roots and a default working directory before shared or recorded use; otherwise the runtime fallback may use the process current directory.

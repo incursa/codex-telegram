@@ -63,6 +63,8 @@ Recommended BotFather settings for a first private-chat release:
 
 Copy-paste BotFather text, command lists, and privacy recommendations are in [BotFather setup](docs/botfather.md).
 
+BotFather gives you the bot token, but it cannot give you your personal Telegram user ID. On first run, Codex Telegram can validate the bot token, wait for one private message to the bot, and save your user ID automatically.
+
 ### Windows
 
 Use this path if the bot will run on Windows x64.
@@ -90,19 +92,20 @@ codex --version
 codex
 ```
 
-5. Start the setup menu from the folder that should own `appsettings.Local.json`.
+5. Start the setup menu from the app folder.
 
 ```powershell
 .\codex-telegram.exe
 ```
 
-6. In the setup menu, configure the required local settings.
+6. Complete the first-run wizard.
 
 Use these values as a starting point:
 
 ```text
 Telegram bot token: <token from BotFather>
 Telegram polling: enabled
+Admin user ID: let the wizard capture it by sending one private Telegram message to the bot
 Codex executable path: leave blank if codex is on PATH, otherwise set the full codex.exe path
 Workspace root: C:\src
 Default working directory: C:\src\your-repo
@@ -110,19 +113,9 @@ OpenAI transcription: only if you want voice notes
 Local data root: leave blank unless you need a custom state folder
 ```
 
-The menu writes `appsettings.Local.json` in the current directory. Keep that file local and untracked.
+The app writes `appsettings.Local.json` beside the executable by default. Keep that file local and untracked. If you launch the app from another command-line directory later, it still uses the settings file in the app folder.
 
-7. Find your Telegram user ID.
-
-Start the bot with the token configured and leave the user allowlist empty only long enough to discover your ID. In a private chat with the bot, send:
-
-```text
-/whoami
-```
-
-Copy the numeric user ID, stop the bot with Ctrl+C, start the setup menu again, and add the ID under Telegram/admin settings. After the allowlist is configured, unauthorized users are ignored.
-
-8. Start normal operation with the menu skipped.
+7. Start normal operation with the menu skipped.
 
 ```powershell
 .\codex-telegram.exe --run
@@ -130,7 +123,7 @@ Copy the numeric user ID, stop the bot with Ctrl+C, start the setup menu again, 
 
 Keep that terminal open, or run the app under your preferred Windows service manager.
 
-9. In the private Telegram chat, run the first private Codex session.
+8. In the private Telegram chat, run the first private Codex session.
 
 ```text
 /doctor
@@ -177,19 +170,20 @@ codex --version
 codex
 ```
 
-6. Start the setup menu from the folder that should own `appsettings.Local.json`.
+6. Start the setup menu from the app folder.
 
 ```bash
 ./codex-telegram
 ```
 
-7. In the setup menu, configure the required local settings.
+7. Complete the first-run wizard.
 
 Use these values as a starting point:
 
 ```text
 Telegram bot token: <token from BotFather>
 Telegram polling: enabled
+Admin user ID: let the wizard capture it by sending one private Telegram message to the bot
 Codex executable path: leave blank if codex is on PATH, otherwise set the full codex path
 Workspace root: /home/you/src
 Default working directory: /home/you/src/your-repo
@@ -197,19 +191,9 @@ OpenAI transcription: only if you want voice notes
 Local data root: leave blank unless you need a custom state folder
 ```
 
-The menu writes `appsettings.Local.json` in the current directory. Keep that file local and untracked.
+The app writes `appsettings.Local.json` beside the executable by default. Keep that file local and untracked. If you launch the app from another command-line directory later, it still uses the settings file in the app folder.
 
-8. Find your Telegram user ID.
-
-Start the bot with the token configured and leave the user allowlist empty only long enough to discover your ID. In a private chat with the bot, send:
-
-```text
-/whoami
-```
-
-Copy the numeric user ID, stop the bot with Ctrl+C, start the setup menu again, and add the ID under Telegram/admin settings. After the allowlist is configured, unauthorized users are ignored.
-
-9. Start normal operation with the menu skipped.
+8. Start normal operation with the menu skipped.
 
 ```bash
 ./codex-telegram --run
@@ -217,7 +201,7 @@ Copy the numeric user ID, stop the bot with Ctrl+C, start the setup menu again, 
 
 Keep that terminal open, or run the app under systemd, tmux, screen, or another process supervisor.
 
-10. In the private Telegram chat, run the first private Codex session.
+9. In the private Telegram chat, run the first private Codex session.
 
 ```text
 /doctor
@@ -235,13 +219,20 @@ At this point you have a working private Telegram chat connected to a local Code
 Use this path if the bot will run on Apple Silicon macOS.
 
 1. Download `codex-telegram-osx-arm64` and `codex-telegram-osx-arm64.sha256` from the [latest release](https://github.com/incursa/codex-telegram/releases/latest).
-2. Optional but recommended: verify the checksum before renaming or moving the file.
+2. Or download both files directly with `curl`.
+
+```bash
+curl -fL -o codex-telegram-osx-arm64 https://github.com/incursa/codex-telegram/releases/latest/download/codex-telegram-osx-arm64
+curl -fL -o codex-telegram-osx-arm64.sha256 https://github.com/incursa/codex-telegram/releases/latest/download/codex-telegram-osx-arm64.sha256
+```
+
+3. Optional but recommended: verify the checksum before renaming or moving the file.
 
 ```bash
 shasum -a 256 -c ./codex-telegram-osx-arm64.sha256
 ```
 
-3. Put the binary in a stable folder and mark it executable.
+4. Put the binary in a stable folder and mark it executable.
 
 ```bash
 mkdir -p ~/tools/codex-telegram
@@ -250,32 +241,33 @@ chmod +x ~/tools/codex-telegram/codex-telegram
 cd ~/tools/codex-telegram
 ```
 
-4. If macOS blocks the binary because it was downloaded from the internet, verify the checksum first. If you trust the release, remove the quarantine attribute.
+5. If macOS blocks the binary because it was downloaded from the internet, verify the checksum first. If you trust the release, remove the quarantine attribute.
 
 ```bash
 xattr -d com.apple.quarantine ~/tools/codex-telegram/codex-telegram
 ```
 
-5. Confirm Codex works locally before involving Telegram.
+6. Confirm Codex works locally before involving Telegram.
 
 ```bash
 codex --version
 codex
 ```
 
-6. Start the setup menu from the folder that should own `appsettings.Local.json`.
+7. Start the setup menu from the app folder.
 
 ```bash
 ./codex-telegram
 ```
 
-7. In the setup menu, configure the required local settings.
+8. Complete the first-run wizard.
 
 Use these values as a starting point:
 
 ```text
 Telegram bot token: <token from BotFather>
 Telegram polling: enabled
+Admin user ID: let the wizard capture it by sending one private Telegram message to the bot
 Codex executable path: leave blank if codex is on PATH, otherwise set the full codex path
 Workspace root: /Users/you/src
 Default working directory: /Users/you/src/your-repo
@@ -283,17 +275,7 @@ OpenAI transcription: only if you want voice notes
 Local data root: leave blank unless you need a custom state folder
 ```
 
-The menu writes `appsettings.Local.json` in the current directory. Keep that file local and untracked.
-
-8. Find your Telegram user ID.
-
-Start the bot with the token configured and leave the user allowlist empty only long enough to discover your ID. In a private chat with the bot, send:
-
-```text
-/whoami
-```
-
-Copy the numeric user ID, stop the bot with Ctrl+C, start the setup menu again, and add the ID under Telegram/admin settings. After the allowlist is configured, unauthorized users are ignored.
+The app writes `appsettings.Local.json` beside the executable by default. Keep that file local and untracked. If you launch the app from another command-line directory later, it still uses the settings file in the app folder.
 
 9. Start normal operation with the menu skipped.
 

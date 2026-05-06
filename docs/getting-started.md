@@ -93,14 +93,22 @@ Privacy mode matters most in groups and forum supergroups:
 
 The app only trusts allowlisted users and optional allowlisted chats.
 
-The easiest bootstrap path is:
+BotFather gives you the bot token, but it cannot give you your personal Telegram user ID. Most Telegram clients also do not show the numeric user ID directly.
 
-1. Start the app with the bot token configured.
-2. Leave `TelegramBot:AllowedUserIds` empty for the first launch.
-3. Send `/whoami` to the bot in a private chat.
-4. Copy the numeric user ID from the reply.
-5. Add that user ID to the allowlist.
-6. If you want the bot in a group, send `/whoami` there too and copy the group chat ID.
+The easiest bootstrap path is the first-run wizard:
+
+1. Start the app with no local settings file beside the executable.
+2. Paste the BotFather token when the wizard asks for it.
+3. Let the wizard wait for one private message to the bot.
+4. Send `/whoami` or any short message to the bot in a private chat.
+5. Confirm that the wizard captured and saved your numeric user ID.
+6. If you want the bot in a group, send `/whoami` there after private chat setup and copy the group chat ID.
+
+The manual fallback is still available:
+
+1. Leave `TelegramBot:AllowedUserIds` empty only long enough to run `/whoami`.
+2. Copy the numeric user ID from the reply.
+3. Add that user ID to the allowlist.
 
 Important details:
 
@@ -118,14 +126,14 @@ You can configure the app in four ways.
 
 This is the simplest path for a single machine.
 
-The file is resolved from the current working directory when the app starts.
-The interactive bootstrap menu also writes `appsettings.Local.json` into the current working directory, so keep the process started from the folder you want to own that file.
+The file is resolved beside the executable by default, not from the shell's current working directory.
+The interactive bootstrap menu also writes `appsettings.Local.json` beside the executable, so command-line launches from another directory still use the same local settings.
 
 Use this when:
 
 1. You want one local config file.
 2. You do not mind keeping secrets in a machine-local JSON file.
-3. You are running the bot from a dedicated directory.
+3. You are running the bot from a dedicated app folder.
 
 ### 2. The interactive bootstrap menu
 
@@ -137,6 +145,8 @@ Use this when:
 2. You want a guided setup path.
 3. You do not want to memorize every config key immediately.
 
+When no local settings file exists yet, the first-run wizard asks for the Telegram token, validates it with Telegram, captures your admin user ID from a private bot message, optionally stores an OpenAI key for voice notes, and asks for explicit workspace roots.
+
 The menu has sections for:
 
 1. Telegram and admin allowlists.
@@ -144,7 +154,7 @@ The menu has sections for:
 3. Codex runtime.
 4. Workspaces.
 
-The Workspaces section is where you confirm the local data root before you start polling. That matters because the persisted project catalog, conversation bindings, and thread manifests all live under that root.
+The Workspaces section is where you tell the bot which local folders are safe for project selection. Use a parent source directory such as `C:\src`, `~/src`, or `/Users/you/src` when most repositories live together; use specific repository paths when you want tighter scope. The local data root is separate and stores the persisted project catalog, conversation bindings, queued prompts, and thread manifests.
 The model prompts are picker-based for the common cases, so you can choose a known transcription model, a default Codex model, or a thinking-effort preset without typing blind. When Codex is reachable, the picker uses the live model list and the model's reported effort choices; otherwise it falls back to curated examples. Custom values are still allowed when you need them.
 
 The menu understands `!clear` when a field prompt says it can be cleared.
@@ -170,7 +180,7 @@ Use this when you want the bot to run like a service, container, or scheduled pr
 The configuration sources are layered in this order:
 
 1. `appsettings.json` defaults.
-2. `appsettings.Local.json`.
+2. `appsettings.Local.json` beside the executable.
 3. User secrets.
 4. Environment variables with the `CODEX_TELEGRAM_` prefix.
 5. Command-line arguments.
@@ -280,7 +290,7 @@ When you launch the app for the first time, work through this list in order.
 10. Start the bot.
 
 If the menu shows warnings, do not ignore them casually. They usually mean one of the required pieces is still missing.
-If you leave workspace roots or the default working directory unset, the runtime falls back to the process current directory. That is convenient for a first local run, but shared or recorded setups should use explicit roots.
+If you leave workspace roots or the default working directory unset, the runtime falls back to the process current directory. That fallback exists for development convenience only; public, shared, or recorded setups should use explicit roots and an explicit default working directory.
 
 ## Run It
 
@@ -545,7 +555,7 @@ Check these in order:
 4. Your user ID is in `AllowedUserIds`.
 5. The chat ID is in `AllowedChatIds` if you are in a group or forum topic.
 6. You are talking to the right bot account.
-7. The current working directory contains the config file you think it does.
+7. The executable folder contains the `appsettings.Local.json` file you think it does.
 
 ### `/whoami` does not work
 
@@ -597,9 +607,9 @@ Check these:
 
 ### The menu keeps writing config in the wrong place
 
-Remember that `appsettings.Local.json` is written relative to the current working directory.
+Remember that `appsettings.Local.json` is written beside the executable by default.
 
-If you want it in a specific folder, start the app from that folder.
+If you want it in a specific folder, put the binary in that app folder and run that binary.
 
 ## Security And Operations
 
