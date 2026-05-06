@@ -31,7 +31,7 @@ It does not:
 1. Bundle the `codex` executable.
 2. Bundle Telegram credentials.
 3. Bundle an OpenAI API key.
-4. Bundle `ffmpeg`.
+4. Bundle optional audio tools such as `ffmpeg`.
 5. Remove the need for a local machine where the bot will run.
 
 ## Before You Start
@@ -43,7 +43,7 @@ Have these ready before you touch the config:
 3. Your numeric Telegram user ID.
 4. A local Codex CLI installation that already works in a terminal.
 5. An OpenAI API key if you want voice-note transcription.
-6. `ffmpeg` on `PATH` if you want voice notes and unsupported audio formats transcoded.
+6. `ffmpeg` on `PATH` if you want reliable voice-note support and Telegram audio must be transcoded.
 7. At least one directory you want to use as a workspace root.
 
 If you plan to use a group or forum supergroup, also decide whether the bot should be allowed to see plain text messages in that group.
@@ -425,9 +425,9 @@ Behavior to remember:
 
 The bot handles more than plain text.
 
-1. Voice notes are transcribed before they are sent to Codex.
+1. Voice notes are transcribed before they are sent to Codex; Codex receives the resulting text, not raw Telegram audio.
 2. Audio transcription requires an OpenAI API key.
-3. `ffmpeg` is used when the bot needs to transcode voice notes or unsupported audio formats.
+3. `ffmpeg` is used only when the bot needs to transcode downloaded audio into a format OpenAI accepts directly. Telegram voice notes commonly need this because they often arrive as OGG/OPUS.
 4. The bot rejects audio shorter than `TelegramBot:MinAudioDurationSeconds` or longer than `TelegramBot:MaxAudioDurationSeconds` before download.
 5. Images and documents are forwarded to Codex.
 6. Large media files still have practical upload and API limits, so keep expectations realistic.
@@ -436,7 +436,7 @@ If voice transcription fails, check these first:
 
 1. `OpenAI:ApiKey`.
 2. `OpenAI:Model`.
-3. `OpenAI:FfmpegPath`.
+3. `OpenAI:FfmpegPath` if the failing audio format needs transcoding.
 4. Whether `ffmpeg` is actually available on the machine that runs the bot.
 
 ## Command Reference

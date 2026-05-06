@@ -10,7 +10,7 @@ Watch a two-minute private-chat demo showing a local Codex session controlled fr
 
 [![Watch the Codex Telegram demo](docs/assets/codex-telegram-demo-thumbnail.png)](https://github.com/incursa/codex-telegram/raw/main/docs/assets/codex-telegram-demo.mp4)
 
-See [menus and screenshots](docs/menus.md) for the full screenshot plan.
+For the available Telegram buttons and menus, see the [menus and button reference](docs/menus.md).
 
 ## Download
 
@@ -24,8 +24,6 @@ Download the latest release binary for your operating system:
 
 All releases are listed at [GitHub Releases](https://github.com/incursa/codex-telegram/releases).
 
-The release binaries are self-contained .NET applications. You do not need to install the .NET runtime just to run a published binary.
-
 ## What You Need
 
 Before starting, have these ready:
@@ -34,9 +32,9 @@ Before starting, have these ready:
 2. A Telegram bot token from `@BotFather`.
 3. A local Codex CLI installation that already works in a terminal.
 4. At least one local repository or workspace directory you want Codex to use.
-5. Optional: an OpenAI API key and `ffmpeg` if you want Telegram voice notes transcribed.
+5. Optional: an OpenAI API key for voice-note transcription. Install `ffmpeg` only if Telegram audio must be transcoded; Telegram voice notes commonly need it.
 
-This app does not bundle Codex, Telegram credentials, OpenAI credentials, or `ffmpeg`.
+This app does not bundle Codex, Telegram credentials, or OpenAI credentials. If you use voice notes, any required audio transcoder must already exist on the machine running the bot.
 
 For Codex CLI setup, use OpenAI's official [Codex CLI docs](https://developers.openai.com/codex/cli).
 
@@ -252,11 +250,13 @@ At this point you have a working private Telegram chat connected to a local Code
 
 ## Voice Notes
 
-Voice notes are optional. They require:
+Voice notes are optional. The bot downloads Telegram audio, transcribes it with OpenAI, shows the transcript, and sends only the transcribed text to the active Codex session. Codex does not receive raw Telegram audio.
+
+Voice note requirements:
 
 1. `OpenAI:ApiKey` or `OPENAI_API_KEY`.
 2. A transcription-capable `OpenAI:Model`.
-3. `ffmpeg` available on `PATH`, or configured with `OpenAI:FfmpegPath`.
+3. `ffmpeg` only when the downloaded audio is not in a format OpenAI accepts directly. Telegram voice notes commonly arrive as OGG/OPUS, so install `ffmpeg` or configure `OpenAI:FfmpegPath` for reliable voice-note support.
 
 Suggested first voice test:
 
@@ -264,7 +264,7 @@ Suggested first voice test:
 Please review the current project and tell me the three most important setup risks. Keep it concise and do not edit files.
 ```
 
-The bot transcribes the voice note, shows the transcription, and sends the transcribed text to the active Codex session.
+After a successful test, you should see the transcription in Telegram before the Codex response starts.
 
 ## Day-To-Day Commands
 
@@ -354,7 +354,7 @@ User and operator docs:
 - [Operations](docs/operations.md)
 - [BotFather setup](docs/botfather.md)
 - [Command reference](docs/command-reference.md)
-- [Menus and screenshots](docs/menus.md)
+- [Menus and button reference](docs/menus.md)
 - [Manual Telegram test plan](docs/manual-test-plan.md)
 - [Demo readiness scorecard](docs/demo-readiness.md)
 - [Security](SECURITY.md)

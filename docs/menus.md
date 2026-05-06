@@ -4,11 +4,11 @@ This guide explains the Telegram buttons and interactive menus shown by Incursa 
 
 Use [README.md](../README.md) for first setup and [command-reference.md](command-reference.md) for command syntax.
 
-## Screenshot Plan
+## Optional Screenshots
 
-Add screenshots after recording a clean demo. Use sanitized private-chat screenshots only.
+The demo video is the primary visual walkthrough. Add screenshots only when they clarify a specific menu or command state. Use sanitized private-chat screenshots only.
 
-Suggested screenshot slots:
+Useful screenshot slots:
 
 1. Bootstrap/admin menu in the terminal.
 2. `/doctor` output in a private chat.

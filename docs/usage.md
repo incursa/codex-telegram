@@ -112,16 +112,16 @@ Queueing is per session and per Telegram conversation. Separate forum topics can
 
 ## Attachments And Voice
 
-Images and documents can be sent with a prompt. Voice notes are transcribed before they are sent to Codex.
+Images and documents can be sent with a prompt. Voice notes are transcribed before they are sent to Codex; Codex receives the transcript, not raw Telegram audio.
 
 Voice requirements:
 
 1. `OpenAI:ApiKey` or `OPENAI_API_KEY` must be configured.
 2. `OpenAI:Model` must name a transcription-capable model.
-3. `ffmpeg` must be available when transcoding is needed.
+3. `ffmpeg` must be available only when transcoding is needed. Telegram voice notes commonly need it because they often arrive as OGG/OPUS.
 4. Audio must fit the configured duration limits and OpenAI upload limits.
 
-If voice fails, send `/doctor`, then check `OpenAI:ApiKey`, `OpenAI:Model`, and `OpenAI:FfmpegPath`.
+If voice fails, send `/doctor`, then check `OpenAI:ApiKey`, `OpenAI:Model`, and `OpenAI:FfmpegPath` if the audio format needs transcoding.
 
 ## Groups And Forum Topics
 
