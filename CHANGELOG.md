@@ -2,7 +2,11 @@
 
 ## Unreleased
 
+## 1.0.12 - 2026-05-06
+
 - Added `/queue` and `/queued` for viewing queued prompts, editing queued text, deleting queued items, and sending a queued item now as active-turn steering.
+- Added first-run setup onboarding that validates the Telegram bot token, captures the admin user ID from a private bot message, and writes settings beside the executable by default.
+- Added macOS `curl` download instructions and updated setup documentation for executable-folder settings and workspace-root selection.
 
 ## 1.0.11 - 2026-05-06
 
