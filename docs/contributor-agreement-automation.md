@@ -50,7 +50,7 @@ gh auth refresh -s admin:org
 gh secret set INCURSA_CONTRIBUTOR_AGREEMENTS_TOKEN --org incursa --visibility all
 ```
 
-Repository-level fallback for private-repo testing:
+Repository-level fallback for testing:
 
 ```powershell
 gh secret set INCURSA_CONTRIBUTOR_AGREEMENTS_TOKEN --repo incursa/codex-telegram
@@ -82,7 +82,7 @@ This repository requires this status check name in the `main` branch ruleset:
 Contributor Agreement
 ```
 
-The org secret is configured, and a maintainer-owned smoke pull request proved the workflow and status publication. A non-allowlisted contributor signature test is still useful before relying on the flow for outside contributions.
+Keep this status check required on protected branches that accept outside contributions.
 
 ## Reuse In Other Repositories
 

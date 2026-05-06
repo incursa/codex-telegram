@@ -95,7 +95,7 @@ Good pull requests include:
 3. Documentation updates when setup, commands, security posture, release workflow, or day-to-day usage changes.
 4. Manual Telegram evidence when claiming real bot behavior that automated tests cannot prove.
 5. No unrelated formatting churn.
-6. A clean tracked-file secret scan before sharing public-release branches.
+6. A clean tracked-file secret scan before opening a pull request.
 
 Protected changes to `main` must go through a pull request and require Code Owner review. The default Code Owner is listed in [.github/CODEOWNERS](.github/CODEOWNERS).
 
@@ -105,13 +105,9 @@ For public-facing behavior, avoid claims that are broader than the evidence. If 
 
 ## Manual Telegram Evidence
 
-Live Telegram checks require a human operator because they use private credentials and a real bot account. Use:
+Live Telegram checks require a human operator because they use private credentials and a real bot account. Use [docs/manual-test-plan.md](docs/manual-test-plan.md) for the checklist.
 
-1. [docs/manual-test-plan.md](docs/manual-test-plan.md) for the checklist.
-2. [docs/release-owner-actions.md](docs/release-owner-actions.md) for owner-run evidence and public-release decisions.
-3. [docs/demo-readiness.md](docs/demo-readiness.md) for go/no-go status before a demo, tag, or visibility change.
-
-Record the date, commit or asset, OS, Codex CLI version, BotFather privacy-mode setting, and any skipped checks.
+Record the date, commit or asset, OS, Codex CLI version, BotFather privacy-mode setting, and any skipped checks in the pull request or release notes.
 
 ## Security Hygiene
 

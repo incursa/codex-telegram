@@ -1,6 +1,6 @@
 # Manual Test Plan
 
-Use this checklist before a public demo, release tag, or repository visibility change.
+Use this checklist before a demo, release tag, or release note that claims live Telegram behavior.
 
 Record the date, operator, OS, published asset or commit SHA, Codex CLI version, and Telegram bot privacy-mode setting with the test result.
 
@@ -8,7 +8,7 @@ Record the date, operator, OS, published asset or commit SHA, Codex CLI version,
 
 1. `scripts\Test-ReleaseReadiness.ps1 -Runtime win-x64` or the target-runtime equivalent passes.
 2. If publish is intentionally skipped, `scripts\Test-ReleaseReadiness.ps1 -SkipPublish` passes and the selected publish path is validated separately.
-3. Any CI or publish workflow result used for release evidence is recorded in `docs/release-owner-actions.md`.
+3. Any CI or publish workflow result used for release evidence is recorded in the pull request or release notes.
 4. The real `appsettings.Local.json` is untracked.
 5. The bot token and OpenAI API key are not present in tracked files.
 6. The configured `CodexTelegram:Workspace:WorkspaceRoots` are narrow enough for the demo.
@@ -82,4 +82,4 @@ Record the date, operator, OS, published asset or commit SHA, Codex CLI version,
 3. Run this manual checklist for private chat.
 4. Run group/forum checks only if the release notes claim group/forum support.
 5. Record any skipped manual checks with the reason.
-6. Do not flip repository visibility or publish a release if token, allowlist, path, or restart behavior is unclear.
+6. Do not publish a release if token, allowlist, path, or restart behavior is unclear.

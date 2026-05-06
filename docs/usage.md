@@ -76,7 +76,7 @@ Common flow:
 You can also include an inline control phrase in a prompt:
 
 ```text
-Codex settings model gpt-5.4 thinking high: inspect the release docs for public-facing gaps
+Codex settings model gpt-5.4 thinking high: inspect this repository and summarize the safest next setup check
 ```
 
 ## Reading Output
@@ -165,4 +165,4 @@ Conversation/session bindings rehydrate from `telegram-state.json`. A mid-turn C
 4. Start new workflows in private chat before using groups.
 5. Use `/doctor` before changing config blindly.
 6. Rotate the BotFather token if it is exposed.
-7. Set explicit workspace roots and a default working directory before public demos; otherwise the app falls back to the process current directory.
+7. Set explicit workspace roots and a default working directory before shared or recorded use; otherwise the app falls back to the process current directory.

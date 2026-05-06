@@ -355,8 +355,6 @@ User and operator docs:
 - [BotFather setup](docs/botfather.md)
 - [Command reference](docs/command-reference.md)
 - [Menus and button reference](docs/menus.md)
-- [Manual Telegram test plan](docs/manual-test-plan.md)
-- [Demo readiness scorecard](docs/demo-readiness.md)
 - [Security](SECURITY.md)
 
 Developer and maintainer docs:
@@ -365,6 +363,4 @@ Developer and maintainer docs:
 - [Contributing](CONTRIBUTING.md)
 - [Code of conduct](CODE_OF_CONDUCT.md)
 - [Testing and quality](docs/testing.md)
-- [Release owner actions](docs/release-owner-actions.md)
-
-This repository is intentionally console-only. The ASP.NET Core web console, SignalR UI, and MCP endpoint belong in the separate `codex-remote` project.
+- [Manual Telegram test plan](docs/manual-test-plan.md)

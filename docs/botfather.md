@@ -106,7 +106,7 @@ topics - List topic/session bindings
 restart - Show restart guidance
 ```
 
-Notes:
+Command behavior:
 
 1. Keep the command descriptions short; Telegram rejects invalid command definitions.
 2. BotFather may take a few minutes to reflect command-list changes in every client.
@@ -122,7 +122,7 @@ For private-chat-only use, disable group joins:
 
 Choose your bot, then choose the option that prevents adding it to groups.
 
-If you want group or forum-topic support, enable group joins and read [menus.md](menus.md) and [command-reference.md](command-reference.md) before you demo it.
+If you want group or forum-topic support, enable group joins and read [menus.md](menus.md) and [command-reference.md](command-reference.md) before relying on it.
 
 ## Privacy Mode
 
@@ -138,7 +138,7 @@ If you want ordinary group text to route to Codex, privacy mode may need to be d
 
 ## Optional Profile Media
 
-Use a neutral avatar if you are recording a public demo:
+Use a neutral avatar if you are recording or sharing setup:
 
 ```text
 /setuserpic

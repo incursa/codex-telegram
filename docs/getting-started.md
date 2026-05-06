@@ -245,7 +245,7 @@ If you prefer to edit JSON by hand, this is a good starting point:
 }
 ```
 
-Notes on that file:
+Configuration behavior:
 
 1. `TelegramBot.Enabled` must be `true` or the bot will not poll Telegram.
 2. `TelegramBot.Token` is the BotFather token.
@@ -280,7 +280,7 @@ When you launch the app for the first time, work through this list in order.
 10. Start the bot.
 
 If the menu shows warnings, do not ignore them casually. They usually mean one of the required pieces is still missing.
-If you leave workspace roots or the default working directory unset, the runtime falls back to the process current directory. That is convenient for a first local run, but public demos and shared machines should use explicit roots.
+If you leave workspace roots or the default working directory unset, the runtime falls back to the process current directory. That is convenient for a first local run, but shared or recorded setups should use explicit roots.
 
 ## Run It
 
@@ -357,7 +357,7 @@ The bootstrap menu offers direct pickers for the common values in items 3 and 4,
 ## Verify The Private Chat Flow
 
 After the bot is running, test it in a private chat before you move on to groups.
-For release or public-demo validation, use the fuller checklist in [manual-test-plan.md](manual-test-plan.md). Owner-only tasks such as BotFather choices, screenshots, and visibility decisions are tracked in [release-owner-actions.md](release-owner-actions.md).
+For release validation, use the fuller checklist in [manual-test-plan.md](manual-test-plan.md).
 For everyday operation after this smoke test, use [usage.md](usage.md).
 
 Suggested sequence:
@@ -384,7 +384,7 @@ If the bot never replies, stop and check:
 
 If you want the bot in a group chat, add the group chat ID to `AllowedChatIds`. Group and forum-topic messages require both an allowed user and an allowed chat.
 
-Important notes:
+Group behavior:
 
 1. The bot should still be tested privately first.
 2. Group IDs are numeric and often negative.

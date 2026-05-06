@@ -46,7 +46,7 @@ Other runtime identifiers can be passed with `-Runtime`, for example `linux-x64`
 
 ## Release-Readiness Gate
 
-Run this before public demos, release tags, and pushes that affect runtime behavior:
+Run this before release validation, release tags, and pushes that affect runtime behavior:
 
 ```powershell
 .\scripts\Test-ReleaseReadiness.ps1 -Runtime win-x64

@@ -4,7 +4,7 @@ Automated release readiness is intentionally split into a normal gate and a deep
 
 ## Normal Gate
 
-Run this before public demos, release tags, and pushes that affect runtime behavior:
+Run this before release validation, release tags, and pushes that affect runtime behavior:
 
 ```powershell
 .\scripts\Test-ReleaseReadiness.ps1 -Runtime win-x64
@@ -40,7 +40,7 @@ Use a narrower profile when the change is concentrated in one surface:
 .\scripts\Test-TelegramMutation.ps1 -Configuration Release -Profile queue
 ```
 
-Use all mutation profiles before a public release candidate when time permits:
+Use all mutation profiles before a release candidate when time permits:
 
 ```powershell
 .\scripts\Test-TelegramMutation.ps1 -Configuration Release -Profile all
