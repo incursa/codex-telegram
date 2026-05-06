@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 1.0.11 - 2026-05-06
+
+- Enabled invariant globalization for release binaries so Linux self-contained builds do not require system ICU packages at startup.
+- Aligned application version defaults and issue-template placeholders for the 1.0.11 release.
+
 ## 1.0.10 - 2026-05-06
 
 - Updated `Incursa.OpenAI.Codex` to 1.1.0 and switched `/usage` to the SDK account rate-limit API.
