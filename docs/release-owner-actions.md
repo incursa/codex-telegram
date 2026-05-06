@@ -18,7 +18,7 @@ Completed repo-side setup:
 8. All tags are protected by a ruleset; only repository admins can intentionally bypass.
 9. `Contributor Agreement` is a required status check on `main`.
 10. Contributor agreement signatures are stored in the private `incursa/contributor-agreements` repository through the org secret `INCURSA_CONTRIBUTOR_AGREEMENTS_TOKEN`.
-11. Release `v1.0.6` exists with Windows, Linux, and macOS arm64 binaries plus checksums and license assets.
+11. Release `v1.0.7` exists with Windows, Linux, and macOS arm64 binaries plus checksums and license assets.
 12. Publish workflow is configured to emit GitHub artifact attestations for release binaries after the repository is public.
 
 Known repo-side limitation:

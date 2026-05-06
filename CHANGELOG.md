@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.0.7 - 2026-05-06
+
+- Updated `Incursa.OpenAI.Codex` to 1.0.20.
+- Updated Microsoft.Extensions runtime package references to 10.0.7.
+- Updated test infrastructure packages for Microsoft.NET.Test.Sdk and coverlet collector.
+- Added a project code of conduct and linked it from contributor-facing docs.
+- Added Dependabot configuration for GitHub Actions and NuGet.
+- Added CodeQL workflow configuration that runs after the repository is public.
+- Added tracked-file secret scanning to hosted CI and publish workflows.
+- Pinned third-party GitHub Actions to commit SHAs.
+- Configured publish-time artifact attestations for release binaries after the repository is public.
+
 ## 1.0.6 - 2026-05-05
 
 - Added a standalone bootstrap/admin menu for local configuration.
