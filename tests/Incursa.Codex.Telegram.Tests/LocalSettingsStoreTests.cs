@@ -125,4 +125,5 @@ public sealed class LocalSettingsStoreTests
         Assert.Equal(2, snapshot.MinAudioDurationSeconds);
         Assert.Equal(300, snapshot.MaxAudioDurationSeconds);
     }
+
 }

@@ -15,17 +15,18 @@ Record the date, operator, OS, published asset or commit SHA, Codex CLI version,
 
 ## Private Chat
 
-1. Start the bot with Telegram polling enabled and no admin allowlist long enough to run `/whoami`.
-2. Send `/whoami` in a private chat and record the user ID.
-3. Add the user ID to `TelegramBot:AllowedUserIds` and restart or relaunch.
-4. Send `/projects` and confirm the response does not expose unrelated local paths.
-5. Send `/project add <absolute repository path>` for a directory under an allowed workspace root.
-6. Send `/project current` and confirm the selected project is correct.
-7. Send `/doctor` and confirm it explains access, routing, active project/session state, workspace roots, queue state, and a plausible next action.
-8. Send `/new <short name>` and confirm the reply summarizes the session without noisy status/model/thinking buttons; if Codex rate limits are available, confirm it includes a compact `Rate limits` line.
-9. Send a normal text prompt and confirm live output returns to the private chat.
-10. Send `/tail`, `/status`, `/usage`, `/model`, and `/thinking` and confirm each command is understandable without stale or truncated buttons; `/status`, `/model`, and `/thinking` should include compact rate limits when available.
-11. Send `/stop` and confirm pending queued messages for the session are cleared.
+1. Start the app without an existing `appsettings.Local.json` beside the executable and confirm the first-run wizard opens.
+2. Paste a BotFather token and confirm the wizard validates it without printing the token.
+3. Let the wizard wait for a private Telegram message, send `/whoami` or a short message to the bot, and confirm the wizard captures the user ID.
+4. Confirm `TelegramBot:AllowedUserIds` contains the captured user ID after setup.
+5. Send `/projects` and confirm the response does not expose unrelated local paths.
+6. Send `/project add <absolute repository path>` for a directory under an allowed workspace root.
+7. Send `/project current` and confirm the selected project is correct.
+8. Send `/doctor` and confirm it explains access, routing, active project/session state, workspace roots, queue state, and a plausible next action.
+9. Send `/new <short name>` and confirm the reply summarizes the session without noisy status/model/thinking buttons; if Codex rate limits are available, confirm it includes a compact `Rate limits` line.
+10. Send a normal text prompt and confirm live output returns to the private chat.
+11. Send `/tail`, `/status`, `/usage`, `/model`, and `/thinking` and confirm each command is understandable without stale or truncated buttons; `/status`, `/model`, and `/thinking` should include compact rate limits when available.
+12. Send `/stop` and confirm pending queued messages for the session are cleared.
 
 ## Authorization
 

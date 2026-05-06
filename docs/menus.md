@@ -20,7 +20,7 @@ Use it to configure:
 
 Behavior:
 
-1. The menu writes `appsettings.Local.json` in the current working directory.
+1. The menu writes `appsettings.Local.json` beside the executable by default.
 2. Stored secret values are not displayed back in plain text.
 3. `!clear` clears fields when the prompt says clearing is supported.
 4. When Codex is reachable, the menu can use live Codex model and effort choices.
@@ -28,7 +28,7 @@ Behavior:
 
 Callout:
 
-> Start the app from the folder that should own `appsettings.Local.json`. If the menu writes config in the wrong place, stop the app, change directories, and launch it again.
+> The default settings file lives beside the executable, not wherever your shell happens to be when you launch the app. Keep the binary in a stable app folder so the settings path stays predictable.
 
 ## Navigation Buttons
 

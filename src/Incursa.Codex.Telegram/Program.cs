@@ -20,12 +20,13 @@ if (commandLine.ShowHelp)
     return;
 }
 
+string localSettingsPath = LocalSettingsStore.ResolveDefaultPath();
 if (ShouldRunInteractiveMenu(commandLine))
 {
     LocalSettingsStore store;
     try
     {
-        store = LocalSettingsStore.Load();
+        store = LocalSettingsStore.Load(localSettingsPath);
     }
     catch (InvalidOperationException exception)
     {
@@ -33,6 +34,18 @@ if (ShouldRunInteractiveMenu(commandLine))
         return;
     }
 
+    if (!store.Exists)
+    {
+        LocalSettingsStore? configuredStore = await InteractiveBootstrapMenu.RunFirstRunSetupAsync(store, CancellationToken.None);
+        if (configuredStore is null)
+        {
+            return;
+        }
+
+        store = configuredStore;
+    }
+
+    localSettingsPath = store.FilePath;
     CodexModelCatalog modelCatalog = await CodexModelDiscovery.DiscoverAsync(store.GetSnapshot(), CancellationToken.None);
 
     if (InteractiveBootstrapMenu.Run(store, modelCatalog) == BootstrapMenuResult.Quit)
@@ -43,7 +56,7 @@ if (ShouldRunInteractiveMenu(commandLine))
 
 HostApplicationBuilder builder = Host.CreateApplicationBuilder(commandLine.ConfigurationArgs);
 builder.Logging.ClearProviders();
-builder.Configuration.AddJsonFile("appsettings.Local.json", optional: true, reloadOnChange: true);
+builder.Configuration.AddJsonFile(localSettingsPath, optional: true, reloadOnChange: true);
 builder.Configuration.AddUserSecrets<Program>(optional: true);
 builder.Configuration.AddEnvironmentVariables(prefix: "CODEX_TELEGRAM_");
 builder.Configuration.AddCommandLine(commandLine.ConfigurationArgs);

@@ -23,8 +23,27 @@ internal sealed class LocalSettingsStore
 
     public string FilePath { get; }
 
+    /// <summary>
+    /// Gets a value indicating whether the settings file already exists on disk.
+    /// </summary>
+    public bool Exists
+        => File.Exists(FilePath);
+
+    /// <summary>
+    /// Resolves the default directory that owns the machine-local settings file.
+    /// </summary>
+    /// <returns>The executable folder, falling back to the current directory only when the runtime does not expose one.</returns>
+    public static string ResolveDefaultDirectory()
+        => Path.GetFullPath(string.IsNullOrWhiteSpace(AppContext.BaseDirectory)
+            ? Environment.CurrentDirectory
+            : AppContext.BaseDirectory);
+
+    /// <summary>
+    /// Resolves the default machine-local settings file path.
+    /// </summary>
+    /// <returns>The absolute path to <c>appsettings.Local.json</c> beside the executable.</returns>
     public static string ResolveDefaultPath()
-        => Path.GetFullPath(Path.Combine(Environment.CurrentDirectory, FileName));
+        => Path.GetFullPath(Path.Combine(ResolveDefaultDirectory(), FileName));
 
     public static LocalSettingsStore Load(string? filePath = null)
     {

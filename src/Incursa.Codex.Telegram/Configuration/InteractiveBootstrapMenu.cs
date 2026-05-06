@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text;
 using Incursa.Codex.Telegram.Models;
+using Telegram.Bot.Exceptions;
 
 namespace Incursa.Codex.Telegram.Configuration;
 
@@ -12,8 +13,55 @@ internal enum BootstrapMenuResult
 
 internal static class InteractiveBootstrapMenu
 {
+    private static readonly TimeSpan TelegramUserCaptureTimeout = TimeSpan.FromMinutes(2);
+
     public static BootstrapMenuResult Run(LocalSettingsStore store)
         => Run(store, CodexModelDiscovery.CreateFallbackCatalog());
+
+    public static Task<LocalSettingsStore?> RunFirstRunSetupAsync(LocalSettingsStore store, CancellationToken cancellationToken)
+        => RunFirstRunSetupAsync(store, new TelegramSetupClient(), cancellationToken);
+
+    internal static async Task<LocalSettingsStore?> RunFirstRunSetupAsync(
+        LocalSettingsStore initialStore,
+        ITelegramSetupClient telegramSetupClient,
+        CancellationToken cancellationToken)
+    {
+        ClearScreen();
+        Console.WriteLine("First-Time Setup");
+        Console.WriteLine();
+        Console.WriteLine("No local settings file was found, so this wizard will create one before the normal menu opens.");
+        Console.WriteLine("The default location is the app folder so command-line launches from another directory still use the same settings.");
+        WriteCurrentDirectorySettingsNotice(initialStore.FilePath);
+        Console.WriteLine();
+
+        LocalSettingsStore? store = PromptForSettingsStore(initialStore);
+        if (store is null)
+        {
+            return null;
+        }
+
+        string? telegramToken = await PromptForTelegramTokenAsync(store, telegramSetupClient, cancellationToken).ConfigureAwait(false);
+        if (telegramToken is null)
+        {
+            return null;
+        }
+
+        await PromptForTelegramAdminAsync(store, telegramToken, telegramSetupClient, cancellationToken).ConfigureAwait(false);
+        PromptForOpenAiTranscription(store);
+        PromptForWorkspaceRoots(store);
+        PromptForDefaultWorkingDirectory(store);
+        if (!SaveSettings(store))
+        {
+            Console.WriteLine("Setup cannot continue until the settings file can be written beside the executable.");
+            Pause();
+            return null;
+        }
+
+        Console.WriteLine();
+        Console.WriteLine("First-time setup is saved. The normal setup menu will open next so you can review or start the bot.");
+        Pause();
+        return store;
+    }
 
     public static BootstrapMenuResult Run(LocalSettingsStore store, CodexModelCatalog modelCatalog)
     {
@@ -87,10 +135,236 @@ internal static class InteractiveBootstrapMenu
         Console.WriteLine("  Incursa.Codex.Telegram --menu     Force the bootstrap/admin menu.");
         Console.WriteLine("  Incursa.Codex.Telegram --help     Show this help.");
         Console.WriteLine();
-        Console.WriteLine($"The menu writes {LocalSettingsStore.FileName} in the current directory.");
+        Console.WriteLine($"The menu writes {LocalSettingsStore.FileName} in the app folder by default.");
         Console.WriteLine("The startup screen shows the resolved settings file, local state root, and common model pickers before launch.");
         Console.WriteLine("When Codex is reachable, the menu queries it for live model lists and falls back to curated examples if discovery fails.");
         Console.WriteLine("Environment variables and command-line configuration still override that file.");
+    }
+
+    private static LocalSettingsStore? PromptForSettingsStore(LocalSettingsStore initialStore)
+    {
+        Console.WriteLine($"Settings file: {initialStore.FilePath}");
+        Console.WriteLine();
+        string input = ReadLine("Press Enter to save settings beside the executable, or type !quit to cancel: ");
+        if (IsQuit(input))
+        {
+            return null;
+        }
+
+        if (!string.IsNullOrWhiteSpace(input))
+        {
+            Console.WriteLine("Custom settings locations are not supported by the first-run wizard because normal command-line launches resolve settings beside the executable.");
+            return PromptForSettingsStore(initialStore);
+        }
+
+        return initialStore;
+    }
+
+    private static void WriteCurrentDirectorySettingsNotice(string defaultSettingsPath)
+    {
+        string currentDirectorySettingsPath = Path.GetFullPath(Path.Combine(Environment.CurrentDirectory, LocalSettingsStore.FileName));
+        if (File.Exists(currentDirectorySettingsPath)
+            && !string.Equals(currentDirectorySettingsPath, defaultSettingsPath, OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal))
+        {
+            Console.WriteLine($"Note: {currentDirectorySettingsPath} exists, but this app now uses {defaultSettingsPath} by default.");
+            Console.WriteLine("Move or copy the file beside the executable if that is the settings file you intended to use.");
+        }
+    }
+
+    private static async Task<string?> PromptForTelegramTokenAsync(
+        LocalSettingsStore store,
+        ITelegramSetupClient telegramSetupClient,
+        CancellationToken cancellationToken)
+    {
+        Console.WriteLine();
+        Console.WriteLine("Telegram Bot Token");
+        Console.WriteLine();
+        Console.WriteLine("If you do not have a token yet:");
+        Console.WriteLine("1. Open Telegram and chat with @BotFather.");
+        Console.WriteLine("2. Send /newbot.");
+        Console.WriteLine("3. Choose the bot display name and a username ending in bot.");
+        Console.WriteLine("4. Copy the token BotFather returns.");
+        Console.WriteLine();
+
+        while (true)
+        {
+            string? input = ReadSecret("Paste Telegram bot token (!quit cancels): ");
+            if (input is null || IsQuit(input))
+            {
+                return null;
+            }
+
+            if (!TelegramBotToken.TryNormalize(input, out string token, out string tokenError))
+            {
+                Console.WriteLine(tokenError);
+                continue;
+            }
+
+            Console.WriteLine("Validating token with Telegram...");
+            try
+            {
+                TelegramBotIdentity bot = await telegramSetupClient.ValidateBotTokenAsync(token, cancellationToken).ConfigureAwait(false);
+                store.SetTelegramToken(token);
+                store.SetTelegramEnabled(true);
+                SaveSettings(store);
+                Console.WriteLine($"Validated @{bot.Username ?? bot.Id.ToString(CultureInfo.InvariantCulture)} ({bot.DisplayName}).");
+                WriteBotFatherHint(bot);
+                return token;
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception exception) when (exception is RequestException or HttpRequestException or ArgumentException or InvalidOperationException)
+            {
+                Console.WriteLine($"Telegram could not validate that token: {exception.Message}");
+                if (Confirm("Save this token anyway?"))
+                {
+                    store.SetTelegramToken(token);
+                    store.SetTelegramEnabled(true);
+                    SaveSettings(store);
+                    return token;
+                }
+            }
+        }
+    }
+
+    private static async Task PromptForTelegramAdminAsync(
+        LocalSettingsStore store,
+        string telegramToken,
+        ITelegramSetupClient telegramSetupClient,
+        CancellationToken cancellationToken)
+    {
+        Console.WriteLine();
+        Console.WriteLine("Admin User ID");
+        Console.WriteLine();
+        Console.WriteLine("BotFather cannot tell you your personal Telegram user ID, and most Telegram clients do not show it directly.");
+        Console.WriteLine("The easiest setup path is to send one private message to your new bot while this wizard waits.");
+        Console.WriteLine();
+
+        if (Confirm("Capture your user ID automatically now?"))
+        {
+            Console.WriteLine($"Open a private chat with the bot and send /whoami or any short message. Waiting up to {TelegramUserCaptureTimeout.TotalMinutes.ToString("0", CultureInfo.InvariantCulture)} minutes...");
+            try
+            {
+                TelegramSetupUser? user = await telegramSetupClient.WaitForPrivateUserMessageAsync(telegramToken, TelegramUserCaptureTimeout, cancellationToken).ConfigureAwait(false);
+                if (user is not null)
+                {
+                    Console.WriteLine($"Captured {user.DisplayName}: {user.UserId.ToString(CultureInfo.InvariantCulture)}.");
+                    if (Confirm("Save this user as the Telegram admin?"))
+                    {
+                        store.SetAllowedUserIds([user.UserId]);
+                        SaveSettings(store);
+                        return;
+                    }
+                }
+                else
+                {
+                    Console.WriteLine("No private message was received before the setup wait expired.");
+                }
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception exception) when (exception is RequestException or HttpRequestException or ArgumentException or InvalidOperationException)
+            {
+                Console.WriteLine($"Could not capture the user ID automatically: {exception.Message}");
+            }
+        }
+
+        Console.WriteLine("You can still finish setup by entering the numeric user ID manually.");
+        SetLongList(
+            "Admin user IDs",
+            store.GetSnapshot().AllowedUserIds,
+            store.SetAllowedUserIds,
+            store);
+    }
+
+    private static void PromptForOpenAiTranscription(LocalSettingsStore store)
+    {
+        Console.WriteLine();
+        Console.WriteLine("Voice Transcription");
+        Console.WriteLine();
+        Console.WriteLine("Voice notes are optional. If enabled, Telegram audio is transcribed with OpenAI before text is sent to Codex.");
+        if (!Confirm("Enable voice-note transcription now?"))
+        {
+            return;
+        }
+
+        string? input = ReadSecret("OpenAI API key (blank skips for now): ");
+        if (!string.IsNullOrWhiteSpace(input) && !IsQuit(input))
+        {
+            store.SetOpenAiApiKey(input);
+        }
+
+        store.SetOpenAiFfmpegPath("ffmpeg");
+        SaveSettings(store);
+        Console.WriteLine("ffmpeg is configured as 'ffmpeg'. Install it or update OpenAI:FfmpegPath later if voice messages need transcoding.");
+    }
+
+    private static void PromptForWorkspaceRoots(LocalSettingsStore store)
+    {
+        Console.WriteLine();
+        Console.WriteLine("Workspaces");
+        Console.WriteLine();
+        Console.WriteLine("Workspace roots are the local folders this bot may show and use for project selection.");
+        Console.WriteLine("Use a parent source directory if your repositories live under one folder, such as C:\\src, ~/src, or /Users/you/src.");
+        Console.WriteLine("Use semicolons for multiple roots.");
+        while (true)
+        {
+            string input = ReadLine("Workspace roots (semicolon-separated; !skip configures later): ");
+            if (IsQuit(input))
+            {
+                return;
+            }
+
+            if (input.Equals("!skip", StringComparison.OrdinalIgnoreCase) || input.Equals("skip", StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(input))
+            {
+                Console.WriteLine("Enter at least one workspace root, or type !skip to configure it later.");
+                continue;
+            }
+
+            try
+            {
+                store.SetWorkspaceRoots(SplitPathList(input).Select(NormalizePath).ToArray());
+                SaveSettings(store);
+                return;
+            }
+            catch (Exception exception) when (exception is ArgumentException or NotSupportedException or PathTooLongException)
+            {
+                Console.WriteLine($"Invalid path: {exception.Message}");
+            }
+        }
+    }
+
+    private static void PromptForDefaultWorkingDirectory(LocalSettingsStore store)
+    {
+        Console.WriteLine();
+        Console.WriteLine("Default Working Directory");
+        Console.WriteLine();
+        Console.WriteLine("This is the fallback directory Codex uses before you select a project in Telegram.");
+        string fallback = store.GetSnapshot().WorkspaceRoots.FirstOrDefault() ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        string input = ReadLine($"Default working directory [{fallback}] (!skip configures later): ");
+        if (IsQuit(input) || input.Equals("!skip", StringComparison.OrdinalIgnoreCase) || input.Equals("skip", StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        try
+        {
+            store.SetWorkingDirectory(string.IsNullOrWhiteSpace(input) ? fallback : NormalizePath(input));
+            SaveSettings(store);
+        }
+        catch (Exception exception) when (exception is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            Console.WriteLine($"Invalid path: {exception.Message}");
+        }
     }
 
     private static void ConfigureTelegram(LocalSettingsStore store)
@@ -1085,6 +1359,11 @@ internal static class InteractiveBootstrapMenu
         => value.Equals("!clear", StringComparison.OrdinalIgnoreCase)
             || value.Equals("clear", StringComparison.OrdinalIgnoreCase);
 
+    private static bool IsQuit(string value)
+        => value.Equals("!quit", StringComparison.OrdinalIgnoreCase)
+            || value.Equals("quit", StringComparison.OrdinalIgnoreCase)
+            || value.Equals("exit", StringComparison.OrdinalIgnoreCase);
+
     private static bool? NextNullableBool(bool? value)
         => value switch
         {
@@ -1143,5 +1422,33 @@ internal static class InteractiveBootstrapMenu
         }
 
         return Path.Combine(baseDirectory, "Incursa", "CodexTelegram");
+    }
+
+    private static void WriteBotFatherHint(TelegramBotIdentity bot)
+    {
+        if (bot.CanJoinGroups is false)
+        {
+            Console.WriteLine("BotFather currently reports group joins disabled, which is fine for private-chat setup.");
+        }
+
+        if (bot.CanReadAllGroupMessages is false)
+        {
+            Console.WriteLine("BotFather privacy mode appears enabled, which is recommended unless you intentionally want ordinary group text.");
+        }
+    }
+
+    private static bool SaveSettings(LocalSettingsStore store)
+    {
+        try
+        {
+            store.Save();
+            Console.WriteLine($"Saved {store.FilePath}");
+            return true;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or NotSupportedException)
+        {
+            Console.WriteLine($"Could not save settings: {exception.Message}");
+            return false;
+        }
     }
 }

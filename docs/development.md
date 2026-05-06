@@ -24,6 +24,8 @@ dotnet run --project src\Incursa.Codex.Telegram
 dotnet run --project src\Incursa.Codex.Telegram -- --run
 ```
 
+When running from source, `appsettings.Local.json` resolves beside the built executable under `bin`, not the repository root. Use user secrets or environment variables for source-based development unless you intentionally want a local file under the build output folder.
+
 ## Publish Locally
 
 ```powershell
