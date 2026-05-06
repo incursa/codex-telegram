@@ -8,7 +8,7 @@ Use it when you want to start, steer, and inspect Codex work from your phone wit
 
 Watch a two-minute private-chat demo showing a local Codex session controlled from Telegram with project selection, text prompts, and voice input.
 
-[![Watch the Codex Telegram demo](docs/assets/codex-telegram-demo-thumbnail.png)](docs/assets/codex-telegram-demo.mp4)
+[![Watch the Codex Telegram demo](docs/assets/codex-telegram-demo-thumbnail.png)](https://github.com/incursa/codex-telegram/raw/main/docs/assets/codex-telegram-demo.mp4)
 
 See [menus and screenshots](docs/menus.md) for the full screenshot plan.
 
