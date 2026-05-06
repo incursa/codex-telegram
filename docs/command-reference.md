@@ -343,6 +343,24 @@ Expected behavior:
 2. Shows status, working directory, model, thinking effort, created time, last activity, and use command.
 3. Shows exit code or last error when present.
 
+### `/usage`
+
+Shows Codex account-window usage reported by the local Codex app-server.
+
+Syntax:
+
+```text
+/usage
+```
+
+Expected behavior:
+
+1. Reads Codex account rate-limit windows from the local Codex app-server.
+2. Shows remaining percentage for the short window, usually five hours.
+3. Shows remaining percentage for the long window, usually weekly.
+4. Shows reset timing and local reset time when Codex reports reset timestamps.
+5. Fails with clear setup text if the local Codex executable is missing or the app-server does not expose account usage.
+
 ### `/tail [count]`
 
 Shows recent output for the active session.

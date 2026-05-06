@@ -1,3 +1,4 @@
+using System.Globalization;
 using Incursa.OpenAI.Codex;
 using Incursa.Codex.Telegram.Models;
 using Incursa.Codex.Telegram.Options;
@@ -797,6 +798,41 @@ public sealed class TelegramCommandHandlerTests
     }
 
     [Fact]
+    public async Task HandleMessageAsync_UsageShowsAccountWindows()
+    {
+        using CommandHandlerHarness harness = CommandHandlerHarness.Create();
+        harness.AccountUsage.Usage = new CodexAccountUsageVm(
+            DateTimeOffset.Parse("2026-05-06T12:00:00Z", CultureInfo.InvariantCulture),
+            [
+                new CodexRateLimitSnapshotVm(
+                    "codex",
+                    null,
+                    "pro",
+                    null,
+                    new CodexRateLimitWindowVm(
+                        17,
+                        DateTimeOffset.Parse("2026-05-06T14:30:00Z", CultureInfo.InvariantCulture),
+                        300),
+                    new CodexRateLimitWindowVm(
+                        48,
+                        DateTimeOffset.Parse("2026-05-10T12:00:00Z", CultureInfo.InvariantCulture),
+                        10080)),
+            ]);
+
+        await harness.Handler.HandleMessageAsync(
+            new TelegramInboundMessage(1234, 5555, "private", "/usage"),
+            harness.Sender,
+            CancellationToken.None);
+
+        string text = Assert.Single(harness.Sender.Sent).Text;
+        Assert.Contains("Codex usage", text);
+        Assert.Contains("Plan: pro", text);
+        Assert.Contains("5-hour window: 83% remaining (17% used)", text);
+        Assert.Contains("Weekly window: 52% remaining (48% used)", text);
+        Assert.Contains("resets in 2h 30m", text);
+    }
+
+    [Fact]
     public async Task HandleMessageAsync_OutboundStatusShowsQueueDetails()
     {
         using CommandHandlerHarness harness = CommandHandlerHarness.Create();
@@ -1223,6 +1259,7 @@ public sealed class TelegramCommandHandlerTests
         private CommandHandlerHarness(
             TemporaryDirectory temp,
             FakeCodexSessionManager sessionManager,
+            FakeCodexAccountUsageService accountUsage,
             FakeProjectCatalogStore projectCatalog,
             TelegramBotStateStore stateStore,
             FakeOutboundTelegramQueue outboundQueue,
@@ -1233,6 +1270,7 @@ public sealed class TelegramCommandHandlerTests
         {
             Temp = temp;
             SessionManager = sessionManager;
+            AccountUsage = accountUsage;
             ProjectCatalog = projectCatalog;
             StateStore = stateStore;
             OutboundQueue = outboundQueue;
@@ -1245,6 +1283,8 @@ public sealed class TelegramCommandHandlerTests
         public TemporaryDirectory Temp { get; }
 
         public FakeCodexSessionManager SessionManager { get; }
+
+        public FakeCodexAccountUsageService AccountUsage { get; }
 
         public FakeProjectCatalogStore ProjectCatalog { get; }
 
@@ -1273,6 +1313,7 @@ public sealed class TelegramCommandHandlerTests
             });
 
             FakeCodexSessionManager sessionManager = new();
+            FakeCodexAccountUsageService accountUsage = new();
             FakeProjectCatalogStore projectCatalog = new();
             TelegramBotStateStore stateStore = new(codexOptions);
             FakeOutboundTelegramQueue outboundQueue = new();
@@ -1283,6 +1324,7 @@ public sealed class TelegramCommandHandlerTests
                 new TelegramCommandParser(),
                 new TelegramMessageChunker(),
                 sessionManager,
+                accountUsage,
                 projectCatalog,
                 new CodexWorkspaceBrowser(codexOptions),
                 stateStore,
@@ -1297,7 +1339,7 @@ public sealed class TelegramCommandHandlerTests
                 }),
                 NullLogger<TelegramCodexBotCommandHandler>.Instance);
 
-            return new CommandHandlerHarness(temp, sessionManager, projectCatalog, stateStore, outboundQueue, topicService, audioTranscription, sender, handler);
+            return new CommandHandlerHarness(temp, sessionManager, accountUsage, projectCatalog, stateStore, outboundQueue, topicService, audioTranscription, sender, handler);
         }
 
         public void Dispose()
@@ -1422,6 +1464,14 @@ public sealed class TelegramCommandHandlerTests
             Sessions.RemoveAll(session => string.Equals(session.Id, sessionId, StringComparison.OrdinalIgnoreCase));
             return Task.CompletedTask;
         }
+    }
+
+    private sealed class FakeCodexAccountUsageService : ICodexAccountUsageService
+    {
+        public CodexAccountUsageVm Usage { get; set; } = new(DateTimeOffset.Parse("2026-05-06T12:00:00Z", CultureInfo.InvariantCulture), []);
+
+        public Task<CodexAccountUsageVm> GetUsageAsync(CancellationToken cancellationToken)
+            => Task.FromResult(Usage);
     }
 
     private sealed class FakeProjectCatalogStore : ICodexProjectCatalogStore

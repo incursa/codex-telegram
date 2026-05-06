@@ -24,7 +24,7 @@ Record the date, operator, OS, published asset or commit SHA, Codex CLI version,
 7. Send `/doctor` and confirm it explains access, routing, active project/session state, workspace roots, queue state, and a plausible next action.
 8. Send `/new <short name>` and confirm the reply summarizes the session without noisy status/model/thinking buttons.
 9. Send a normal text prompt and confirm live output returns to the private chat.
-10. Send `/tail`, `/status`, `/model`, and `/thinking` and confirm each command is understandable without stale or truncated buttons.
+10. Send `/tail`, `/status`, `/usage`, `/model`, and `/thinking` and confirm each command is understandable without stale or truncated buttons.
 11. Send `/stop` and confirm pending queued messages for the session are cleared.
 
 ## Authorization

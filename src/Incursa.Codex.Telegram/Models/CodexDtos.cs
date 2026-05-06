@@ -122,6 +122,43 @@ internal sealed record CodexUsageVm(
     int? ModelContextWindow);
 
 /// <summary>
+/// Account-level Codex usage and rate-limit windows reported by the local Codex app-server.
+/// </summary>
+/// <param name="RetrievedAtUtc">UTC time when the usage snapshot was read.</param>
+/// <param name="RateLimits">Reported Codex rate-limit buckets.</param>
+internal sealed record CodexAccountUsageVm(
+    DateTimeOffset RetrievedAtUtc,
+    IReadOnlyList<CodexRateLimitSnapshotVm> RateLimits);
+
+/// <summary>
+/// One Codex metering bucket containing short and long window usage.
+/// </summary>
+/// <param name="LimitId">Stable limit identifier, such as <c>codex</c>.</param>
+/// <param name="LimitName">Human-readable limit name, when reported.</param>
+/// <param name="PlanType">Codex plan type, when reported.</param>
+/// <param name="RateLimitReachedType">Reached-limit reason, when Codex reports one.</param>
+/// <param name="Primary">Short-window usage, usually the five-hour window.</param>
+/// <param name="Secondary">Long-window usage, usually the weekly window.</param>
+internal sealed record CodexRateLimitSnapshotVm(
+    string? LimitId,
+    string? LimitName,
+    string? PlanType,
+    string? RateLimitReachedType,
+    CodexRateLimitWindowVm? Primary,
+    CodexRateLimitWindowVm? Secondary);
+
+/// <summary>
+/// One Codex rate-limit window.
+/// </summary>
+/// <param name="UsedPercent">Percentage of the window already consumed.</param>
+/// <param name="ResetsAtUtc">UTC reset time, when reported.</param>
+/// <param name="WindowDurationMinutes">Window duration in minutes, when reported.</param>
+internal sealed record CodexRateLimitWindowVm(
+    int UsedPercent,
+    DateTimeOffset? ResetsAtUtc,
+    long? WindowDurationMinutes);
+
+/// <summary>
 /// Timeline entry rendered in Telegram status, tail, and live-output views.
 /// </summary>
 /// <param name="Type">Codex event type.</param>

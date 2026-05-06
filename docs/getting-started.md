@@ -470,6 +470,7 @@ For a complete parameter-by-parameter reference, see [command-reference.md](comm
 | `/thinking <minimal|low|medium|high|xhigh>` | Changes the reasoning effort for the selected session. | Use when you want more or less reasoning budget. |
 | `/tail [count]` | Shows recent output and keeps following the session. | Use while waiting on a live turn. |
 | `/status [sessionId]` | Shows session status. | Use when you want a quick health check. |
+| `/usage` | Shows Codex account-window usage remaining and reset times. | Use when planning around the five-hour or weekly Codex windows. |
 | `/doctor` | Explains authorization, routing, active project/session, workspace roots, outbound queue state, and the next best action. | Use when setup, group routing, or output delivery feels unclear. |
 | `/outbound` | Shows outbound Telegram queue status. | Use when messages seem delayed or missing. |
 | `/stop [sessionId]` | Gracefully stops a session. | Use when you want to end work cleanly. |

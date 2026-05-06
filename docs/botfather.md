@@ -99,6 +99,7 @@ model - Show or change model settings
 thinking - Show or change thinking effort
 tail - Show recent session output
 status - Show session status
+usage - Show Codex usage and reset windows
 outbound - Show outbound Telegram queue status
 stop - Stop the active or selected session
 topic - Manage forum-topic sessions

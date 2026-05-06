@@ -287,6 +287,7 @@ After a successful test, you should see the transcription in Telegram before the
 | `/model` | Show or change the active session model. |
 | `/thinking` | Show or change reasoning effort. |
 | `/status` | Show active session status. |
+| `/usage` | Show Codex account usage remaining for the short and weekly windows, with reset times. |
 | `/tail [lines]` | Show recent output and keep following the session; defaults to 40 lines. |
 | `/outbound` | Inspect delayed or batched Telegram output. |
 | `/stop` | Gracefully stop a session. |
@@ -304,9 +305,10 @@ Practical rules:
 
 1. Use `/tail` before assuming Telegram scrollback contains the full transcript.
 2. Use `/outbound` if messages seem delayed.
-3. Batched messages are concatenated with simple spacing and preserve multi-line content, including numbered lists and headings.
-4. If the local outbound buffer is compacted, the bot sends an explicit compaction notice.
-5. A final `~~ fin ~~` marker means the turn reached a terminal event.
+3. Use `/usage` when you need current Codex account-window remaining percentages and reset times.
+4. Batched messages are concatenated with simple spacing and preserve multi-line content, including numbered lists and headings.
+5. If the local outbound buffer is compacted, the bot sends an explicit compaction notice.
+6. A final `~~ fin ~~` marker means the turn reached a terminal event.
 
 ## Local State And Safety
 

@@ -33,7 +33,8 @@ Use this short checklist at the start of a real work session:
 3. Send `/project current` before asking Codex to edit files.
 4. Send `/new <short name>` when the work should not continue an older thread.
 5. Send `/status` before assuming a long-running turn is stuck.
-6. Send `/tail` before assuming Telegram scrollback contains the complete transcript.
+6. Send `/usage` when you need current Codex account-window remaining percentages and reset times.
+7. Send `/tail` before assuming Telegram scrollback contains the complete transcript.
 
 ## Daily Private-Chat Flow
 
@@ -44,6 +45,7 @@ Use this short checklist at the start of a real work session:
 5. Send normal messages to continue the active session.
 6. Use `/tail` when Telegram scrollback is not enough.
 7. Use `/status` when you need the current session state.
+8. Use `/usage` when you need five-hour or weekly Codex reset timing.
 
 Private chat is the primary supported workflow. Groups and forum topics are useful, but they add Telegram privacy-mode, permissions, and chat allowlist behavior.
 
@@ -106,7 +108,8 @@ Useful checks:
 1. `/status` shows the selected session.
 2. `/outbound` shows pending Telegram output.
 3. `/tail` shows recent session output.
-4. `/stop` clears pending queued messages for the stopped session.
+4. `/usage` shows Codex account usage remaining and reset windows.
+5. `/stop` clears pending queued messages for the stopped session.
 
 Queueing is per session and per Telegram conversation. Separate forum topics can continue independently when they are bound to different sessions.
 

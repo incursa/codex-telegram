@@ -210,6 +210,7 @@ builder.Services.AddSingleton<IAudioTranscriptionService>(sp => sp.GetRequiredSe
 builder.Services.AddSingleton<CodexSessionRuntimeRegistry>();
 builder.Services.AddSingleton<ICodexTurnExecutionCoordinator>(sp => sp.GetRequiredService<CodexSessionRuntimeRegistry>());
 builder.Services.AddSingleton<ICodexGateway, CodexGateway>();
+builder.Services.AddSingleton<ICodexAccountUsageService, CodexAccountUsageService>();
 builder.Services.AddSingleton<TelegramCommandParser>();
 builder.Services.AddSingleton<TelegramMessageChunker>();
 builder.Services.AddSingleton<ITelegramBotStateStore, TelegramBotStateStore>();

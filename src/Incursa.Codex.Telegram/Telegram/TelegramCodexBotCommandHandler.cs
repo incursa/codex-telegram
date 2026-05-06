@@ -85,6 +85,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
     private readonly TelegramCommandParser _parser;
     private readonly TelegramMessageChunker _chunker;
     private readonly ICodexSessionManager _sessionManager;
+    private readonly ICodexAccountUsageService _accountUsageService;
     private readonly ICodexProjectCatalogStore _projectCatalogStore;
     private readonly CodexWorkspaceBrowser _workspaceBrowser;
     private readonly ITelegramBotStateStore _stateStore;
@@ -100,6 +101,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         TelegramCommandParser parser,
         TelegramMessageChunker chunker,
         ICodexSessionManager sessionManager,
+        ICodexAccountUsageService accountUsageService,
         ICodexProjectCatalogStore projectCatalogStore,
         CodexWorkspaceBrowser workspaceBrowser,
         ITelegramBotStateStore stateStore,
@@ -114,6 +116,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         _parser = parser;
         _chunker = chunker;
         _sessionManager = sessionManager;
+        _accountUsageService = accountUsageService;
         _projectCatalogStore = projectCatalogStore;
         _workspaceBrowser = workspaceBrowser;
         _stateStore = stateStore;
@@ -231,6 +234,9 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
                     break;
                 case "status":
                     await HandleStatusAsync(message, command.Arguments, sender, cancellationToken).ConfigureAwait(false);
+                    break;
+                case "usage":
+                    await HandleUsageAsync(message, sender, cancellationToken).ConfigureAwait(false);
                     break;
                 case "doctor":
                 case "diag":
@@ -1260,6 +1266,12 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         await ReplyAsync(sender, message, FormatStatus(resolved.Session, settings), BuildSessionButtons([resolved.Session]), cancellationToken).ConfigureAwait(false);
     }
 
+    private async Task HandleUsageAsync(TelegramInboundMessage message, ITelegramBotMessageSender sender, CancellationToken cancellationToken)
+    {
+        CodexAccountUsageVm usage = await _accountUsageService.GetUsageAsync(cancellationToken).ConfigureAwait(false);
+        await ReplyAsync(sender, message, FormatAccountUsage(usage), null, cancellationToken).ConfigureAwait(false);
+    }
+
     private async Task HandleOutboundAsync(TelegramInboundMessage message, string arguments, ITelegramBotMessageSender sender, CancellationToken cancellationToken)
     {
         string command = SplitArguments(arguments, 2).FirstOrDefault() ?? "status";
@@ -1683,6 +1695,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             "/thinking <minimal|low|medium|high|xhigh> - change the selected session thinking effort",
             "/tail [count] - show recent output and keep following the session live",
             "/status [sessionId] - show session status",
+            "/usage - show Codex account usage remaining and reset times",
             "/doctor - explain authorization, routing, active project/session, workspace roots, and queue state",
             "/outbound - show outbound Telegram queue status",
             "/stop [sessionId] - gracefully stop a session",
@@ -1865,6 +1878,101 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
 
         return builder.ToString().TrimEnd();
     }
+
+    private static string FormatAccountUsage(CodexAccountUsageVm usage)
+    {
+        if (usage.RateLimits.Count == 0)
+        {
+            return "Codex usage: no account usage windows were reported by Codex.";
+        }
+
+        CodexRateLimitSnapshotVm primaryBucket = usage.RateLimits.FirstOrDefault(bucket => string.Equals(bucket.LimitId, "codex", StringComparison.OrdinalIgnoreCase))
+            ?? usage.RateLimits[0];
+        StringBuilder builder = new();
+        builder.AppendLine("Codex usage");
+
+        string bucketName = primaryBucket.LimitName ?? primaryBucket.LimitId ?? "default";
+        if (!string.IsNullOrWhiteSpace(primaryBucket.PlanType))
+        {
+            builder.AppendLine($"Plan: {primaryBucket.PlanType}");
+        }
+
+        builder.AppendLine($"Bucket: {bucketName}");
+        AppendUsageWindow(builder, "Primary window", primaryBucket.Primary, usage.RetrievedAtUtc);
+        AppendUsageWindow(builder, "Secondary window", primaryBucket.Secondary, usage.RetrievedAtUtc);
+
+        if (!string.IsNullOrWhiteSpace(primaryBucket.RateLimitReachedType))
+        {
+            builder.AppendLine($"Limit status: {primaryBucket.RateLimitReachedType}");
+        }
+
+        if (usage.RateLimits.Count > 1)
+        {
+            builder.AppendLine($"Other buckets reported: {(usage.RateLimits.Count - 1).ToString(CultureInfo.InvariantCulture)}");
+        }
+
+        return builder.ToString().TrimEnd();
+    }
+
+    private static void AppendUsageWindow(StringBuilder builder, string fallbackLabel, CodexRateLimitWindowVm? window, DateTimeOffset retrievedAtUtc)
+    {
+        if (window is null)
+        {
+            builder.AppendLine($"{fallbackLabel}: not reported");
+            return;
+        }
+
+        string label = FormatWindowLabel(fallbackLabel, window.WindowDurationMinutes);
+        int remainingPercent = Math.Clamp(100 - window.UsedPercent, 0, 100);
+        builder.Append($"{label}: {remainingPercent.ToString(CultureInfo.InvariantCulture)}% remaining ({window.UsedPercent.ToString(CultureInfo.InvariantCulture)}% used)");
+        if (window.ResetsAtUtc is { } resetsAtUtc)
+        {
+            builder.Append($"; resets {FormatResetDistance(retrievedAtUtc, resetsAtUtc)} at {FormatResetTime(resetsAtUtc)}");
+        }
+
+        builder.AppendLine();
+    }
+
+    private static string FormatWindowLabel(string fallbackLabel, long? windowDurationMinutes)
+    {
+        if (!windowDurationMinutes.HasValue || windowDurationMinutes.Value <= 0)
+        {
+            return fallbackLabel;
+        }
+
+        return windowDurationMinutes.Value switch
+        {
+            300 => "5-hour window",
+            10080 => "Weekly window",
+            _ when windowDurationMinutes.Value % 1440 == 0 => $"{(windowDurationMinutes.Value / 1440).ToString(CultureInfo.InvariantCulture)}-day window",
+            _ when windowDurationMinutes.Value % 60 == 0 => $"{(windowDurationMinutes.Value / 60).ToString(CultureInfo.InvariantCulture)}-hour window",
+            _ => $"{windowDurationMinutes.Value.ToString(CultureInfo.InvariantCulture)}-minute window",
+        };
+    }
+
+    private static string FormatResetDistance(DateTimeOffset retrievedAtUtc, DateTimeOffset resetsAtUtc)
+    {
+        TimeSpan remaining = resetsAtUtc.ToUniversalTime() - retrievedAtUtc.ToUniversalTime();
+        if (remaining <= TimeSpan.Zero)
+        {
+            return "now";
+        }
+
+        if (remaining >= TimeSpan.FromDays(1))
+        {
+            return $"in {(int)remaining.TotalDays}d {remaining.Hours}h";
+        }
+
+        if (remaining >= TimeSpan.FromHours(1))
+        {
+            return $"in {(int)remaining.TotalHours}h {remaining.Minutes}m";
+        }
+
+        return $"in {Math.Max(1, (int)Math.Ceiling(remaining.TotalMinutes)).ToString(CultureInfo.InvariantCulture)}m";
+    }
+
+    private static string FormatResetTime(DateTimeOffset resetsAtUtc)
+        => resetsAtUtc.ToLocalTime().ToString("MMM d h:mm tt", CultureInfo.InvariantCulture);
 
     private static string FormatOutboundStatus(TelegramOutboundQueueStatus status, long currentChatId)
     {
@@ -2061,7 +2169,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             return "Next: use /projects and /sessions to refresh local state; check the terminal logs if either command fails.";
         }
 
-        return "Next: send a normal message to continue, or use /status, /tail, /model, /thinking, and /outbound if something seems off.";
+        return "Next: send a normal message to continue, or use /status, /tail, /usage, /model, /thinking, and /outbound if something seems off.";
     }
 
     private static string DescribeChat(TelegramInboundMessage message)
