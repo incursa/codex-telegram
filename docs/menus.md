@@ -4,23 +4,6 @@ This guide explains the Telegram buttons and interactive menus shown by Incursa 
 
 Use [README.md](../README.md) for first setup and [command-reference.md](command-reference.md) for command syntax.
 
-## Optional Screenshots
-
-The demo video is the primary visual walkthrough. Add screenshots only when they clarify a specific menu or command state. Use sanitized private-chat screenshots only.
-
-Useful screenshot slots:
-
-1. Bootstrap/admin menu in the terminal.
-2. `/doctor` output in a private chat.
-3. `/projects` with project `Use` buttons.
-4. `/sessions` with session `Use` buttons.
-5. `/model` menu with model buttons.
-6. `/thinking` menu with effort buttons.
-7. `/status` output with session action buttons.
-8. `/tail` output after a completed turn.
-
-Do not include bot tokens, OpenAI keys, numeric user IDs, private project names, private local paths, customer data, or private transcripts in screenshots.
-
 ## Bootstrap/Admin Menu
 
 The terminal menu appears when the app starts without `--run` in an interactive terminal.

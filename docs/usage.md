@@ -3,7 +3,7 @@
 Use this guide after the bot is configured and the private-chat smoke test works.
 For first-time setup, start with [getting-started.md](getting-started.md).
 For every command, parameter, and expected behavior, use [command-reference.md](command-reference.md).
-For Telegram buttons and screenshot guidance, use [menus.md](menus.md).
+For Telegram buttons and menus, use [menus.md](menus.md).
 
 ## Normal Start
 
