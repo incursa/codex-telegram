@@ -1268,8 +1268,41 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
 
     private async Task HandleUsageAsync(TelegramInboundMessage message, ITelegramBotMessageSender sender, CancellationToken cancellationToken)
     {
-        CodexAccountUsageVm usage = await _accountUsageService.GetUsageAsync(cancellationToken).ConfigureAwait(false);
-        await ReplyAsync(sender, message, FormatAccountUsage(usage), null, cancellationToken).ConfigureAwait(false);
+        try
+        {
+            CodexAccountUsageVm usage = await _accountUsageService.GetUsageAsync(cancellationToken).ConfigureAwait(false);
+            await ReplyAsync(sender, message, FormatAccountUsage(usage), null, cancellationToken).ConfigureAwait(false);
+        }
+        catch (FileNotFoundException exception)
+        {
+            _logger.LogWarning(exception, "Codex usage lookup failed because the Codex executable was not found.");
+            await ReplyAsync(
+                sender,
+                message,
+                "Codex usage unavailable: the Codex executable was not found. Set Codex:CodexPathOverride or make sure `codex` is on PATH, then try /usage again.",
+                null,
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch (CodexCapabilityNotSupportedException exception)
+        {
+            _logger.LogWarning(exception, "Codex usage lookup failed because the configured backend does not support account rate limits.");
+            await ReplyAsync(
+                sender,
+                message,
+                "Codex usage unavailable: the configured Codex backend does not support account rate limits. Use the app-server backend and an up-to-date Codex CLI, then try /usage again.",
+                null,
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch (CodexMethodNotFoundException exception)
+        {
+            _logger.LogWarning(exception, "Codex usage lookup failed because the installed Codex app-server does not expose account rate limits.");
+            await ReplyAsync(
+                sender,
+                message,
+                "Codex usage unavailable: the installed Codex app-server does not expose account rate limits. Update Codex and try /usage again.",
+                null,
+                cancellationToken).ConfigureAwait(false);
+        }
     }
 
     private async Task HandleOutboundAsync(TelegramInboundMessage message, string arguments, ITelegramBotMessageSender sender, CancellationToken cancellationToken)

@@ -3,7 +3,7 @@
 This repository uses the Incursa-owned contributor agreement action:
 
 ```text
-incursa/contributor-agreement-action@v0.1.0
+incursa/contributor-agreement-action@v0.1.1
 ```
 
 The action checks pull request contributors, comments with the required signing instructions, records signatures in a private repository, and publishes the `Contributor Agreement` commit status that branch rulesets can require.
@@ -74,15 +74,18 @@ To re-run the check manually, comment:
 recheck contributor agreement
 ```
 
-## Required Status Check
+## Required Status Checks
 
-This repository requires this status check name in the `main` branch ruleset:
+This repository requires these status check names in the `main` branch ruleset:
 
 ```text
 Contributor Agreement
+Maintainer Review
 ```
 
-Keep this status check required on protected branches that accept outside contributions.
+Keep these status checks required on protected branches that accept outside contributions.
+
+`Maintainer Review` passes automatically for pull requests authored by `SamuelMcAravey`. Pull requests from other authors must have Samuel's latest approval on the current head commit. The workflow also requests Samuel as reviewer and assigns the pull request to Samuel when the author is someone else.
 
 ## Reuse In Other Repositories
 
@@ -94,6 +97,7 @@ To apply this baseline to another Incursa repository:
 4. Open a test pull request from a non-allowlisted account.
 5. Sign with the exact comment phrase.
 6. Confirm the signature is written to `incursa/contributor-agreements`.
-7. Add `Contributor Agreement` as a required status check after the flow is proven.
+7. Copy `.github/workflows/maintainer-review.yml` if the repository should require Samuel's approval for outside-authored pull requests.
+8. Add `Contributor Agreement` and `Maintainer Review` as required status checks after the flow is proven.
 
 The action implementation lives in `incursa/contributor-agreement-action`, so future automation changes should usually be made there instead of copying logic into every repository.

@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Updated `Incursa.OpenAI.Codex` to 1.1.0 and switched `/usage` to the SDK account rate-limit API.
+- Added a `Maintainer Review` workflow that routes outside-authored pull requests to Samuel and gates merges on Samuel's current-head approval.
+- Refined the pull request template so reviewer notes replace command-output validation prompts.
+
 ## 1.0.8 - 2026-05-06
 
 - Aligned the application version, default Codex client version, setup defaults, and issue-template examples for release.

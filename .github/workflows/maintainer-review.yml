@@ -1,0 +1,106 @@
+name: Maintainer Review
+
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize, ready_for_review]
+  pull_request_review:
+    types: [submitted, edited, dismissed]
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+jobs:
+  maintainer-review:
+    name: Maintainer Review
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Check maintainer review policy
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const maintainer = 'SamuelMcAravey';
+            const selfReviewAllowedAuthors = new Set(['SamuelMcAravey']);
+            const pullRequest = context.payload.pull_request;
+
+            if (!pullRequest) {
+              core.setFailed('Maintainer Review requires a pull_request payload.');
+              return;
+            }
+
+            const author = pullRequest.user?.login ?? '';
+            if (selfReviewAllowedAuthors.has(author)) {
+              core.notice(`PR author ${author} is trusted; separate maintainer approval is not required.`);
+              return;
+            }
+
+            const { owner, repo } = context.repo;
+
+            if (!pullRequest.draft) {
+              await ensureMaintainerIsRouted(owner, repo, pullRequest.number, pullRequest.assignees ?? []);
+            }
+
+            const reviews = await github.paginate(github.rest.pulls.listReviews, {
+              owner,
+              repo,
+              pull_number: pullRequest.number,
+              per_page: 100,
+            });
+
+            const latestMaintainerReview = reviews
+              .filter((review) =>
+                review.user?.login === maintainer &&
+                review.commit_id === pullRequest.head.sha &&
+                review.submitted_at)
+              .sort((left, right) => Date.parse(left.submitted_at) - Date.parse(right.submitted_at))
+              .at(-1);
+
+            if (latestMaintainerReview?.state === 'APPROVED') {
+              core.notice(`PR #${pullRequest.number} is approved by ${maintainer} at ${pullRequest.head.sha}.`);
+              return;
+            }
+
+            core.setFailed(
+              `PRs authored by ${author || 'unknown'} require ${maintainer}'s approval on the current head commit (${pullRequest.head.sha}).`);
+
+            async function ensureMaintainerIsRouted(owner, repo, pullNumber, assignees) {
+              try {
+                const requested = await github.rest.pulls.listRequestedReviewers({
+                  owner,
+                  repo,
+                  pull_number: pullNumber,
+                });
+
+                const alreadyRequested = requested.data.users.some((user) => user.login === maintainer);
+                if (!alreadyRequested) {
+                  await github.rest.pulls.requestReviewers({
+                    owner,
+                    repo,
+                    pull_number: pullNumber,
+                    reviewers: [maintainer],
+                  });
+                  core.notice(`Requested review from ${maintainer}.`);
+                }
+              }
+              catch (error) {
+                core.warning(`Could not request ${maintainer} as reviewer: ${error.message}`);
+              }
+
+              try {
+                const alreadyAssigned = assignees.some((assignee) => assignee.login === maintainer);
+                if (!alreadyAssigned) {
+                  await github.rest.issues.addAssignees({
+                    owner,
+                    repo,
+                    issue_number: pullNumber,
+                    assignees: [maintainer],
+                  });
+                  core.notice(`Assigned PR #${pullNumber} to ${maintainer}.`);
+                }
+              }
+              catch (error) {
+                core.warning(`Could not assign PR #${pullNumber} to ${maintainer}: ${error.message}`);
+              }
+            }

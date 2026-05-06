@@ -1,4 +1,4 @@
-using System.Text.Json.Nodes;
+using Incursa.OpenAI.Codex;
 using Incursa.Codex.Telegram.Services;
 
 namespace Incursa.Codex.Telegram.Tests;
@@ -6,34 +6,35 @@ namespace Incursa.Codex.Telegram.Tests;
 public sealed class CodexAccountUsageServiceTests
 {
     [Fact]
-    public void ParseRateLimitResponse_ParsesMultiBucketCamelCasePayload()
+    public void ToUsageVm_MapsMultiBucketSdkResult()
     {
         DateTimeOffset retrievedAtUtc = DateTimeOffset.Parse("2026-05-06T12:00:00Z");
-        JsonObject payload = new()
+        CodexAccountRateLimitsResult result = new()
         {
-            ["rateLimitsByLimitId"] = new JsonObject
-            {
-                ["codex"] = new JsonObject
+            RateLimits =
+            [
+                new CodexRateLimitSnapshot
                 {
-                    ["limitName"] = "Codex",
-                    ["planType"] = "pro",
-                    ["primary"] = new JsonObject
+                    LimitId = "codex",
+                    LimitName = "Codex",
+                    PlanType = "pro",
+                    Primary = new CodexRateLimitWindow
                     {
-                        ["usedPercent"] = 10,
-                        ["resetsAt"] = 1778076000L,
-                        ["windowDurationMins"] = 300,
+                        UsedPercent = 10,
+                        ResetsAt = DateTimeOffset.FromUnixTimeSeconds(1778076000L),
+                        WindowDurationMinutes = 300,
                     },
-                    ["secondary"] = new JsonObject
+                    Secondary = new CodexRateLimitWindow
                     {
-                        ["usedPercent"] = 61,
-                        ["resetsAt"] = 1778421600L,
-                        ["windowDurationMins"] = 10080,
+                        UsedPercent = 61,
+                        ResetsAt = DateTimeOffset.FromUnixTimeSeconds(1778421600L),
+                        WindowDurationMinutes = 10080,
                     },
                 },
-            },
+            ],
         };
 
-        var usage = CodexAccountUsageService.ParseRateLimitResponse(payload, retrievedAtUtc);
+        var usage = CodexAccountUsageService.ToUsageVm(result, retrievedAtUtc);
 
         var bucket = Assert.Single(usage.RateLimits);
         Assert.Equal("codex", bucket.LimitId);
@@ -47,24 +48,27 @@ public sealed class CodexAccountUsageServiceTests
     }
 
     [Fact]
-    public void ParseRateLimitResponse_ParsesLegacySnakeCasePayload()
+    public void ToUsageVm_ClampsWindowUsage()
     {
-        JsonObject payload = new()
+        CodexAccountRateLimitsResult result = new()
         {
-            ["rate_limits"] = new JsonObject
-            {
-                ["limit_id"] = "codex",
-                ["rate_limit_reached_type"] = "rate_limit_reached",
-                ["primary"] = new JsonObject
+            RateLimits =
+            [
+                new CodexRateLimitSnapshot
                 {
-                    ["used_percent"] = 125,
-                    ["resets_at"] = 1778076000L,
-                    ["window_minutes"] = 300,
+                    LimitId = "codex",
+                    RateLimitReachedType = "rate_limit_reached",
+                    Primary = new CodexRateLimitWindow
+                    {
+                        UsedPercent = 125,
+                        ResetsAt = DateTimeOffset.FromUnixTimeSeconds(1778076000L),
+                        WindowDurationMinutes = 300,
+                    },
                 },
-            },
+            ],
         };
 
-        var usage = CodexAccountUsageService.ParseRateLimitResponse(payload, DateTimeOffset.Parse("2026-05-06T12:00:00Z"));
+        var usage = CodexAccountUsageService.ToUsageVm(result, DateTimeOffset.Parse("2026-05-06T12:00:00Z"));
 
         var bucket = Assert.Single(usage.RateLimits);
         Assert.Equal("codex", bucket.LimitId);

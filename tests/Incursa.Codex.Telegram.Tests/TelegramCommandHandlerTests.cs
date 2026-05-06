@@ -833,6 +833,23 @@ public sealed class TelegramCommandHandlerTests
     }
 
     [Fact]
+    public async Task HandleMessageAsync_UsageExplainsMissingCodexExecutable()
+    {
+        using CommandHandlerHarness harness = CommandHandlerHarness.Create();
+        harness.AccountUsage.ExceptionToThrow = new FileNotFoundException("missing codex");
+
+        await harness.Handler.HandleMessageAsync(
+            new TelegramInboundMessage(1234, 5555, "private", "/usage"),
+            harness.Sender,
+            CancellationToken.None);
+
+        string text = Assert.Single(harness.Sender.Sent).Text;
+        Assert.Contains("Codex usage unavailable", text);
+        Assert.Contains("Codex:CodexPathOverride", text);
+        Assert.Contains("PATH", text);
+    }
+
+    [Fact]
     public async Task HandleMessageAsync_OutboundStatusShowsQueueDetails()
     {
         using CommandHandlerHarness harness = CommandHandlerHarness.Create();
@@ -1470,8 +1487,10 @@ public sealed class TelegramCommandHandlerTests
     {
         public CodexAccountUsageVm Usage { get; set; } = new(DateTimeOffset.Parse("2026-05-06T12:00:00Z", CultureInfo.InvariantCulture), []);
 
+        public Exception? ExceptionToThrow { get; set; }
+
         public Task<CodexAccountUsageVm> GetUsageAsync(CancellationToken cancellationToken)
-            => Task.FromResult(Usage);
+            => ExceptionToThrow is null ? Task.FromResult(Usage) : Task.FromException<CodexAccountUsageVm>(ExceptionToThrow);
     }
 
     private sealed class FakeProjectCatalogStore : ICodexProjectCatalogStore
