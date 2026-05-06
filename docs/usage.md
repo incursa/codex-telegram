@@ -109,8 +109,16 @@ Useful checks:
 1. `/status` shows the selected session and compact rate-limit state when available.
 2. `/outbound` shows pending Telegram output.
 3. `/tail` shows recent session output.
-4. `/usage` shows five-hour and weekly Codex usage and reset times.
-5. `/stop` clears pending queued messages for the stopped session.
+4. `/queue` shows your queued prompts for the current conversation with Send now, Edit, and Delete buttons.
+5. `/usage` shows five-hour and weekly Codex usage and reset times.
+6. `/stop` clears pending queued messages for the stopped session.
+
+Queue controls:
+
+1. Tap `Send now` to remove a queued prompt and steer the currently active turn with it. If no turn is active, the prompt stays queued.
+2. Tap `Edit` to get the exact `/queue edit <id> <new text>` command for replacing prompt text.
+3. Tap `Delete` to remove one queued prompt and clean up any temporary attachment files.
+4. Send `/queue all` to see your queued prompts across conversations.
 
 Queueing is per session and per Telegram conversation. Separate forum topics can continue independently when they are bound to different sessions.
 

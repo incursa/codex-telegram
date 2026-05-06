@@ -65,7 +65,11 @@ Record the date, operator, OS, published asset or commit SHA, Codex CLI version,
 1. Send a prompt that produces a long response and confirm the Telegram chunks arrive in order.
 2. While a turn is active, send another prompt and confirm it is queued rather than racing the active turn.
 3. In two topics, trigger overlapping long responses and confirm one topic does not starve the other.
-4. Send `/outbound` during a backlog and confirm pending destination and chunk counts are plausible.
+4. Send `/queue` during the active turn and confirm queued prompts appear in FIFO order with Send now, Edit, and Delete buttons.
+5. Edit one queued prompt with `/queue edit <id> <new text>` and confirm the queued preview updates.
+6. Delete one queued prompt and confirm only that queued item is removed.
+7. Use Send now on one queued prompt while the turn is active and confirm it is sent as steering rather than waiting for normal queue drain.
+8. Send `/outbound` during a backlog and confirm pending destination and chunk counts are plausible.
 
 ## Restart And Persistence
 

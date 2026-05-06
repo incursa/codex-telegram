@@ -95,6 +95,7 @@ sessions - List active and managed sessions
 use - Select an existing session
 send - Send text to the active session
 steer - Steer the active turn
+queue - View and manage queued prompts
 model - Show or change model settings
 thinking - Show or change thinking effort
 tail - Show recent session output

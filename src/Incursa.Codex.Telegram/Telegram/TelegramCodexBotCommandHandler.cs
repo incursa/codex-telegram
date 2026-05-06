@@ -80,6 +80,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
 
     private const int DefaultTailLineCount = 40;
     private const int DefaultSessionListLimit = 8;
+    private const int QueuedPromptPreviewLength = 160;
     private static readonly TimeSpan TelegramSendStartTimeout = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan InlineUsageSummaryTimeout = TimeSpan.FromMilliseconds(750);
     private static readonly TimeSpan StatusUsageSummaryTimeout = TimeSpan.FromSeconds(3);
@@ -230,6 +231,10 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
                 case "steer":
                     await HandleSteerAsync(message, command.Arguments, sender, cancellationToken).ConfigureAwait(false);
                     break;
+                case "queue":
+                case "queued":
+                    await HandleQueueAsync(message, command.Arguments, sender, cancellationToken).ConfigureAwait(false);
+                    break;
                 case "model":
                     await HandleModelAsync(message, command.Arguments, sender, cancellationToken).ConfigureAwait(false);
                     break;
@@ -354,6 +359,18 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
                 case "tail":
                     await sender.AnswerCallbackQueryAsync(callback.Id, "Tail.", cancellationToken).ConfigureAwait(false);
                     await HandleTailAsync(callbackMessage, parts[1], sender, cancellationToken).ConfigureAwait(false);
+                    break;
+                case "qnow":
+                    await sender.AnswerCallbackQueryAsync(callback.Id, "Sending queued item.", cancellationToken).ConfigureAwait(false);
+                    await HandleQueueSendNowCallbackAsync(callbackMessage, parts[1], sender, cancellationToken).ConfigureAwait(false);
+                    break;
+                case "qedit":
+                    await sender.AnswerCallbackQueryAsync(callback.Id, "Edit instructions sent.", cancellationToken).ConfigureAwait(false);
+                    await HandleQueueEditCallbackAsync(callbackMessage, parts[1], sender, cancellationToken).ConfigureAwait(false);
+                    break;
+                case "qdel":
+                    await sender.AnswerCallbackQueryAsync(callback.Id, "Deleting queued item.", cancellationToken).ConfigureAwait(false);
+                    await HandleQueueDeleteCallbackAsync(callbackMessage, parts[1], sender, cancellationToken).ConfigureAwait(false);
                     break;
                 case "stop":
                     await sender.AnswerCallbackQueryAsync(callback.Id, "Stopping.", cancellationToken).ConfigureAwait(false);
@@ -1326,6 +1343,315 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         }
     }
 
+    private async Task HandleQueueAsync(TelegramInboundMessage message, string arguments, ITelegramBotMessageSender sender, CancellationToken cancellationToken)
+    {
+        string[] parts = SplitArguments(arguments, 3);
+        if (parts.Length == 0
+            || parts[0].Equals("list", StringComparison.OrdinalIgnoreCase)
+            || parts[0].Equals("ls", StringComparison.OrdinalIgnoreCase))
+        {
+            bool includeAll = parts.Length > 1 && IsAllQueueSelector(parts[1]);
+            await ReplyWithQueueListAsync(message, sender, includeAll, null, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        if (IsAllQueueSelector(parts[0]))
+        {
+            await ReplyWithQueueListAsync(message, sender, includeAll: true, null, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        if (parts[0].Equals("edit", StringComparison.OrdinalIgnoreCase))
+        {
+            await HandleQueueEditCommandAsync(message, parts, sender, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        if (parts[0].Equals("delete", StringComparison.OrdinalIgnoreCase)
+            || parts[0].Equals("del", StringComparison.OrdinalIgnoreCase)
+            || parts[0].Equals("remove", StringComparison.OrdinalIgnoreCase)
+            || parts[0].Equals("rm", StringComparison.OrdinalIgnoreCase))
+        {
+            await HandleQueueDeleteCommandAsync(message, parts, sender, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        if (parts[0].Equals("send", StringComparison.OrdinalIgnoreCase)
+            || parts[0].Equals("now", StringComparison.OrdinalIgnoreCase)
+            || parts[0].Equals("steer", StringComparison.OrdinalIgnoreCase))
+        {
+            await HandleQueueSendNowCommandAsync(message, parts, sender, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        await ReplyAsync(sender, message, BuildQueueUsage(), null, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task HandleQueueEditCommandAsync(
+        TelegramInboundMessage message,
+        string[] parts,
+        ITelegramBotMessageSender sender,
+        CancellationToken cancellationToken)
+    {
+        if (parts.Length < 3 || string.IsNullOrWhiteSpace(parts[1]) || string.IsNullOrWhiteSpace(parts[2]))
+        {
+            await ReplyAsync(sender, message, "Usage: /queue edit <id> <new text>", null, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        ResolvedQueuedPrompt resolved = await ResolveOwnedQueuedPromptAsync(message, parts[1], cancellationToken).ConfigureAwait(false);
+        if (resolved.Prompt is null)
+        {
+            await ReplyAsync(sender, message, resolved.Message, null, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        TelegramQueuedPrompt? updated = await _stateStore.TryUpdateQueuedPromptTextAsync(
+            resolved.Prompt.Id,
+            message.UserId,
+            parts[2].Trim(),
+            cancellationToken).ConfigureAwait(false);
+        if (updated is null)
+        {
+            await ReplyAsync(sender, message, "That queued item was already sent or removed. Use /queue to refresh.", null, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        await ReplyWithQueueListAsync(
+            message,
+            sender,
+            includeAll: false,
+            $"Updated queued item {GetShortQueuedPromptId(updated.Id)}.",
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task HandleQueueDeleteCommandAsync(
+        TelegramInboundMessage message,
+        string[] parts,
+        ITelegramBotMessageSender sender,
+        CancellationToken cancellationToken)
+    {
+        if (parts.Length < 2 || string.IsNullOrWhiteSpace(parts[1]))
+        {
+            await ReplyAsync(sender, message, "Usage: /queue delete <id>", null, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        ResolvedQueuedPrompt resolved = await ResolveOwnedQueuedPromptAsync(message, parts[1], cancellationToken).ConfigureAwait(false);
+        if (resolved.Prompt is null)
+        {
+            await ReplyAsync(sender, message, resolved.Message, null, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        await DeleteQueuedPromptAsync(message, resolved.Prompt.Id, sender, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task HandleQueueSendNowCommandAsync(
+        TelegramInboundMessage message,
+        string[] parts,
+        ITelegramBotMessageSender sender,
+        CancellationToken cancellationToken)
+    {
+        if (parts.Length < 2 || string.IsNullOrWhiteSpace(parts[1]))
+        {
+            await ReplyAsync(sender, message, "Usage: /queue send <id>", null, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        ResolvedQueuedPrompt resolved = await ResolveOwnedQueuedPromptAsync(message, parts[1], cancellationToken).ConfigureAwait(false);
+        if (resolved.Prompt is null)
+        {
+            await ReplyAsync(sender, message, resolved.Message, null, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        await SendQueuedPromptNowAsync(message, resolved.Prompt.Id, sender, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task HandleQueueDeleteCallbackAsync(
+        TelegramInboundMessage message,
+        string promptId,
+        ITelegramBotMessageSender sender,
+        CancellationToken cancellationToken)
+        => await DeleteQueuedPromptAsync(message, promptId, sender, cancellationToken).ConfigureAwait(false);
+
+    private async Task HandleQueueSendNowCallbackAsync(
+        TelegramInboundMessage message,
+        string promptId,
+        ITelegramBotMessageSender sender,
+        CancellationToken cancellationToken)
+        => await SendQueuedPromptNowAsync(message, promptId, sender, cancellationToken).ConfigureAwait(false);
+
+    private async Task HandleQueueEditCallbackAsync(
+        TelegramInboundMessage message,
+        string promptId,
+        ITelegramBotMessageSender sender,
+        CancellationToken cancellationToken)
+    {
+        TelegramQueuedPrompt? prompt = await _stateStore.TryGetQueuedPromptAsync(promptId, cancellationToken).ConfigureAwait(false);
+        if (prompt is null || prompt.UserId != message.UserId)
+        {
+            await ReplyAsync(sender, message, "That queued item was already sent or removed. Use /queue to refresh.", null, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        string shortId = GetShortQueuedPromptId(prompt.Id);
+        await ReplyAsync(
+            sender,
+            message.ConversationScope,
+            $"To edit queued item {shortId}, send:{Environment.NewLine}/queue edit {shortId} <new text>",
+            null,
+            cancellationToken,
+            includeNavigationButtons: false,
+            editMessageId: null).ConfigureAwait(false);
+    }
+
+    private async Task DeleteQueuedPromptAsync(
+        TelegramInboundMessage message,
+        string promptId,
+        ITelegramBotMessageSender sender,
+        CancellationToken cancellationToken)
+    {
+        TelegramQueuedPrompt? removed = await _stateStore.TryRemoveQueuedPromptAsync(promptId, message.UserId, cancellationToken).ConfigureAwait(false);
+        if (removed is null)
+        {
+            await ReplyAsync(sender, message, "That queued item was already sent or removed. Use /queue to refresh.", null, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        TryDeleteAttachments(removed.Attachments);
+        await ReplyWithQueueListAsync(
+            message,
+            sender,
+            includeAll: false,
+            $"Deleted queued item {GetShortQueuedPromptId(removed.Id)}.",
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task SendQueuedPromptNowAsync(
+        TelegramInboundMessage message,
+        string promptId,
+        ITelegramBotMessageSender sender,
+        CancellationToken cancellationToken)
+    {
+        TelegramQueuedPrompt? removed = await _stateStore.TryRemoveQueuedPromptAsync(promptId, message.UserId, cancellationToken).ConfigureAwait(false);
+        if (removed is null)
+        {
+            await ReplyAsync(sender, message, "That queued item was already sent or removed. Use /queue to refresh.", null, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        CodexSessionSummary? session = await _sessionManager.GetSessionAsync(removed.SessionId, cancellationToken).ConfigureAwait(false);
+        if (session is null)
+        {
+            TryDeleteAttachments(removed.Attachments);
+            await ReplyWithQueueListAsync(
+                message,
+                sender,
+                includeAll: false,
+                $"Removed queued item {GetShortQueuedPromptId(removed.Id)} because its session is no longer available.",
+                cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        try
+        {
+            if (removed.Attachments is { Count: > 0 })
+            {
+                await _sessionManager.SteerAsync(
+                    removed.SessionId,
+                    TelegramAttachmentInputBuilder.BuildInputItems(removed.Text, removed.Attachments),
+                    cancellationToken).ConfigureAwait(false);
+            }
+            else
+            {
+                await _sessionManager.SteerAsync(removed.SessionId, removed.Text, cancellationToken).ConfigureAwait(false);
+            }
+
+            _followRegistry.FollowThread(removed.ConversationScope, removed.SessionId);
+            TryDeleteAttachments(removed.Attachments);
+            await ReplyWithQueueListAsync(
+                message,
+                sender,
+                includeAll: false,
+                $"Sent queued item {GetShortQueuedPromptId(removed.Id)} to the active turn for {session.Name}.",
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            await _stateStore.EnqueueQueuedPromptAsync(removed, cancellationToken).ConfigureAwait(false);
+            _logger.LogWarning(exception, "Queued prompt {PromptId} could not be sent now; it remains queued.", removed.Id);
+            await ReplyWithQueueListAsync(
+                message,
+                sender,
+                includeAll: false,
+                $"Could not send queued item {GetShortQueuedPromptId(removed.Id)} now: {exception.Message} It is still queued.",
+                cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private async Task ReplyWithQueueListAsync(
+        TelegramInboundMessage message,
+        ITelegramBotMessageSender sender,
+        bool includeAll,
+        string? prefix,
+        CancellationToken cancellationToken)
+    {
+        IReadOnlyList<TelegramQueuedPrompt> prompts = await _stateStore.ListQueuedPromptsAsync(
+            message.UserId,
+            includeAll ? null : message.ConversationScope,
+            cancellationToken).ConfigureAwait(false);
+        string text = FormatQueuedPrompts(prompts, includeAll, message.ConversationScope, prefix);
+        await ReplyAsync(sender, message, text, BuildQueuedPromptButtons(prompts), cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<ResolvedQueuedPrompt> ResolveOwnedQueuedPromptAsync(
+        TelegramInboundMessage message,
+        string selector,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(selector))
+        {
+            return new ResolvedQueuedPrompt(null, "Usage: /queue <edit|delete|send> <id>");
+        }
+
+        IReadOnlyList<TelegramQueuedPrompt> prompts = await _stateStore.ListQueuedPromptsAsync(
+            message.UserId,
+            null,
+            cancellationToken).ConfigureAwait(false);
+        if (prompts.Count == 0)
+        {
+            return new ResolvedQueuedPrompt(null, "You do not have any queued prompts.");
+        }
+
+        string trimmed = selector.Trim();
+        if (int.TryParse(trimmed, NumberStyles.Integer, CultureInfo.InvariantCulture, out int index))
+        {
+            IReadOnlyList<TelegramQueuedPrompt> conversationPrompts = prompts
+                .Where(prompt => prompt.ConversationScope == message.ConversationScope)
+                .OrderBy(prompt => prompt.EnqueuedAt)
+                .ThenBy(prompt => prompt.Id, StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            if (index >= 1 && index <= conversationPrompts.Count)
+            {
+                return new ResolvedQueuedPrompt(conversationPrompts[index - 1], string.Empty);
+            }
+        }
+
+        List<TelegramQueuedPrompt> matches = prompts
+            .Where(prompt => prompt.Id.Equals(trimmed, StringComparison.OrdinalIgnoreCase)
+                || prompt.Id.StartsWith(trimmed, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        return matches.Count switch
+        {
+            0 => new ResolvedQueuedPrompt(null, $"Queued item '{trimmed}' was not found. Use /queue to list queued prompts."),
+            1 => new ResolvedQueuedPrompt(matches[0], string.Empty),
+            _ => new ResolvedQueuedPrompt(null, $"Queued item id '{trimmed}' is ambiguous. Use more characters from /queue."),
+        };
+    }
+
     private async Task HandleOutboundAsync(TelegramInboundMessage message, string arguments, ITelegramBotMessageSender sender, CancellationToken cancellationToken)
     {
         string command = SplitArguments(arguments, 2).FirstOrDefault() ?? "status";
@@ -1745,6 +2071,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             "/use <sessionId> - select the active session for this conversation",
             "/send <text> - send text to the active session",
             "/steer <text> - steer the active turn in the selected session",
+            "/queue - view, edit, delete, or send queued prompts now",
             "/model [model] [thinking <effort>] - show or change the selected session model",
             "/thinking <minimal|low|medium|high|xhigh> - change the selected session thinking effort",
             "/tail [count] - show recent output and keep following the session live",
@@ -2230,6 +2557,134 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
 
     private static string FormatResetTime(DateTimeOffset resetsAtUtc)
         => resetsAtUtc.ToLocalTime().ToString("MMM d h:mm tt", CultureInfo.InvariantCulture);
+
+    private static string BuildQueueUsage()
+        => string.Join(Environment.NewLine, [
+            "Usage:",
+            "/queue - show queued prompts for this conversation",
+            "/queue all - show your queued prompts across conversations",
+            "/queue edit <id> <new text> - replace queued prompt text",
+            "/queue delete <id> - delete a queued prompt",
+            "/queue send <id> - remove a queued prompt and steer the active turn with it"
+        ]);
+
+    private static string FormatQueuedPrompts(
+        IReadOnlyList<TelegramQueuedPrompt> prompts,
+        bool includeAll,
+        TelegramConversationScope currentConversation,
+        string? prefix)
+    {
+        StringBuilder builder = new();
+        if (!string.IsNullOrWhiteSpace(prefix))
+        {
+            builder.AppendLine(prefix);
+            builder.AppendLine();
+        }
+
+        if (prompts.Count == 0)
+        {
+            builder.Append(includeAll
+                ? "You do not have any queued prompts."
+                : "No queued prompts for this conversation.");
+            return builder.ToString();
+        }
+
+        builder.AppendLine(includeAll ? "Your queued prompts:" : "Queued prompts:");
+        for (int index = 0; index < prompts.Count; index++)
+        {
+            TelegramQueuedPrompt prompt = prompts[index];
+            string scopeText = includeAll
+                ? $" · {FormatQueuedPromptScope(prompt.ConversationScope, currentConversation)}"
+                : string.Empty;
+            string attachmentText = prompt.Attachments is { Count: > 0 }
+                ? $" · {prompt.Attachments.Count.ToString(CultureInfo.InvariantCulture)} attachment(s)"
+                : string.Empty;
+
+            builder.AppendLine($"{index + 1}. {prompt.SessionName} · id {GetShortQueuedPromptId(prompt.Id)} · queued {FormatRelativeAge(prompt.EnqueuedAt)}{scopeText}{attachmentText}");
+            builder.AppendLine($"   {FormatQueuedPromptPreview(prompt)}");
+        }
+
+        builder.AppendLine();
+        builder.AppendLine("Buttons can send now, edit, or delete each item. Send now steers the active turn; if no turn is active, the item stays queued.");
+        builder.AppendLine("Text edit command: /queue edit <id> <new text>");
+        return builder.ToString().TrimEnd();
+    }
+
+    private static string FormatQueuedPromptScope(TelegramConversationScope scope, TelegramConversationScope currentConversation)
+    {
+        if (scope == currentConversation)
+        {
+            return "current conversation";
+        }
+
+        return scope.MessageThreadId is null
+            ? $"chat {scope.ChatId.ToString(CultureInfo.InvariantCulture)}"
+            : $"chat {scope.ChatId.ToString(CultureInfo.InvariantCulture)} topic {scope.MessageThreadId.Value.ToString(CultureInfo.InvariantCulture)}";
+    }
+
+    private static string FormatQueuedPromptPreview(TelegramQueuedPrompt prompt)
+    {
+        string text = string.IsNullOrWhiteSpace(prompt.Text)
+            ? "<attachment-only prompt>"
+            : SingleLine(prompt.Text.Trim());
+
+        return text.Length <= QueuedPromptPreviewLength
+            ? text
+            : text[..QueuedPromptPreviewLength].TrimEnd() + "...";
+    }
+
+    private static string SingleLine(string text)
+    {
+        StringBuilder builder = new(text.Length);
+        bool lastWasWhiteSpace = false;
+        foreach (char ch in text)
+        {
+            if (char.IsWhiteSpace(ch))
+            {
+                if (!lastWasWhiteSpace)
+                {
+                    builder.Append(' ');
+                    lastWasWhiteSpace = true;
+                }
+
+                continue;
+            }
+
+            builder.Append(ch);
+            lastWasWhiteSpace = false;
+        }
+
+        return builder.ToString();
+    }
+
+    private static IReadOnlyList<IReadOnlyList<TelegramReplyButton>>? BuildQueuedPromptButtons(IReadOnlyList<TelegramQueuedPrompt> prompts)
+    {
+        if (prompts.Count == 0)
+        {
+            return null;
+        }
+
+        List<IReadOnlyList<TelegramReplyButton>> rows = [];
+        for (int index = 0; index < prompts.Count; index++)
+        {
+            TelegramQueuedPrompt prompt = prompts[index];
+            string suffix = prompts.Count == 1 ? string.Empty : $" {(index + 1).ToString(CultureInfo.InvariantCulture)}";
+            rows.Add([
+                new TelegramReplyButton($"Send now{suffix}", $"qnow:{prompt.Id}"),
+                new TelegramReplyButton($"Edit{suffix}", $"qedit:{prompt.Id}"),
+                new TelegramReplyButton($"Delete{suffix}", $"qdel:{prompt.Id}")
+            ]);
+        }
+
+        return rows;
+    }
+
+    private static string GetShortQueuedPromptId(string promptId)
+        => promptId.Length <= 8 ? promptId : promptId[..8];
+
+    private static bool IsAllQueueSelector(string value)
+        => value.Equals("all", StringComparison.OrdinalIgnoreCase)
+            || value.Equals("mine", StringComparison.OrdinalIgnoreCase);
 
     private static string FormatOutboundStatus(TelegramOutboundQueueStatus status, long currentChatId)
     {
@@ -3018,6 +3473,8 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         => status is CodexSessionStatus.Running or CodexSessionStatus.Starting;
 
     private sealed record ResolvedSession(CodexSessionSummary? Session, string Message);
+
+    private sealed record ResolvedQueuedPrompt(TelegramQueuedPrompt? Prompt, string Message);
 
     private sealed record ResolvedProject(ProjectChoice? Project, string Message);
 
