@@ -9,10 +9,13 @@ Use this scorecard before showing the repository publicly, recording a release c
 | Build and unit tests | Automated | `scripts\Test-ReleaseReadiness.ps1` and GitHub `CI` | Required before demo. |
 | Positive and negative tests | Automated | `tests/Incursa.Codex.Telegram.Tests` | Covers command parsing, authorization, session/project state, raw Telegram update adaptation, queueing, attachments, sender failures, and setup diagnostics. |
 | Fuzz corpus | Automated | `scripts\Test-TelegramFuzzCorpus.ps1` and `fuzz/corpus` | Deterministic seed corpus for Telegram-like text, Unicode, emoji, command-like input, chunking, and attachment mapping. |
+| Tracked-file secret scan | Automated | `scripts\Test-TrackedSecretScan.ps1`, GitHub `CI`, and GitHub `Publish` | Blocks common bot tokens, API keys, GitHub tokens, Slack tokens, and private keys from tracked files. |
 | Mutation tests | Advisory | `scripts\Test-TelegramMutation.ps1` | Run the changed profile after behavior changes; run all profiles for release-candidate evidence when time permits. |
 | Publish artifacts | Automated | `scripts\Publish.ps1` and GitHub `Publish` | Required for a binary-based demo. |
+| Release provenance | Configured | GitHub artifact attestations in `Publish` | Release binaries receive GitHub build provenance attestations after the repository is public; private-repo runs keep SHA256 checksum files only. |
 | Repository governance | Automated | GitHub rulesets and `CODEOWNERS` | `main` requires pull requests, Code Owner review, current status checks, squash merge, and the contributor-agreement status. |
 | Contributor agreement | Automated | `.github/workflows/contributor-agreement.yml` and `incursa/contributor-agreement-action` | Required for outside pull requests after the workflow is proven with a non-allowlisted contributor. |
+| Code scanning | Configured | GitHub `CodeQL` workflow | Skipped while the repository is private; starts running after the repository is public. |
 | Live Telegram behavior | Manual | `docs/manual-test-plan.md` | Required for any public claim involving a real Telegram bot, group, forum topic, voice note, image, or document. |
 | Owner evidence | Manual | `docs/release-owner-actions.md` results log | Required before repository visibility changes or tagged releases. |
 

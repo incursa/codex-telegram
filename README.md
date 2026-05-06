@@ -378,6 +378,7 @@ Developer and maintainer docs:
 
 - [Development guide](docs/development.md)
 - [Contributing](CONTRIBUTING.md)
+- [Code of conduct](CODE_OF_CONDUCT.md)
 - [Testing and quality](docs/testing.md)
 - [Release owner actions](docs/release-owner-actions.md)
 

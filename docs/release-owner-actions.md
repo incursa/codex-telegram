@@ -11,11 +11,15 @@ Completed repo-side setup:
 1. GitHub Issues are enabled; wiki and discussions are disabled for the first public release.
 2. Repository description, homepage, and topics are populated.
 3. Secret scanning and push protection are enabled.
-4. `main` is protected by a ruleset that requires pull requests, Code Owner review, current required status checks, review-thread resolution, and squash merge.
-5. All tags are protected by a ruleset; only repository admins can intentionally bypass.
-6. `Contributor Agreement` is a required status check on `main`.
-7. Contributor agreement signatures are stored in the private `incursa/contributor-agreements` repository through the org secret `INCURSA_CONTRIBUTOR_AGREEMENTS_TOKEN`.
-8. Release `v1.0.6` exists with Windows, Linux, and macOS arm64 binaries plus checksums and license assets.
+4. Dependabot security updates are enabled.
+5. Dependabot is configured for GitHub Actions and NuGet.
+6. CodeQL is configured to run after the repository is public.
+7. `main` is protected by a ruleset that requires pull requests, Code Owner review, current required status checks, review-thread resolution, and squash merge.
+8. All tags are protected by a ruleset; only repository admins can intentionally bypass.
+9. `Contributor Agreement` is a required status check on `main`.
+10. Contributor agreement signatures are stored in the private `incursa/contributor-agreements` repository through the org secret `INCURSA_CONTRIBUTOR_AGREEMENTS_TOKEN`.
+11. Release `v1.0.6` exists with Windows, Linux, and macOS arm64 binaries plus checksums and license assets.
+12. Publish workflow is configured to emit GitHub artifact attestations for release binaries after the repository is public.
 
 Known repo-side limitation:
 
@@ -96,6 +100,7 @@ Remaining owner-owned work is the live Telegram evidence, sanitized demo assets,
    - Run or confirm the latest `CI` workflow on the release branch.
    - Run or confirm the latest `Publish` workflow on the release branch.
    - Record the workflow run URLs in the results log.
+   - Confirm release binary artifact attestations are visible after the next tagged publish.
    - Do not rely only on local validation before changing visibility.
 
 6. Decide first public versioning.

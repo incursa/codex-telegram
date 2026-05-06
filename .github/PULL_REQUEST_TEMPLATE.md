@@ -18,6 +18,7 @@ If this changes live bot behavior, describe the private chat, group, forum topic
 ## Checklist
 
 - [ ] I have read `CONTRIBUTING.md`.
+- [ ] I will follow `CODE_OF_CONDUCT.md`.
 - [ ] I agree that my contribution is submitted under `CONTRIBUTOR-AGREEMENT.md`.
 - [ ] I have not included bot tokens, OpenAI keys, private transcripts, private screenshots, or local credential paths.
 - [ ] I updated documentation for setup, commands, security posture, release workflow, or day-to-day usage changes.

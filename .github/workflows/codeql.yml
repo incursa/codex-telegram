@@ -1,0 +1,46 @@
+name: CodeQL
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  schedule:
+    - cron: "37 11 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  analyze:
+    name: Analyze
+    runs-on: ubuntu-24.04
+    if: github.event.repository.private == false
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@ed410739ba306e4ebe5e123421a6bd694e494a2b # v4
+        with:
+          languages: csharp
+          build-mode: manual
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@c2fa09f4bde5ebb9d1777cf28262a3eb3db3ced7 # v5
+        with:
+          global-json-file: global.json
+
+      - name: Restore
+        run: dotnet restore CodexTelegram.slnx
+
+      - name: Build
+        run: dotnet build CodexTelegram.slnx -c Release --no-restore -m:1
+
+      - name: Analyze
+        uses: github/codeql-action/analyze@ed410739ba306e4ebe5e123421a6bd694e494a2b # v4

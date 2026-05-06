@@ -9,6 +9,7 @@ This repository is a standalone Telegram bot host for a local Codex installation
 3. Read [docs/usage.md](docs/usage.md) before changing command behavior, output batching, queueing, attachments, voice, or group/forum flows.
 4. Read [docs/development.md](docs/development.md) for source build, test, publish, and GitHub Actions workflow.
 5. Check [docs/testing.md](docs/testing.md) for the relevant automated gate.
+6. Follow [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) in project spaces.
 
 ## Contributor Agreement
 
