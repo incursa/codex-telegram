@@ -11,6 +11,8 @@ Use this scorecard before showing the repository publicly, recording a release c
 | Fuzz corpus | Automated | `scripts\Test-TelegramFuzzCorpus.ps1` and `fuzz/corpus` | Deterministic seed corpus for Telegram-like text, Unicode, emoji, command-like input, chunking, and attachment mapping. |
 | Mutation tests | Advisory | `scripts\Test-TelegramMutation.ps1` | Run the changed profile after behavior changes; run all profiles for release-candidate evidence when time permits. |
 | Publish artifacts | Automated | `scripts\Publish.ps1` and GitHub `Publish` | Required for a binary-based demo. |
+| Repository governance | Automated | GitHub rulesets and `CODEOWNERS` | `main` requires pull requests, Code Owner review, current status checks, squash merge, and the contributor-agreement status. |
+| Contributor agreement | Automated | `.github/workflows/contributor-agreement.yml` and `incursa/contributor-agreement-action` | Required for outside pull requests after the workflow is proven with a non-allowlisted contributor. |
 | Live Telegram behavior | Manual | `docs/manual-test-plan.md` | Required for any public claim involving a real Telegram bot, group, forum topic, voice note, image, or document. |
 | Owner evidence | Manual | `docs/release-owner-actions.md` results log | Required before repository visibility changes or tagged releases. |
 

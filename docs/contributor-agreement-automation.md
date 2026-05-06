@@ -76,13 +76,13 @@ recheck contributor agreement
 
 ## Required Status Check
 
-Use this required status check name in branch rulesets:
+This repository requires this status check name in the `main` branch ruleset:
 
 ```text
 Contributor Agreement
 ```
 
-Do not make it required until the secret exists and at least one test pull request has proven the workflow.
+The org secret is configured, and a maintainer-owned smoke pull request proved the workflow and status publication. A non-allowlisted contributor signature test is still useful before relying on the flow for outside contributions.
 
 ## Reuse In Other Repositories
 

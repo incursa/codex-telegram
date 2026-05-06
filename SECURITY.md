@@ -23,4 +23,4 @@ Use GitHub private vulnerability reporting if it is enabled for the repository. 
 
 For general open-source project questions, contact oss@incursa.com.
 
-For pre-1.0 or unreleased builds, only the latest `main` branch or current release candidate is expected to receive security fixes.
+For unreleased builds, only the latest `main` branch or current release candidate is expected to receive security fixes.

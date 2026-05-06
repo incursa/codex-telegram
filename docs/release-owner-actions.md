@@ -4,6 +4,25 @@ This file tracks work that needs the repository owner, a live Telegram account, 
 
 Use `docs/demo-readiness.md` as the go/no-go scorecard that ties these owner actions to automated and manual evidence.
 
+## Current Repository Prep Status
+
+Completed repo-side setup:
+
+1. GitHub Issues are enabled; wiki and discussions are disabled for the first public release.
+2. Repository description, homepage, and topics are populated.
+3. Secret scanning and push protection are enabled.
+4. `main` is protected by a ruleset that requires pull requests, Code Owner review, current required status checks, review-thread resolution, and squash merge.
+5. All tags are protected by a ruleset; only repository admins can intentionally bypass.
+6. `Contributor Agreement` is a required status check on `main`.
+7. Contributor agreement signatures are stored in the private `incursa/contributor-agreements` repository through the org secret `INCURSA_CONTRIBUTOR_AGREEMENTS_TOKEN`.
+8. Release `v1.0.6` exists with Windows, Linux, and macOS arm64 binaries plus checksums and license assets.
+
+Known repo-side limitation:
+
+1. GitHub private vulnerability reporting could not be enabled while the repository is private; retry after switching the repository to public visibility.
+
+Remaining owner-owned work is the live Telegram evidence, sanitized demo assets, and the final visibility decision.
+
 ## Required Before Public Demo
 
 1. Choose the demo mode.
@@ -46,11 +65,12 @@ Use `docs/demo-readiness.md` as the go/no-go scorecard that ties these owner act
 ## Required Before Repository Visibility Change
 
 1. Confirm GitHub repository metadata.
-   - Repository description.
-   - Repository topics.
-   - Homepage URL, if any.
-   - Whether issues should be enabled.
-   - Whether discussions should be enabled.
+   - Repository description: populated.
+   - Repository topics: populated.
+   - Homepage URL: latest release page.
+   - Issues: enabled.
+   - Discussions: disabled for the first public release.
+   - Wiki: disabled.
 
 2. Run a final tracked-file secret scan.
    - Run `scripts\Test-TrackedSecretScan.ps1`.
@@ -79,9 +99,9 @@ Use `docs/demo-readiness.md` as the go/no-go scorecard that ties these owner act
    - Do not rely only on local validation before changing visibility.
 
 6. Decide first public versioning.
-   - First tag name.
-   - Whether the release should be a prerelease.
-   - Whether release notes should be generated from GitHub or written manually.
+   - First tag name: `v1.0.6`.
+   - Release type: full release, not prerelease.
+   - Release notes: generated from GitHub for the first release.
 
 ## Optional Owner Tasks
 
