@@ -239,4 +239,20 @@ Expected content:
 5. Oldest waiting destination when present.
 6. Global or chat-specific backoff when Telegram rate limits are active.
 
+## Queued Prompt View
+
+Open queued prompt controls:
+
+```text
+/queue
+```
+
+Expected content:
+
+1. Queued prompts submitted by you for the current conversation.
+2. FIFO order, short queue IDs, session names, age, prompt preview, and attachment count.
+3. `Send now`, `Edit`, and `Delete` buttons per queued item.
+4. Edit instructions that point to `/queue edit <id> <new text>`.
+5. `/queue all` when you need to inspect your queued prompts across conversations.
+
 Use this when output seems delayed, batched, or missing.

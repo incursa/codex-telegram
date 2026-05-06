@@ -915,6 +915,128 @@ public sealed class TelegramCommandHandlerTests
     }
 
     [Fact]
+    public async Task HandleMessageAsync_QueueListsConversationPromptsWithControls()
+    {
+        using CommandHandlerHarness harness = CommandHandlerHarness.Create();
+        TelegramConversationScope conversation = new(5555, null);
+        await harness.StateStore.EnqueueQueuedPromptAsync(
+            CreateQueuedPrompt("aaaaaaaa11111111", 1234, conversation, "first line\nsecond line"),
+            CancellationToken.None);
+        await harness.StateStore.EnqueueQueuedPromptAsync(
+            CreateQueuedPrompt("bbbbbbbb22222222", 1234, new TelegramConversationScope(5555, 77), "other topic"),
+            CancellationToken.None);
+
+        await harness.Handler.HandleMessageAsync(
+            new TelegramInboundMessage(1234, conversation.ChatId, "private", "/queue"),
+            harness.Sender,
+            CancellationToken.None);
+
+        SentTelegramMessage sent = Assert.Single(harness.Sender.Sent);
+        Assert.Contains("Queued prompts:", sent.Text);
+        Assert.Contains("id aaaaaaaa", sent.Text);
+        Assert.Contains("first line second line", sent.Text);
+        Assert.DoesNotContain("other topic", sent.Text);
+        Assert.Equal(["Send now", "Edit", "Delete", "Sessions", "Projects", "Help"], FlattenButtonLabels(sent));
+    }
+
+    [Fact]
+    public async Task HandleMessageAsync_QueueEditUpdatesOwnedPromptText()
+    {
+        using CommandHandlerHarness harness = CommandHandlerHarness.Create();
+        TelegramConversationScope conversation = new(5555, null);
+        await harness.StateStore.EnqueueQueuedPromptAsync(
+            CreateQueuedPrompt("aaaaaaaa11111111", 1234, conversation, "old text"),
+            CancellationToken.None);
+
+        await harness.Handler.HandleMessageAsync(
+            new TelegramInboundMessage(1234, conversation.ChatId, "private", "/queue edit aaaaaaaa new steering text"),
+            harness.Sender,
+            CancellationToken.None);
+
+        SentTelegramMessage sent = Assert.Single(harness.Sender.Sent);
+        Assert.Contains("Updated queued item aaaaaaaa.", sent.Text);
+        Assert.Contains("new steering text", sent.Text);
+        TelegramQueuedPrompt updated = Assert.Single(await harness.StateStore.ListQueuedPromptsAsync(1234, conversation, CancellationToken.None));
+        Assert.Equal("new steering text", updated.Text);
+    }
+
+    [Fact]
+    public async Task HandleCallbackAsync_QueueSendNowSteersAndRemovesPrompt()
+    {
+        using CommandHandlerHarness harness = CommandHandlerHarness.Create();
+        TelegramConversationScope conversation = new(5555, null);
+        harness.SessionManager.Sessions.Add(CreateSession("thread-1", "Demo session", harness.Temp.Path));
+        await harness.StateStore.EnqueueQueuedPromptAsync(
+            CreateQueuedPrompt("aaaaaaaa11111111", 1234, conversation, "queued steering"),
+            CancellationToken.None);
+
+        await harness.Handler.HandleCallbackAsync(
+            new TelegramInboundCallback("callback-queue", 1234, conversation.ChatId, "private", "qnow:aaaaaaaa11111111", SourceMessageId: 42),
+            harness.Sender,
+            CancellationToken.None);
+
+        Assert.Equal("Sending queued item.", Assert.Single(harness.Sender.CallbackAnswers).Text);
+        Assert.Equal(("thread-1", (object)"queued steering"), Assert.Single(harness.SessionManager.SteerRequests));
+        Assert.Empty(await harness.StateStore.ListQueuedPromptsAsync(1234, conversation, CancellationToken.None));
+        EditedTelegramMessage edited = Assert.Single(harness.Sender.Edited);
+        Assert.Equal(42, edited.MessageId);
+        Assert.Contains("Sent queued item aaaaaaaa", edited.Text);
+        Assert.Contains("No queued prompts", edited.Text);
+    }
+
+    [Fact]
+    public async Task HandleCallbackAsync_QueueSendNowRequeuesWhenSteerFails()
+    {
+        using CommandHandlerHarness harness = CommandHandlerHarness.Create();
+        TelegramConversationScope conversation = new(5555, null);
+        harness.SessionManager.Sessions.Add(CreateSession("thread-1", "Demo session", harness.Temp.Path));
+        harness.SessionManager.SteerExceptions.Enqueue(new InvalidOperationException("No active turn is currently running for this session."));
+        await harness.StateStore.EnqueueQueuedPromptAsync(
+            CreateQueuedPrompt("aaaaaaaa11111111", 1234, conversation, "queued steering"),
+            CancellationToken.None);
+
+        await harness.Handler.HandleCallbackAsync(
+            new TelegramInboundCallback("callback-queue", 1234, conversation.ChatId, "private", "qnow:aaaaaaaa11111111", SourceMessageId: 42),
+            harness.Sender,
+            CancellationToken.None);
+
+        TelegramQueuedPrompt queued = Assert.Single(await harness.StateStore.ListQueuedPromptsAsync(1234, conversation, CancellationToken.None));
+        Assert.Equal("aaaaaaaa11111111", queued.Id);
+        EditedTelegramMessage edited = Assert.Single(harness.Sender.Edited);
+        Assert.Contains("It is still queued.", edited.Text);
+        Assert.Contains("queued steering", edited.Text);
+    }
+
+    [Fact]
+    public async Task HandleCallbackAsync_QueueDeleteRemovesPromptAndTemporaryAttachments()
+    {
+        using CommandHandlerHarness harness = CommandHandlerHarness.Create();
+        TelegramConversationScope conversation = new(5555, null);
+        string attachmentPath = Path.Combine(harness.Temp.Path, "queued.png");
+        await File.WriteAllTextAsync(attachmentPath, "image");
+        await harness.StateStore.EnqueueQueuedPromptAsync(
+            CreateQueuedPrompt(
+                "aaaaaaaa11111111",
+                1234,
+                conversation,
+                "queued with attachment",
+                [
+                    new TelegramAttachmentDescriptor(attachmentPath, "queued.png", "image/png", IsImage: true),
+                ]),
+            CancellationToken.None);
+
+        await harness.Handler.HandleCallbackAsync(
+            new TelegramInboundCallback("callback-queue", 1234, conversation.ChatId, "private", "qdel:aaaaaaaa11111111", SourceMessageId: 42),
+            harness.Sender,
+            CancellationToken.None);
+
+        Assert.False(File.Exists(attachmentPath));
+        Assert.Empty(await harness.StateStore.ListQueuedPromptsAsync(1234, conversation, CancellationToken.None));
+        EditedTelegramMessage edited = Assert.Single(harness.Sender.Edited);
+        Assert.Contains("Deleted queued item aaaaaaaa.", edited.Text);
+    }
+
+    [Fact]
     public async Task HandleMessageAsync_LifecycleCommandsResolveSessions()
     {
         using CommandHandlerHarness harness = CommandHandlerHarness.Create();
@@ -1257,6 +1379,23 @@ public sealed class TelegramCommandHandlerTests
             null,
             null);
 
+    private static TelegramQueuedPrompt CreateQueuedPrompt(
+        string id,
+        long userId,
+        TelegramConversationScope conversation,
+        string text,
+        IReadOnlyList<TelegramAttachmentDescriptor>? attachments = null)
+        => new(
+            id,
+            userId,
+            conversation.ChatId,
+            "thread-1",
+            "Demo session",
+            text,
+            DateTimeOffset.Parse("2026-05-06T12:00:00Z", CultureInfo.InvariantCulture),
+            conversation.MessageThreadId,
+            attachments);
+
     private static CodexSessionModelSettings CreateModelSettings(string sessionId, string sessionName, string model, string effort)
         => new(
             sessionId,
@@ -1434,6 +1573,10 @@ public sealed class TelegramCommandHandlerTests
 
         public List<string> StopRequests { get; } = [];
 
+        public List<(string SessionId, object Input)> SteerRequests { get; } = [];
+
+        public Queue<Exception> SteerExceptions { get; } = [];
+
         public TaskCompletionSource<CodexSessionModelSettings>? UpdateModelSettingsCompletion { get; set; }
 
         public Task<IReadOnlyCollection<CodexSessionSummary>> ListSessionsAsync(CancellationToken cancellationToken)
@@ -1475,7 +1618,26 @@ public sealed class TelegramCommandHandlerTests
         }
 
         public Task SteerAsync(string sessionId, string input, CancellationToken cancellationToken)
-            => Task.CompletedTask;
+        {
+            ThrowNextSteerExceptionIfPresent();
+            SteerRequests.Add((sessionId, input));
+            return Task.CompletedTask;
+        }
+
+        public Task SteerAsync(string sessionId, IReadOnlyList<CodexInputItem> input, CancellationToken cancellationToken)
+        {
+            ThrowNextSteerExceptionIfPresent();
+            SteerRequests.Add((sessionId, input));
+            return Task.CompletedTask;
+        }
+
+        private void ThrowNextSteerExceptionIfPresent()
+        {
+            if (SteerExceptions.TryDequeue(out Exception? exception))
+            {
+                throw exception;
+            }
+        }
 
         public Task<CodexSessionModelSettings> GetModelSettingsAsync(string sessionId, CancellationToken cancellationToken)
         {

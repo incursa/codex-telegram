@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Added `/queue` and `/queued` for viewing queued prompts, editing queued text, deleting queued items, and sending a queued item now as active-turn steering.
+
 ## 1.0.11 - 2026-05-06
 
 - Enabled invariant globalization for release binaries so Linux self-contained builds do not require system ICU packages at startup.

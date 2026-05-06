@@ -432,6 +432,9 @@ public sealed class TelegramQueuedPromptProcessorTests
         public Task SteerAsync(string sessionId, string input, CancellationToken cancellationToken)
             => throw new NotSupportedException();
 
+        public Task SteerAsync(string sessionId, IReadOnlyList<CodexInputItem> input, CancellationToken cancellationToken)
+            => throw new NotSupportedException();
+
         public Task<CodexSessionModelSettings> GetModelSettingsAsync(string sessionId, CancellationToken cancellationToken)
             => throw new NotSupportedException();
 

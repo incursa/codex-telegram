@@ -20,6 +20,8 @@ internal interface ICodexSessionManager
 
     Task SteerAsync(string sessionId, string input, CancellationToken cancellationToken);
 
+    Task SteerAsync(string sessionId, IReadOnlyList<CodexInputItem> input, CancellationToken cancellationToken);
+
     Task<CodexSessionModelSettings> GetModelSettingsAsync(string sessionId, CancellationToken cancellationToken);
 
     Task<CodexSessionModelSettings> UpdateModelSettingsAsync(
@@ -194,6 +196,16 @@ internal sealed class CodexGatewaySessionManager : ICodexSessionManager
             throw new ArgumentException("Input cannot be empty.", nameof(input));
         }
 
+        await SteerAsync(sessionId, [new CodexTextInput { Text = input.Trim() }], cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task SteerAsync(string sessionId, IReadOnlyList<CodexInputItem> input, CancellationToken cancellationToken)
+    {
+        if (input.Count == 0)
+        {
+            throw new ArgumentException("Input cannot be empty.", nameof(input));
+        }
+
         await RequireSessionAsync(sessionId, cancellationToken).ConfigureAwait(false);
         CodexActiveTurnStateVm? activeTurn = _turnCoordinator.TryGetActiveTurnState(sessionId);
         if (activeTurn is null)
@@ -204,7 +216,7 @@ internal sealed class CodexGatewaySessionManager : ICodexSessionManager
         await _turnCoordinator.SteerAsync(
             activeTurn.ThreadId,
             activeTurn.TurnId,
-            [new CodexTextInput { Text = input.Trim() }],
+            input,
             cancellationToken).ConfigureAwait(false);
     }
 

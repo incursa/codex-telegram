@@ -466,6 +466,7 @@ For a complete parameter-by-parameter reference, see [command-reference.md](comm
 | `/use <sessionId>` | Selects an existing session. | Use to continue a previous thread. |
 | `/send <text>` | Sends text to the active session. | Use when plain text is not automatically routed. |
 | `/steer <text>` | Adds steering text to the active turn. | Use when you want to guide a live session. |
+| `/queue` | Shows queued prompts with Send now, Edit, and Delete buttons. | Use when you want to inspect or change prompts waiting behind an active turn. |
 | `/model [model] [thinking <effort>]` | Shows or changes the selected session model. | Use when you need to switch the active model. |
 | `/thinking <minimal|low|medium|high|xhigh>` | Changes the reasoning effort for the selected session. | Use when you want more or less reasoning budget. |
 | `/tail [count]` | Shows recent output and keeps following the session. | Use while waiting on a live turn. |

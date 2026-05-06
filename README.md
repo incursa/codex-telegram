@@ -352,6 +352,7 @@ After a successful test, you should see the transcription in Telegram before the
 | `/use <sessionId>` | Resume an existing session. |
 | `/send <text>` | Send text when plain text is not automatically routed, especially in groups. |
 | `/steer <text>` | Add guidance to a currently active turn. |
+| `/queue` | View queued prompts for the conversation, then edit, delete, or send one now. |
 | `/model` | Show or change the active session model. |
 | `/thinking` | Show or change reasoning effort. |
 | `/status` | Show active session status, including compact Codex usage when available. |

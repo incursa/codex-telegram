@@ -263,6 +263,99 @@ Expected behavior:
 
 Use `/send` for normal new work. Use `/steer` only while Codex is already working.
 
+### `/queue`
+
+Shows queued prompts submitted by you for the current Telegram conversation.
+
+Syntax:
+
+```text
+/queue
+/queued
+```
+
+Expected behavior:
+
+1. Lists queued prompts in FIFO order for the current private chat, group root, or forum topic.
+2. Shows the target session, queued age, short queue item ID, prompt preview, and attachment count.
+3. Adds `Send now`, `Edit`, and `Delete` buttons for each listed item.
+4. Keeps the list conversation-scoped by default so queued text from other chats or topics is not shown accidentally.
+
+### `/queue all`
+
+Shows your queued prompts across Telegram conversations.
+
+Syntax:
+
+```text
+/queue all
+```
+
+Expected behavior:
+
+1. Lists queued prompts submitted by your Telegram user ID across conversations.
+2. Adds the conversation label for each queued item.
+3. Uses the same `Send now`, `Edit`, and `Delete` buttons.
+
+### `/queue edit <id> <new text>`
+
+Replaces the text for one queued prompt.
+
+Syntax:
+
+```text
+/queue edit <id> <new text>
+```
+
+Example:
+
+```text
+/queue edit a1b2c3d4 focus only on the failing Linux startup path
+```
+
+Expected behavior:
+
+1. Accepts a full queue item ID, an unambiguous prefix, or the current conversation list number.
+2. Replaces queued text while preserving any queued attachments.
+3. Rejects unknown, ambiguous, or already-drained items without changing the queue.
+
+### `/queue delete <id>`
+
+Deletes one queued prompt.
+
+Syntax:
+
+```text
+/queue delete <id>
+```
+
+Expected behavior:
+
+1. Accepts a full queue item ID, an unambiguous prefix, or the current conversation list number.
+2. Removes only that queued prompt.
+3. Deletes temporary attachment files owned by that queued prompt.
+4. Leaves other queued prompts and session-level state untouched.
+
+### `/queue send <id>`
+
+Removes one queued prompt and sends it as steering input to the active turn.
+
+Syntax:
+
+```text
+/queue send <id>
+/queue now <id>
+/queue steer <id>
+```
+
+Expected behavior:
+
+1. Accepts a full queue item ID, an unambiguous prefix, or the current conversation list number.
+2. Removes the queued prompt before attempting to steer the active turn.
+3. Sends text and preserved attachments through the active-turn steering path.
+4. Requeues the item if steering fails, including when no active turn is running.
+5. Deletes temporary attachment files only after steering succeeds or after the target session is gone.
+
 ### `/sessions`
 
 Lists active and Telegram-managed sessions.

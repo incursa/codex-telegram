@@ -37,6 +37,17 @@ internal interface ITelegramBotStateStore
 
     Task EnqueueQueuedPromptAsync(TelegramQueuedPrompt prompt, CancellationToken cancellationToken);
 
+    Task<IReadOnlyList<TelegramQueuedPrompt>> ListQueuedPromptsAsync(
+        long? userId,
+        TelegramConversationScope? conversation,
+        CancellationToken cancellationToken);
+
+    Task<TelegramQueuedPrompt?> TryGetQueuedPromptAsync(string promptId, CancellationToken cancellationToken);
+
+    Task<TelegramQueuedPrompt?> TryRemoveQueuedPromptAsync(string promptId, long? ownerUserId, CancellationToken cancellationToken);
+
+    Task<TelegramQueuedPrompt?> TryUpdateQueuedPromptTextAsync(string promptId, long? ownerUserId, string text, CancellationToken cancellationToken);
+
     Task<TelegramQueuedPrompt?> DequeueQueuedPromptAsync(CancellationToken cancellationToken);
 
     Task<TelegramQueuedPrompt?> DequeueNextQueuedPromptAsync(IReadOnlyCollection<string> unavailableSessionIds, CancellationToken cancellationToken);
@@ -186,6 +197,74 @@ internal sealed class TelegramBotStateStore : ITelegramBotStateStore
             state.QueuedPrompts.Add(prompt);
             return state;
         }, cancellationToken);
+
+    public async Task<IReadOnlyList<TelegramQueuedPrompt>> ListQueuedPromptsAsync(
+        long? userId,
+        TelegramConversationScope? conversation,
+        CancellationToken cancellationToken)
+    {
+        TelegramBotState state = await LoadStateAsync(cancellationToken).ConfigureAwait(false);
+        return state.QueuedPrompts
+            .Where(prompt => IsQueuedPromptMatch(prompt, userId, conversation))
+            .OrderBy(prompt => prompt.EnqueuedAt)
+            .ThenBy(prompt => prompt.Id, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
+    public async Task<TelegramQueuedPrompt?> TryGetQueuedPromptAsync(string promptId, CancellationToken cancellationToken)
+    {
+        TelegramBotState state = await LoadStateAsync(cancellationToken).ConfigureAwait(false);
+        return state.QueuedPrompts.FirstOrDefault(prompt => IsPromptIdMatch(prompt, promptId));
+    }
+
+    public async Task<TelegramQueuedPrompt?> TryRemoveQueuedPromptAsync(string promptId, long? ownerUserId, CancellationToken cancellationToken)
+    {
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            TelegramBotState state = await LoadStateCoreAsync(cancellationToken).ConfigureAwait(false);
+            TelegramQueuedPrompt? prompt = state.QueuedPrompts.FirstOrDefault(item => IsOwnedPromptIdMatch(item, promptId, ownerUserId));
+            if (prompt is null)
+            {
+                return null;
+            }
+
+            state.QueuedPrompts.RemoveAll(item => IsPromptIdMatch(item, promptId));
+            await SaveStateCoreAsync(state, cancellationToken).ConfigureAwait(false);
+            return prompt;
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    public async Task<TelegramQueuedPrompt?> TryUpdateQueuedPromptTextAsync(
+        string promptId,
+        long? ownerUserId,
+        string text,
+        CancellationToken cancellationToken)
+    {
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            TelegramBotState state = await LoadStateCoreAsync(cancellationToken).ConfigureAwait(false);
+            int index = state.QueuedPrompts.FindIndex(prompt => IsOwnedPromptIdMatch(prompt, promptId, ownerUserId));
+            if (index < 0)
+            {
+                return null;
+            }
+
+            TelegramQueuedPrompt updated = state.QueuedPrompts[index] with { Text = text };
+            state.QueuedPrompts[index] = updated;
+            await SaveStateCoreAsync(state, cancellationToken).ConfigureAwait(false);
+            return updated;
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
 
     public async Task<TelegramQueuedPrompt?> DequeueQueuedPromptAsync(CancellationToken cancellationToken)
         => await DequeueNextQueuedPromptAsync([], cancellationToken).ConfigureAwait(false);
@@ -366,6 +445,17 @@ internal sealed class TelegramBotStateStore : ITelegramBotStateStore
             state.TrackedSessionIds.Add(sessionId);
         }
     }
+
+    private static bool IsQueuedPromptMatch(TelegramQueuedPrompt prompt, long? userId, TelegramConversationScope? conversation)
+        => (!userId.HasValue || prompt.UserId == userId.Value)
+            && (!conversation.HasValue || prompt.ConversationScope == conversation.Value);
+
+    private static bool IsOwnedPromptIdMatch(TelegramQueuedPrompt prompt, string promptId, long? ownerUserId)
+        => IsPromptIdMatch(prompt, promptId)
+            && (!ownerUserId.HasValue || prompt.UserId == ownerUserId.Value);
+
+    private static bool IsPromptIdMatch(TelegramQueuedPrompt prompt, string promptId)
+        => prompt.Id.Equals(promptId, StringComparison.OrdinalIgnoreCase);
 
     private static bool TryParseScopeForChat(string key, long? chatId, out TelegramConversationScope scope)
     {
