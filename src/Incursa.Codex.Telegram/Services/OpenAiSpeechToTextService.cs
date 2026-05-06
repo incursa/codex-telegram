@@ -14,6 +14,10 @@ internal sealed class OpenAiSpeechToTextService : IAudioTranscriptionService
 {
     private const long MaxTranscriptionUploadBytes = 25L * 1024 * 1024;
     private const long MinimumPlausibleAudioBytes = 16;
+    private const string FfmpegUnavailableMessage =
+        "ffmpeg is not installed or OpenAI:FfmpegPath points to an executable that cannot be started. " +
+        "Voice-note transcription is optional, but Telegram voice notes often need ffmpeg to convert OGG/OPUS audio before OpenAI transcription. " +
+        "Install ffmpeg and put it on PATH, or set OpenAI:FfmpegPath to the full executable path.";
 
     private static readonly HashSet<string> DirectUploadExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -213,7 +217,7 @@ internal sealed class OpenAiSpeechToTextService : IAudioTranscriptionService
         }
         catch (Win32Exception exception)
         {
-            throw new InvalidOperationException($"ffmpeg could not be started from '{ffmpegPath}'.", exception);
+            throw new InvalidOperationException($"{FfmpegUnavailableMessage} Configured ffmpeg path: '{ffmpegPath}'.", exception);
         }
 
         EnsureWithinOpenAiLimit(outputFilePath);

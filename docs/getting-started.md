@@ -428,9 +428,10 @@ The bot handles more than plain text.
 1. Voice notes are transcribed before they are sent to Codex; Codex receives the resulting text, not raw Telegram audio.
 2. Audio transcription requires an OpenAI API key.
 3. `ffmpeg` is used only when the bot needs to transcode downloaded audio into a format OpenAI accepts directly. Telegram voice notes commonly need this because they often arrive as OGG/OPUS.
-4. The bot rejects audio shorter than `TelegramBot:MinAudioDurationSeconds` or longer than `TelegramBot:MaxAudioDurationSeconds` before download.
-5. Images and documents are forwarded to Codex.
-6. Large media files still have practical upload and API limits, so keep expectations realistic.
+4. If `ffmpeg` is missing when conversion is needed, the bot replies with setup guidance and does not send the audio message to Codex.
+5. The bot rejects audio shorter than `TelegramBot:MinAudioDurationSeconds` or longer than `TelegramBot:MaxAudioDurationSeconds` before download.
+6. Images and documents are forwarded to Codex.
+7. Large media files still have practical upload and API limits, so keep expectations realistic.
 
 If voice transcription fails, check these first:
 

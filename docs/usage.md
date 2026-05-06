@@ -121,6 +121,8 @@ Voice requirements:
 3. `ffmpeg` must be available only when transcoding is needed. Telegram voice notes commonly need it because they often arrive as OGG/OPUS.
 4. Audio must fit the configured duration limits and OpenAI upload limits.
 
+If `ffmpeg` is missing when conversion is needed, the bot replies with setup guidance and does not send the audio message to Codex.
+
 If voice fails, send `/doctor`, then check `OpenAI:ApiKey`, `OpenAI:Model`, and `OpenAI:FfmpegPath` if the audio format needs transcoding.
 
 ## Groups And Forum Topics

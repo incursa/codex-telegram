@@ -258,6 +258,8 @@ Voice note requirements:
 2. A transcription-capable `OpenAI:Model`.
 3. `ffmpeg` only when the downloaded audio is not in a format OpenAI accepts directly. Telegram voice notes commonly arrive as OGG/OPUS, so install `ffmpeg` or configure `OpenAI:FfmpegPath` for reliable voice-note support.
 
+If `ffmpeg` is missing when a voice note needs conversion, the bot leaves the Codex session untouched and replies with setup guidance instead of failing silently.
+
 Suggested first voice test:
 
 ```text

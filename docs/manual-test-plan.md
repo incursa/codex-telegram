@@ -52,7 +52,7 @@ Record the date, operator, OS, published asset or commit SHA, Codex CLI version,
 ## Voice And Attachments
 
 1. With `OpenAI:ApiKey` missing, send a voice note and confirm the failure explains the missing key.
-2. With `OpenAI:FfmpegPath` invalid, send a voice note that requires transcoding and confirm the failure identifies `ffmpeg`.
+2. With `OpenAI:FfmpegPath` invalid, send a voice note that requires transcoding and confirm the failure identifies `ffmpeg`, explains that voice transcription is optional, and does not route the failed audio to Codex.
 3. With a valid key and `ffmpeg`, send a short voice note and confirm the transcript is sent to the active session.
 4. Send a near-empty or zero-duration voice note and confirm the bot rejects it before download/transcription.
 5. Send or simulate audio longer than `TelegramBot:MaxAudioDurationSeconds` and confirm the bot rejects it before download/transcription.

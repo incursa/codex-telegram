@@ -108,6 +108,30 @@ public sealed class OpenAiSpeechToTextServiceTests
         Assert.Equal(1, handler.RequestCount);
     }
 
+    [Fact]
+    public async Task TranscribeAsync_FailsClearlyWhenFfmpegIsMissingForUnsupportedAudio()
+    {
+        using TemporaryDirectory temp = TemporaryDirectory.Create();
+        string audioPath = CreateFile(temp, "voice-note.ogg", CreateBytes(64));
+        string missingFfmpegPath = Path.Combine(temp.Path, "missing-ffmpeg");
+        TestHttpMessageHandler handler = new(_ => new HttpResponseMessage(HttpStatusCode.OK));
+        OpenAiSpeechToTextService service = CreateService(handler, new OpenAiSpeechToTextOptions
+        {
+            ApiKey = "test-key",
+            Model = "whisper-1",
+            FfmpegPath = missingFfmpegPath,
+        });
+
+        InvalidOperationException exception = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => service.TranscribeAsync(audioPath, CancellationToken.None));
+
+        Assert.Contains("ffmpeg is not installed", exception.Message);
+        Assert.Contains("Voice-note transcription is optional", exception.Message);
+        Assert.Contains("OpenAI:FfmpegPath", exception.Message);
+        Assert.Contains(missingFfmpegPath, exception.Message);
+        Assert.Equal(0, handler.RequestCount);
+    }
+
     private static OpenAiSpeechToTextService CreateService(TestHttpMessageHandler handler, OpenAiSpeechToTextOptions options)
         => new(
             new HttpClient(handler),
