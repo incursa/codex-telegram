@@ -489,7 +489,7 @@ public sealed class TelegramCommandHandlerTests
         });
         harness.SessionManager.Sessions.Add(CreateSession("thread-stale", "Stale session", projectPath));
         harness.SessionManager.SendExceptions.Enqueue(new InvalidOperationException(
-            @"failed to read thread: thread-store internal error: failed to read thread C:\Users\Samuel\.codex\sessions\2026\05\05\rollout-2026-05-05T13-35-46-thread-stale.jsonl: rollout at C:\Users\Samuel\.codex\sessions\2026\05\05\rollout-2026-05-05T13-35-46-thread-stale.jsonl is empty"));
+            @"failed to read thread: thread-store internal error: failed to read thread C:\Users\you\.codex\sessions\2026\05\05\rollout-2026-05-05T13-35-46-thread-stale.jsonl: rollout at C:\Users\you\.codex\sessions\2026\05\05\rollout-2026-05-05T13-35-46-thread-stale.jsonl is empty"));
         await harness.StateStore.SetActiveProjectWorkingDirectoryAsync(conversation, projectPath, CancellationToken.None);
         await harness.StateStore.SetActiveSessionIdAsync(conversation, "thread-stale", CancellationToken.None);
 

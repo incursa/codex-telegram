@@ -37,7 +37,7 @@ public sealed class CodexViewModelMapperTests
             CreatedAt = DateTimeOffset.Parse("2026-05-02T00:00:00Z"),
             UpdatedAt = DateTimeOffset.Parse("2026-05-02T00:05:00Z"),
             Ephemeral = false,
-            Path = @"C:\src\incursa\codex-telegram",
+            Path = @"C:\src\my-repo",
             AgentRole = "assistant",
             AgentNickname = "Codex",
         };

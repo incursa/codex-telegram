@@ -125,7 +125,7 @@ Examples:
 
 ```text
 /project add C:\src\my-repo
-/project add /home/sam/src/my-repo
+/project add /home/you/src/my-repo
 ```
 
 Expected behavior:
@@ -152,7 +152,7 @@ Examples:
 ```text
 /project 1
 /project codex-telegram
-/project C:\src\incursa\codex-telegram
+/project C:\src\my-repo
 ```
 
 Expected behavior:
@@ -662,7 +662,7 @@ Examples:
 
 ```text
 /topic new release readiness
-/topic new docs polish | C:\src\incursa\codex-telegram
+/topic new docs polish | C:\src\my-repo
 ```
 
 Expected behavior:
