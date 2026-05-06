@@ -67,6 +67,7 @@ Use `/steer <text>` only while a turn is active. It is for steering an in-progre
 ## Model And Thinking Controls
 
 Use `/model` and `/thinking` to inspect or change the selected session's Codex model settings.
+Session, status, model, and thinking replies include a compact `Rate limits` line when Codex reports account-window data quickly. Use `/usage` for the full window details and setup errors.
 
 Common flow:
 
@@ -105,7 +106,7 @@ This is intentional. It preserves session order and prevents two prompts from wr
 
 Useful checks:
 
-1. `/status` shows the selected session.
+1. `/status` shows the selected session and compact rate-limit state when available.
 2. `/outbound` shows pending Telegram output.
 3. `/tail` shows recent session output.
 4. `/usage` shows Codex account usage remaining and reset windows.

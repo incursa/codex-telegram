@@ -101,6 +101,7 @@ Model settings:
 Session: release-demo
 Model: gpt-5.4
 Thinking: high
+Rate limits (pro): 5-hour window: 83% remaining; resets in 2h 30m; Weekly window: 52% remaining; resets in 4d 0h
 Available thinking: low, medium, high, xhigh
 Use /model <model> thinking <effort>. Examples:
 - /model gpt-5.4 thinking high
@@ -115,6 +116,8 @@ Button behavior:
 3. Up to eight model buttons are shown.
 4. Tapping a model updates the active session and redraws the model menu.
 5. `Back` returns to the session status view.
+
+The `Rate limits` line appears only when Codex reports account-window data quickly. Use `/usage` for full details and setup errors.
 
 Manual equivalent:
 
@@ -169,9 +172,10 @@ Expected content:
 2. Session status.
 3. Working directory.
 4. Model and thinking effort.
-5. Created and last-activity age.
-6. Short `/use` command.
-7. Exit code or last error when present.
+5. Compact rate limits when available.
+6. Created and last-activity age.
+7. Short `/use` command.
+8. Exit code or last error when present.
 
 Buttons:
 

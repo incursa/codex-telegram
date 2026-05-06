@@ -22,9 +22,9 @@ Record the date, operator, OS, published asset or commit SHA, Codex CLI version,
 5. Send `/project add <absolute repository path>` for a directory under an allowed workspace root.
 6. Send `/project current` and confirm the selected project is correct.
 7. Send `/doctor` and confirm it explains access, routing, active project/session state, workspace roots, queue state, and a plausible next action.
-8. Send `/new <short name>` and confirm the reply summarizes the session without noisy status/model/thinking buttons.
+8. Send `/new <short name>` and confirm the reply summarizes the session without noisy status/model/thinking buttons; if Codex rate limits are available, confirm it includes a compact `Rate limits` line.
 9. Send a normal text prompt and confirm live output returns to the private chat.
-10. Send `/tail`, `/status`, `/usage`, `/model`, and `/thinking` and confirm each command is understandable without stale or truncated buttons.
+10. Send `/tail`, `/status`, `/usage`, `/model`, and `/thinking` and confirm each command is understandable without stale or truncated buttons; `/status`, `/model`, and `/thinking` should include compact rate limits when available.
 11. Send `/stop` and confirm pending queued messages for the session are cleared.
 
 ## Authorization

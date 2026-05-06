@@ -81,6 +81,8 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
     private const int DefaultTailLineCount = 40;
     private const int DefaultSessionListLimit = 8;
     private static readonly TimeSpan TelegramSendStartTimeout = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan InlineUsageSummaryTimeout = TimeSpan.FromMilliseconds(750);
+    private static readonly TimeSpan InlineUsageSummaryCacheDuration = TimeSpan.FromSeconds(30);
 
     private readonly TelegramCommandParser _parser;
     private readonly TelegramMessageChunker _chunker;
@@ -96,6 +98,10 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
     private readonly IOutboundTelegramQueue _outboundQueue;
     private readonly TelegramBotOptions _options;
     private readonly ILogger<TelegramCodexBotCommandHandler> _logger;
+    private readonly SemaphoreSlim _usageSummaryLock = new(1, 1);
+    private bool _hasCachedUsageSummary;
+    private string? _cachedUsageSummary;
+    private DateTimeOffset _cachedUsageSummaryExpiresAtUtc;
 
     public TelegramCodexBotCommandHandler(
         TelegramCommandParser parser,
@@ -586,9 +592,11 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         }
 
         ResolvedProject resolvedProject = await ResolveActiveProjectAsync(message.ConversationScope, cancellationToken).ConfigureAwait(false);
+        CodexSessionModelSettings settings = await _sessionManager.GetModelSettingsAsync(session.Session.Id, cancellationToken).ConfigureAwait(false);
+        string? usageSummary = await TryBuildAccountUsageSummaryAsync(cancellationToken).ConfigureAwait(false);
         StringBuilder builder = new();
         builder.AppendLine($"Topic thread ID: {message.MessageThreadId?.ToString(CultureInfo.InvariantCulture) ?? "(none)"}");
-        builder.AppendLine(FormatStatus(session.Session));
+        builder.AppendLine(FormatStatus(session.Session, settings, usageSummary));
         if (resolvedProject.Project is not null)
         {
             builder.AppendLine();
@@ -623,10 +631,11 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         }
 
         CodexSessionModelSettings settings = await _sessionManager.GetModelSettingsAsync(resolved.Session.Id, cancellationToken).ConfigureAwait(false);
+        string? usageSummary = await TryBuildAccountUsageSummaryAsync(cancellationToken).ConfigureAwait(false);
         await ReplyAsync(
             sender,
             message,
-            BuildSelectedSessionReply("Attached this topic to", resolved.Session, settings, CodexTextFormatting.ResolveProjectName(resolved.Session.WorkingDirectory)),
+            BuildSelectedSessionReply("Attached this topic to", resolved.Session, settings, CodexTextFormatting.ResolveProjectName(resolved.Session.WorkingDirectory), usageSummary),
             BuildSessionButtons([resolved.Session], includeUse: false),
             cancellationToken).ConfigureAwait(false);
     }
@@ -694,7 +703,8 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             resolvedProject.Project.WorkingDirectory,
             cancellationToken).ConfigureAwait(false);
         CodexSessionModelSettings settings = await _sessionManager.GetModelSettingsAsync(session.Id, cancellationToken).ConfigureAwait(false);
-        await ReplyAsync(sender, message, BuildSelectedSessionReply("Created and selected", session, settings), BuildSessionButtons([session], includeUse: false), cancellationToken).ConfigureAwait(false);
+        string? usageSummary = await TryBuildAccountUsageSummaryAsync(cancellationToken).ConfigureAwait(false);
+        await ReplyAsync(sender, message, BuildSelectedSessionReply("Created and selected", session, settings, usageSummary: usageSummary), BuildSessionButtons([session], includeUse: false), cancellationToken).ConfigureAwait(false);
     }
 
     private async Task HandleUseAsync(TelegramInboundMessage message, string arguments, ITelegramBotMessageSender sender, CancellationToken cancellationToken)
@@ -709,7 +719,8 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         await _stateStore.SetActiveSessionIdAsync(message.ConversationScope, resolved.Session.Id, cancellationToken).ConfigureAwait(false);
         _followRegistry.FollowThread(message.ConversationScope, resolved.Session.Id);
         CodexSessionModelSettings settings = await _sessionManager.GetModelSettingsAsync(resolved.Session.Id, cancellationToken).ConfigureAwait(false);
-        await ReplyAsync(sender, message, BuildSelectedSessionReply("Selected", resolved.Session, settings), BuildSessionButtons([resolved.Session], includeUse: false), cancellationToken).ConfigureAwait(false);
+        string? usageSummary = await TryBuildAccountUsageSummaryAsync(cancellationToken).ConfigureAwait(false);
+        await ReplyAsync(sender, message, BuildSelectedSessionReply("Selected", resolved.Session, settings, usageSummary: usageSummary), BuildSessionButtons([resolved.Session], includeUse: false), cancellationToken).ConfigureAwait(false);
     }
 
     private async Task HandleSendCommandAsync(TelegramInboundMessage message, string arguments, ITelegramBotMessageSender sender, CancellationToken cancellationToken)
@@ -750,7 +761,8 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
                     modelControl.Model,
                     modelControl.ReasoningEffort,
                     cancellationToken).ConfigureAwait(false);
-                await ReplyAsync(sender, message, "Updated model settings:" + Environment.NewLine + FormatModelSettings(settings), null, cancellationToken).ConfigureAwait(false);
+                string? usageSummary = await TryBuildAccountUsageSummaryAsync(cancellationToken).ConfigureAwait(false);
+                await ReplyAsync(sender, message, "Updated model settings:" + Environment.NewLine + FormatModelSettings(settings, usageSummary), null, cancellationToken).ConfigureAwait(false);
 
                 if (string.IsNullOrWhiteSpace(modelControl.RemainingText) && !hasAttachments)
                 {
@@ -1103,7 +1115,8 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         if (string.IsNullOrWhiteSpace(arguments))
         {
             CodexSessionModelSettings current = await _sessionManager.GetModelSettingsAsync(resolved.Session.Id, cancellationToken).ConfigureAwait(false);
-            await ReplyAsync(sender, message, "Model settings:" + Environment.NewLine + FormatModelSettings(current), BuildModelSelectionButtons(current), cancellationToken, includeNavigationButtons: false).ConfigureAwait(false);
+            string? usageSummary = await TryBuildAccountUsageSummaryAsync(cancellationToken).ConfigureAwait(false);
+            await ReplyAsync(sender, message, "Model settings:" + Environment.NewLine + FormatModelSettings(current, usageSummary), BuildModelSelectionButtons(current), cancellationToken, includeNavigationButtons: false).ConfigureAwait(false);
             return;
         }
 
@@ -1121,7 +1134,8 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
                 modelControl.Model,
                 modelControl.ReasoningEffort,
                 cancellationToken).ConfigureAwait(false);
-            await ReplyAsync(sender, message, "Updated model settings:" + Environment.NewLine + FormatModelSettings(settings), BuildSessionButtons([resolved.Session], includeUse: false), cancellationToken).ConfigureAwait(false);
+            string? usageSummary = await TryBuildAccountUsageSummaryAsync(cancellationToken).ConfigureAwait(false);
+            await ReplyAsync(sender, message, "Updated model settings:" + Environment.NewLine + FormatModelSettings(settings, usageSummary), BuildSessionButtons([resolved.Session], includeUse: false), cancellationToken).ConfigureAwait(false);
         }
         catch (ArgumentException exception)
         {
@@ -1141,7 +1155,8 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         if (string.IsNullOrWhiteSpace(arguments))
         {
             CodexSessionModelSettings current = await _sessionManager.GetModelSettingsAsync(resolved.Session.Id, cancellationToken).ConfigureAwait(false);
-            await ReplyAsync(sender, message, "Thinking settings:" + Environment.NewLine + FormatModelSettings(current), BuildThinkingSelectionButtons(current), cancellationToken, includeNavigationButtons: false).ConfigureAwait(false);
+            string? usageSummary = await TryBuildAccountUsageSummaryAsync(cancellationToken).ConfigureAwait(false);
+            await ReplyAsync(sender, message, "Thinking settings:" + Environment.NewLine + FormatModelSettings(current, usageSummary), BuildThinkingSelectionButtons(current), cancellationToken, includeNavigationButtons: false).ConfigureAwait(false);
             return;
         }
 
@@ -1165,7 +1180,8 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
 
         await EditCallbackProgressAsync(sender, message, "Loading model settings...", cancellationToken).ConfigureAwait(false);
         CodexSessionModelSettings settings = await _sessionManager.GetModelSettingsAsync(resolved.Session.Id, cancellationToken).ConfigureAwait(false);
-        await ReplyAsync(sender, message, "Model settings:" + Environment.NewLine + FormatModelSettings(settings), BuildModelSelectionButtons(settings), cancellationToken, includeNavigationButtons: false).ConfigureAwait(false);
+        string? usageSummary = await TryBuildAccountUsageSummaryAsync(cancellationToken).ConfigureAwait(false);
+        await ReplyAsync(sender, message, "Model settings:" + Environment.NewLine + FormatModelSettings(settings, usageSummary), BuildModelSelectionButtons(settings), cancellationToken, includeNavigationButtons: false).ConfigureAwait(false);
     }
 
     private async Task HandleModelSelectionAsync(
@@ -1203,7 +1219,8 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         }
 
         CodexSessionModelSettings settings = await _sessionManager.UpdateModelSettingsAsync(resolved.Session.Id, model, null, cancellationToken).ConfigureAwait(false);
-        await ReplyAsync(sender, message, "Model settings:" + Environment.NewLine + FormatModelSettings(settings), BuildModelSelectionButtons(settings), cancellationToken, includeNavigationButtons: false).ConfigureAwait(false);
+        string? usageSummary = await TryBuildAccountUsageSummaryAsync(cancellationToken).ConfigureAwait(false);
+        await ReplyAsync(sender, message, "Model settings:" + Environment.NewLine + FormatModelSettings(settings, usageSummary), BuildModelSelectionButtons(settings), cancellationToken, includeNavigationButtons: false).ConfigureAwait(false);
     }
 
     private async Task HandleThinkingMenuAsync(
@@ -1223,7 +1240,8 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
 
         await EditCallbackProgressAsync(sender, message, "Loading thinking settings...", cancellationToken).ConfigureAwait(false);
         CodexSessionModelSettings settings = await _sessionManager.GetModelSettingsAsync(resolved.Session.Id, cancellationToken).ConfigureAwait(false);
-        await ReplyAsync(sender, message, "Thinking settings:" + Environment.NewLine + FormatModelSettings(settings), BuildThinkingSelectionButtons(settings), cancellationToken, includeNavigationButtons: false).ConfigureAwait(false);
+        string? usageSummary = await TryBuildAccountUsageSummaryAsync(cancellationToken).ConfigureAwait(false);
+        await ReplyAsync(sender, message, "Thinking settings:" + Environment.NewLine + FormatModelSettings(settings, usageSummary), BuildThinkingSelectionButtons(settings), cancellationToken, includeNavigationButtons: false).ConfigureAwait(false);
     }
 
     private async Task HandleThinkingSelectionAsync(
@@ -1248,7 +1266,8 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
 
         await EditCallbackProgressAsync(sender, message, "Updating thinking settings...", cancellationToken).ConfigureAwait(false);
         CodexSessionModelSettings settings = await _sessionManager.UpdateModelSettingsAsync(resolved.Session.Id, null, parts[1], cancellationToken).ConfigureAwait(false);
-        await ReplyAsync(sender, message, "Thinking settings:" + Environment.NewLine + FormatModelSettings(settings), BuildThinkingSelectionButtons(settings), cancellationToken, includeNavigationButtons: false).ConfigureAwait(false);
+        string? usageSummary = await TryBuildAccountUsageSummaryAsync(cancellationToken).ConfigureAwait(false);
+        await ReplyAsync(sender, message, "Thinking settings:" + Environment.NewLine + FormatModelSettings(settings, usageSummary), BuildThinkingSelectionButtons(settings), cancellationToken, includeNavigationButtons: false).ConfigureAwait(false);
     }
 
     private async Task HandleStatusAsync(TelegramInboundMessage message, string arguments, ITelegramBotMessageSender sender, CancellationToken cancellationToken)
@@ -1263,7 +1282,8 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         }
 
         CodexSessionModelSettings settings = await _sessionManager.GetModelSettingsAsync(resolved.Session.Id, cancellationToken).ConfigureAwait(false);
-        await ReplyAsync(sender, message, FormatStatus(resolved.Session, settings), BuildSessionButtons([resolved.Session]), cancellationToken).ConfigureAwait(false);
+        string? usageSummary = await TryBuildAccountUsageSummaryAsync(cancellationToken).ConfigureAwait(false);
+        await ReplyAsync(sender, message, FormatStatus(resolved.Session, settings, usageSummary), BuildSessionButtons([resolved.Session]), cancellationToken).ConfigureAwait(false);
     }
 
     private async Task HandleUsageAsync(TelegramInboundMessage message, ITelegramBotMessageSender sender, CancellationToken cancellationToken)
@@ -1884,7 +1904,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         return $"{session.Name} · {FormatStatusValue(session.Status)} · {FormatRelativeAge(session.LastActivityUtc)}";
     }
 
-    private static string FormatStatus(CodexSessionSummary session, CodexSessionModelSettings? settings = null)
+    private static string FormatStatus(CodexSessionSummary session, CodexSessionModelSettings? settings = null, string? usageSummary = null)
     {
         StringBuilder builder = new();
         builder.AppendLine($"Session: {session.Name}");
@@ -1894,6 +1914,11 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         {
             builder.AppendLine($"Model: {FormatModelDisplay(settings)}");
             builder.AppendLine($"Thinking: {FormatValue(settings.ReasoningEffort)}");
+        }
+
+        if (!string.IsNullOrWhiteSpace(usageSummary))
+        {
+            builder.AppendLine(usageSummary);
         }
 
         builder.AppendLine($"Created: {FormatRelativeAge(session.CreatedUtc)}");
@@ -1919,8 +1944,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             return "Codex usage: no account usage windows were reported by Codex.";
         }
 
-        CodexRateLimitSnapshotVm primaryBucket = usage.RateLimits.FirstOrDefault(bucket => string.Equals(bucket.LimitId, "codex", StringComparison.OrdinalIgnoreCase))
-            ?? usage.RateLimits[0];
+        CodexRateLimitSnapshotVm primaryBucket = ResolvePrimaryUsageBucket(usage)!;
         StringBuilder builder = new();
         builder.AppendLine("Codex usage");
 
@@ -1945,6 +1969,120 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         }
 
         return builder.ToString().TrimEnd();
+    }
+
+    private async Task<string?> TryBuildAccountUsageSummaryAsync(CancellationToken cancellationToken)
+    {
+        DateTimeOffset now = DateTimeOffset.UtcNow;
+        if (_hasCachedUsageSummary && _cachedUsageSummaryExpiresAtUtc > now)
+        {
+            return _cachedUsageSummary;
+        }
+
+        await _usageSummaryLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            now = DateTimeOffset.UtcNow;
+            if (_hasCachedUsageSummary && _cachedUsageSummaryExpiresAtUtc > now)
+            {
+                return _cachedUsageSummary;
+            }
+
+            _cachedUsageSummary = await FetchAccountUsageSummaryAsync(cancellationToken).ConfigureAwait(false);
+            _cachedUsageSummaryExpiresAtUtc = now.Add(InlineUsageSummaryCacheDuration);
+            _hasCachedUsageSummary = true;
+            return _cachedUsageSummary;
+        }
+        finally
+        {
+            _usageSummaryLock.Release();
+        }
+    }
+
+    private async Task<string?> FetchAccountUsageSummaryAsync(CancellationToken cancellationToken)
+    {
+        using CancellationTokenSource timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(InlineUsageSummaryTimeout);
+
+        try
+        {
+            CodexAccountUsageVm usage = await _accountUsageService.GetUsageAsync(timeout.Token).ConfigureAwait(false);
+            return FormatAccountUsageSummary(usage);
+        }
+        catch (OperationCanceledException exception) when (!cancellationToken.IsCancellationRequested)
+        {
+            _logger.LogDebug(exception, "Codex usage summary lookup timed out before a control reply was sent.");
+            return null;
+        }
+        catch (FileNotFoundException exception)
+        {
+            _logger.LogDebug(exception, "Skipping inline Codex usage summary because the Codex executable was not found.");
+            return null;
+        }
+        catch (CodexCapabilityNotSupportedException exception)
+        {
+            _logger.LogDebug(exception, "Skipping inline Codex usage summary because the configured backend does not support account rate limits.");
+            return null;
+        }
+        catch (CodexMethodNotFoundException exception)
+        {
+            _logger.LogDebug(exception, "Skipping inline Codex usage summary because the installed Codex app-server does not expose account rate limits.");
+            return null;
+        }
+        catch (Exception exception)
+        {
+            _logger.LogWarning(exception, "Skipping inline Codex usage summary because usage lookup failed.");
+            return null;
+        }
+    }
+
+    private static string? FormatAccountUsageSummary(CodexAccountUsageVm usage)
+    {
+        CodexRateLimitSnapshotVm? primaryBucket = ResolvePrimaryUsageBucket(usage);
+        if (primaryBucket is null)
+        {
+            return null;
+        }
+
+        List<string> windows = [];
+        AddUsageWindowSummary(windows, "Primary window", primaryBucket.Primary, usage.RetrievedAtUtc);
+        AddUsageWindowSummary(windows, "Secondary window", primaryBucket.Secondary, usage.RetrievedAtUtc);
+        if (windows.Count == 0)
+        {
+            return null;
+        }
+
+        string prefix = string.IsNullOrWhiteSpace(primaryBucket.PlanType)
+            ? "Rate limits"
+            : $"Rate limits ({primaryBucket.PlanType})";
+        return $"{prefix}: {string.Join("; ", windows)}";
+    }
+
+    private static CodexRateLimitSnapshotVm? ResolvePrimaryUsageBucket(CodexAccountUsageVm usage)
+        => usage.RateLimits.FirstOrDefault(bucket => string.Equals(bucket.LimitId, "codex", StringComparison.OrdinalIgnoreCase))
+            ?? usage.RateLimits.FirstOrDefault();
+
+    private static void AddUsageWindowSummary(
+        List<string> windows,
+        string fallbackLabel,
+        CodexRateLimitWindowVm? window,
+        DateTimeOffset retrievedAtUtc)
+    {
+        if (window is null)
+        {
+            return;
+        }
+
+        string label = FormatWindowLabel(fallbackLabel, window.WindowDurationMinutes);
+        int remainingPercent = Math.Clamp(100 - window.UsedPercent, 0, 100);
+        StringBuilder builder = new();
+        builder.Append($"{label}: {remainingPercent.ToString(CultureInfo.InvariantCulture)}% remaining");
+        if (window.ResetsAtUtc is { } resetsAtUtc)
+        {
+            builder.Append($"; resets {FormatResetDistance(retrievedAtUtc, resetsAtUtc)}");
+        }
+
+        windows.Add(builder.ToString());
     }
 
     private static void AppendUsageWindow(StringBuilder builder, string fallbackLabel, CodexRateLimitWindowVm? window, DateTimeOffset retrievedAtUtc)
@@ -2220,12 +2358,17 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         return $"{message.ChatType} root";
     }
 
-    private static string FormatModelSettings(CodexSessionModelSettings settings)
+    private static string FormatModelSettings(CodexSessionModelSettings settings, string? usageSummary = null)
     {
         StringBuilder builder = new();
         builder.AppendLine($"Session: {settings.SessionName}");
         builder.AppendLine($"Model: {FormatModelDisplay(settings)}");
         builder.AppendLine($"Thinking: {FormatValue(settings.ReasoningEffort)}");
+        if (!string.IsNullOrWhiteSpace(usageSummary))
+        {
+            builder.AppendLine(usageSummary);
+        }
+
         if (settings.AvailableReasoningEfforts.Count > 0)
         {
             builder.AppendLine($"Available thinking: {string.Join(", ", settings.AvailableReasoningEfforts)}");
@@ -2295,14 +2438,29 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
     private static string FormatNullableAge(DateTimeOffset? value)
         => value is null ? "<none>" : FormatRelativeAge(value.Value);
 
-    private static string BuildSelectedSessionReply(string action, CodexSessionSummary session, CodexSessionModelSettings settings, string? projectName = null)
-        => string.Join(Environment.NewLine, [
+    private static string BuildSelectedSessionReply(
+        string action,
+        CodexSessionSummary session,
+        CodexSessionModelSettings settings,
+        string? projectName = null,
+        string? usageSummary = null)
+    {
+        List<string> lines =
+        [
             $"{action} {session.Name}.",
             $"Project: {projectName ?? CodexTextFormatting.ResolveProjectName(session.WorkingDirectory)}",
             $"Model: {FormatModelDisplay(settings)}",
             $"Thinking: {FormatValue(settings.ReasoningEffort)}",
-            "Send a message to continue, or use /tail, /status, /model, or /thinking when you need a control."
-        ]);
+        ];
+
+        if (!string.IsNullOrWhiteSpace(usageSummary))
+        {
+            lines.Add(usageSummary);
+        }
+
+        lines.Add("Send a message to continue, or use /tail, /status, /model, /thinking, or /usage when you need a control.");
+        return string.Join(Environment.NewLine, lines);
+    }
 
     internal static IReadOnlyList<IReadOnlyList<TelegramReplyButton>>? BuildSessionButtons(
         IReadOnlyList<CodexSessionSummary> sessions,
@@ -2751,6 +2909,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         }
 
         CodexSessionModelSettings settings = await _sessionManager.GetModelSettingsAsync(session.Id, cancellationToken).ConfigureAwait(false);
+        string? usageSummary = await TryBuildAccountUsageSummaryAsync(cancellationToken).ConfigureAwait(false);
         string projectName = CodexTextFormatting.ResolveProjectName(workingDirectory);
         await ReplyAsync(
             sender,
@@ -2761,7 +2920,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         await ReplyAsync(
             sender,
             topicScope,
-            BuildSelectedSessionReply("Created and selected", session, settings, projectName),
+            BuildSelectedSessionReply("Created and selected", session, settings, projectName, usageSummary),
             BuildSessionButtons([session], includeUse: false),
             cancellationToken).ConfigureAwait(false);
     }

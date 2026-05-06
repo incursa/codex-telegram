@@ -287,6 +287,7 @@ public sealed class TelegramCommandHandlerTests
         using CommandHandlerHarness harness = CommandHandlerHarness.Create();
         string projectPath = harness.Temp.CreateDirectory("repo");
         TelegramConversationScope conversation = new(5555, null);
+        SetUsageWindows(harness);
         harness.ProjectCatalog.Projects.Add(new CodexProjectCatalogRecord
         {
             WorkingDirectory = projectPath,
@@ -304,6 +305,7 @@ public sealed class TelegramCommandHandlerTests
         Assert.Equal("Release smoke", request.Name);
         Assert.Equal(projectPath, request.WorkingDirectory);
         Assert.Contains("Created and selected Release smoke.", sent.Text);
+        Assert.Contains("Rate limits (pro): 5-hour window: 83% remaining; resets in 2h 30m; Weekly window: 52% remaining; resets in 4d 0h", sent.Text);
         Assert.Equal(["Sessions", "Projects", "Help"], FlattenButtonLabels(sent));
         Assert.DoesNotContain(FlattenButtonLabels(sent), label => IsSessionControlLabel(label));
         Assert.DoesNotContain(FlattenButtonLabels(sent), label => label.StartsWith("Use", StringComparison.OrdinalIgnoreCase));
@@ -694,6 +696,7 @@ public sealed class TelegramCommandHandlerTests
     {
         using CommandHandlerHarness harness = CommandHandlerHarness.Create();
         TelegramConversationScope conversation = new(5555, null);
+        SetUsageWindows(harness);
         harness.SessionManager.Sessions.Add(CreateSession("thread-1", "Demo session", harness.Temp.Path));
         await harness.StateStore.SetActiveSessionIdAsync(conversation, "thread-1", CancellationToken.None);
 
@@ -703,7 +706,9 @@ public sealed class TelegramCommandHandlerTests
             CancellationToken.None);
 
         Assert.Equal(("thread-1", (string?)"gpt-5.4-mini", (string?)"medium"), Assert.Single(harness.SessionManager.UpdateRequests));
-        Assert.Contains("Updated model settings:", Assert.Single(harness.Sender.Sent).Text);
+        string text = Assert.Single(harness.Sender.Sent).Text;
+        Assert.Contains("Updated model settings:", text);
+        Assert.Contains("Rate limits (pro): 5-hour window: 83% remaining; resets in 2h 30m; Weekly window: 52% remaining; resets in 4d 0h", text);
     }
 
     [Fact]
@@ -756,6 +761,7 @@ public sealed class TelegramCommandHandlerTests
     {
         using CommandHandlerHarness statusHarness = CommandHandlerHarness.Create();
         TelegramConversationScope conversation = new(5555, null);
+        SetUsageWindows(statusHarness);
         statusHarness.SessionManager.Sessions.Add(CreateSession("thread-1", "Demo session", statusHarness.Temp.Path));
         await statusHarness.StateStore.SetActiveSessionIdAsync(conversation, "thread-1", CancellationToken.None);
 
@@ -766,6 +772,7 @@ public sealed class TelegramCommandHandlerTests
 
         Assert.Contains("Demo session", Assert.Single(statusHarness.Sender.Sent).Text);
         Assert.Contains("Status: idle", statusHarness.Sender.Sent.Single().Text);
+        Assert.Contains("Rate limits (pro): 5-hour window: 83% remaining; resets in 2h 30m; Weekly window: 52% remaining; resets in 4d 0h", statusHarness.Sender.Sent.Single().Text);
 
         using CommandHandlerHarness tailHarness = CommandHandlerHarness.Create();
         tailHarness.SessionManager.Sessions.Add(CreateSession("thread-1", "Demo session", tailHarness.Temp.Path));
@@ -1248,6 +1255,25 @@ public sealed class TelegramCommandHandlerTests
                     AvailabilityMessage: null),
             ],
             [CodexReasoningEffort.Low, CodexReasoningEffort.Medium, CodexReasoningEffort.High, CodexReasoningEffort.XHigh]);
+
+    private static void SetUsageWindows(CommandHandlerHarness harness)
+        => harness.AccountUsage.Usage = new CodexAccountUsageVm(
+            DateTimeOffset.Parse("2026-05-06T12:00:00Z", CultureInfo.InvariantCulture),
+            [
+                new CodexRateLimitSnapshotVm(
+                    "codex",
+                    null,
+                    "pro",
+                    null,
+                    new CodexRateLimitWindowVm(
+                        17,
+                        DateTimeOffset.Parse("2026-05-06T14:30:00Z", CultureInfo.InvariantCulture),
+                        300),
+                    new CodexRateLimitWindowVm(
+                        48,
+                        DateTimeOffset.Parse("2026-05-10T12:00:00Z", CultureInfo.InvariantCulture),
+                        10080)),
+            ]);
 
     private static async Task WaitUntilAsync(Func<bool> predicate)
     {
