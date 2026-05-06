@@ -17,7 +17,7 @@ Record the date, operator, OS, published asset or commit SHA, Codex CLI version,
 
 1. Start the app without an existing `appsettings.Local.json` beside the executable and confirm the first-run wizard opens.
 2. Paste a BotFather token and confirm the wizard validates it without printing the token.
-3. Let the wizard wait for a private Telegram message, send `/whoami` or a short message to the bot, and confirm the wizard captures the user ID.
+3. Let the wizard show a setup code and wait for a private Telegram message, send that exact code to the bot, and confirm the wizard captures the user ID.
 4. Confirm `TelegramBot:AllowedUserIds` contains the captured user ID after setup.
 5. Send `/projects` and confirm the response does not expose unrelated local paths.
 6. Send `/project add <absolute repository path>` for a directory under an allowed workspace root.

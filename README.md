@@ -63,7 +63,7 @@ Recommended BotFather settings for a first private-chat release:
 
 Copy-paste BotFather text, command lists, and privacy recommendations are in [BotFather setup](docs/botfather.md).
 
-BotFather gives you the bot token, but it cannot give you your personal Telegram user ID. On first run, Codex Telegram can validate the bot token, wait for one private message to the bot, and save your user ID automatically.
+BotFather gives you the bot token, but it cannot give you your personal Telegram user ID. On first run, Codex Telegram can validate the bot token, show a random setup code in the terminal, wait for one private message containing that code, and save your user ID automatically.
 
 ### Windows
 

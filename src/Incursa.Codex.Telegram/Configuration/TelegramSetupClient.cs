@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using Telegram.Bot;
 using Telegram.Bot.Types;
 using Telegram.Bot.Types.Enums;
@@ -18,13 +19,14 @@ internal interface ITelegramSetupClient
     Task<TelegramBotIdentity> ValidateBotTokenAsync(string token, CancellationToken cancellationToken);
 
     /// <summary>
-    /// Waits for one private Telegram message so setup can capture the operator's numeric user ID.
+    /// Waits for one private Telegram message containing the setup challenge so setup can capture the operator's numeric user ID.
     /// </summary>
     /// <param name="token">The normalized Telegram bot token.</param>
-    /// <param name="timeout">Maximum time to wait for a private message.</param>
+    /// <param name="expectedChallenge">Random setup challenge that must be present in the message text.</param>
+    /// <param name="timeout">Maximum time to wait for a matching private message.</param>
     /// <param name="cancellationToken">Cancellation token for the polling operation.</param>
-    /// <returns>The captured Telegram user when a private message arrives; otherwise <see langword="null"/>.</returns>
-    Task<TelegramSetupUser?> WaitForPrivateUserMessageAsync(string token, TimeSpan timeout, CancellationToken cancellationToken);
+    /// <returns>The captured Telegram user when a matching private message arrives; otherwise <see langword="null"/>.</returns>
+    Task<TelegramSetupUser?> WaitForPrivateUserMessageAsync(string token, string expectedChallenge, TimeSpan timeout, CancellationToken cancellationToken);
 }
 
 /// <summary>
@@ -76,12 +78,14 @@ internal sealed class TelegramSetupClient : ITelegramSetupClient
     }
 
     /// <inheritdoc />
-    public async Task<TelegramSetupUser?> WaitForPrivateUserMessageAsync(string token, TimeSpan timeout, CancellationToken cancellationToken)
+    public async Task<TelegramSetupUser?> WaitForPrivateUserMessageAsync(string token, string expectedChallenge, TimeSpan timeout, CancellationToken cancellationToken)
     {
-        if (timeout <= TimeSpan.Zero)
+        if (timeout <= TimeSpan.Zero || string.IsNullOrWhiteSpace(expectedChallenge))
         {
             return null;
         }
+
+        string normalizedChallenge = expectedChallenge.Trim();
 
         TelegramBotClient client = CreateClient(token);
         int? offset = await CreateFreshOffsetAsync(client, cancellationToken).ConfigureAwait(false);
@@ -111,7 +115,7 @@ internal sealed class TelegramSetupClient : ITelegramSetupClient
                 offset = update.Id + 1;
                 Message? message = update.Message;
                 User? sender = message?.From;
-                if (message is null || sender is null || message.Chat.Type is not ChatType.Private)
+                if (message is null || sender is null || message.Chat.Type is not ChatType.Private || !TextContainsSetupChallenge(message.Text, normalizedChallenge))
                 {
                     continue;
                 }
@@ -129,6 +133,18 @@ internal sealed class TelegramSetupClient : ITelegramSetupClient
 
         return null;
     }
+
+    internal static string CreateSetupChallenge()
+    {
+        Span<byte> bytes = stackalloc byte[4];
+        RandomNumberGenerator.Fill(bytes);
+        return $"CT-{Convert.ToHexString(bytes)}";
+    }
+
+    internal static bool TextContainsSetupChallenge(string? messageText, string expectedChallenge)
+        => !string.IsNullOrWhiteSpace(expectedChallenge)
+            && !string.IsNullOrWhiteSpace(messageText)
+            && messageText.Contains(expectedChallenge.Trim(), StringComparison.OrdinalIgnoreCase);
 
     private static TelegramBotClient CreateClient(string token)
     {
@@ -161,7 +177,7 @@ internal sealed class TelegramSetupClient : ITelegramSetupClient
         {
             await client.SendMessage(
                 setupUser.ChatId,
-                "Codex Telegram setup captured your user ID. Return to the terminal to finish setup.",
+                "Codex Telegram setup captured your user ID because your message matched the terminal challenge. Return to the terminal to finish setup.",
                 cancellationToken: cancellationToken).ConfigureAwait(false);
         }
         catch (Exception exception) when (exception is not OperationCanceledException || !cancellationToken.IsCancellationRequested)

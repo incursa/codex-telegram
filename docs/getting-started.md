@@ -99,14 +99,14 @@ The easiest bootstrap path is the first-run wizard:
 
 1. Start the app with no local settings file beside the executable.
 2. Paste the BotFather token when the wizard asks for it.
-3. Let the wizard wait for one private message to the bot.
-4. Send `/whoami` or any short message to the bot in a private chat.
+3. Let the wizard show a random setup code and wait for one private message to the bot.
+4. Send that exact setup code to the bot in a private chat.
 5. Confirm that the wizard captured and saved your numeric user ID.
 6. If you want the bot in a group, send `/whoami` there after private chat setup and copy the group chat ID.
 
 The manual fallback is still available:
 
-1. Leave `TelegramBot:AllowedUserIds` empty only long enough to run `/whoami`.
+1. Leave `TelegramBot:AllowedUserIds` empty only long enough to complete the setup-code capture or run `/whoami`.
 2. Copy the numeric user ID from the reply.
 3. Add that user ID to the allowlist.
 
@@ -281,7 +281,7 @@ When you launch the app for the first time, work through this list in order.
 1. Make sure the `codex` CLI works in a normal terminal session.
 2. Make sure the Telegram bot token is configured.
 3. Make sure `TelegramBot.Enabled` is `true`.
-4. Start with an empty `AllowedUserIds` list only long enough to run `/whoami`.
+4. Start with an empty `AllowedUserIds` list only long enough to complete the setup-code capture or run `/whoami`.
 5. Put your own user ID into `AllowedUserIds`.
 6. Add any group chat IDs you want the bot to trust.
 7. Set a workspace root that includes the repositories you want to work on.
