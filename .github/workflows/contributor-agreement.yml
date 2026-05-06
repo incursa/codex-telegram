@@ -29,7 +29,7 @@ jobs:
 
     steps:
       - name: Check contributor agreement
-        uses: incursa/contributor-agreement-action@v0.1.0
+        uses: incursa/contributor-agreement-action@v0.1.1
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           storage-token: ${{ secrets.INCURSA_CONTRIBUTOR_AGREEMENTS_TOKEN }}
