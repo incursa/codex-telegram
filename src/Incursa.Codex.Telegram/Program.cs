@@ -86,7 +86,7 @@ builder.Services.PostConfigure<CodexClientOptions>(options =>
 
     options.ClientName = DefaultIfWhiteSpace(options.ClientName, "Incursa.Codex.Telegram");
     options.ClientTitle = DefaultIfWhiteSpace(options.ClientTitle, "Incursa Codex Telegram");
-    options.ClientVersion = DefaultIfWhiteSpace(options.ClientVersion, "1.0.12");
+    options.ClientVersion = DefaultIfWhiteSpace(options.ClientVersion, "1.0.14");
     options.CodexPathOverride = DefaultIfWhiteSpace(
         options.CodexPathOverride,
         DefaultIfWhiteSpace(builder.Configuration["TelegramBot:CodexExecutablePath"], Environment.GetEnvironmentVariable("CODEX_PATH")));

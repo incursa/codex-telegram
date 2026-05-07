@@ -113,7 +113,7 @@ OpenAI transcription: only if you want voice notes
 Local data root: leave blank unless you need a custom state folder
 ```
 
-The app writes `appsettings.Local.json` beside the executable by default. Keep that file local and untracked. If you launch the app from another command-line directory later, it still uses the settings file in the app folder.
+The app writes `appsettings.Local.json` beside the executable by default. Keep that file local and untracked. If the executable-local file is missing and your launch directory has `appsettings.Local.json`, the app uses the launch-directory file.
 
 7. Start normal operation with the menu skipped.
 
@@ -191,7 +191,7 @@ OpenAI transcription: only if you want voice notes
 Local data root: leave blank unless you need a custom state folder
 ```
 
-The app writes `appsettings.Local.json` beside the executable by default. Keep that file local and untracked. If you launch the app from another command-line directory later, it still uses the settings file in the app folder.
+The app writes `appsettings.Local.json` beside the executable by default. Keep that file local and untracked. If the executable-local file is missing and your launch directory has `appsettings.Local.json`, the app uses the launch-directory file.
 
 8. Start normal operation with the menu skipped.
 
@@ -275,7 +275,7 @@ OpenAI transcription: only if you want voice notes
 Local data root: leave blank unless you need a custom state folder
 ```
 
-The app writes `appsettings.Local.json` beside the executable by default. Keep that file local and untracked. If you launch the app from another command-line directory later, it still uses the settings file in the app folder.
+The app writes `appsettings.Local.json` beside the executable by default. Keep that file local and untracked. If the executable-local file is missing and your launch directory has `appsettings.Local.json`, the app uses the launch-directory file.
 
 9. Start normal operation with the menu skipped.
 
