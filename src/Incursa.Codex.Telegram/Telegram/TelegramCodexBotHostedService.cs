@@ -388,12 +388,6 @@ internal sealed class TelegramCodexBotHostedService : BackgroundService
             return AttachmentHandlingDecision.Skip;
         }
 
-        string chatType = message.Chat.Type.ToString();
-        if (TelegramRoutingPolicy.CanAutoRoute(chatType, message.MessageThreadId))
-        {
-            return AttachmentHandlingDecision.Download;
-        }
-
         if (IsSendCommandWithArguments(message))
         {
             return AttachmentHandlingDecision.Download;
@@ -402,6 +396,12 @@ internal sealed class TelegramCodexBotHostedService : BackgroundService
         if (IsCommandMessage(message))
         {
             return AttachmentHandlingDecision.Skip;
+        }
+
+        string chatType = message.Chat.Type.ToString();
+        if (TelegramRoutingPolicy.CanAutoRoute(chatType, message.MessageThreadId))
+        {
+            return AttachmentHandlingDecision.Download;
         }
 
         await sender.SendTextMessageAsync(

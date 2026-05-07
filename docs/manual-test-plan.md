@@ -24,7 +24,7 @@ Record the date, operator, OS, published asset or commit SHA, Codex CLI version,
 7. Send `/project add <absolute repository path>` for a directory under an allowed workspace root.
 8. Send `/project current` and confirm the selected project is correct.
 9. Send `/doctor` and confirm it explains access, routing, active project/session state, workspace roots, queue state, and a plausible next action.
-10. Send `/new <short name>` and confirm the reply summarizes the session without noisy status/model/thinking buttons; if Codex rate limits are available, confirm it includes a compact `Rate limits` line.
+10. Send `/new` and confirm the reply uses an auto-generated project-based session name without noisy status/model/thinking buttons; if Codex rate limits are available, confirm it includes a compact `Rate limits` line.
 11. Send a normal text prompt and confirm live output returns to the private chat.
 12. Send `/tail`, `/status`, `/usage`, `/model`, and `/thinking` and confirm each command is understandable without stale or truncated buttons; `/status`, `/model`, and `/thinking` should include compact rate limits when available.
 13. Send `/stop` and confirm pending queued messages for the session are cleared.
@@ -42,10 +42,10 @@ Record the date, operator, OS, published asset or commit SHA, Codex CLI version,
 
 1. Add the bot to a normal group and record the group chat ID with `/whoami`.
 2. Send `/trust` in the group from an allowlisted admin account.
-3. Send `/doctor` in the group root and confirm it clearly says root messages do not auto-route.
-4. Send plain text to the group root and confirm the bot explains that it was not sent to Codex.
+3. Send `/doctor` in the group root and confirm it says trusted group-root messages can auto-route.
+4. Select or add a project in the group root, then send plain text and confirm it starts or continues the root chat session.
 5. With privacy mode enabled, confirm `/send <text>` works and plain text behavior matches Telegram privacy expectations.
-6. If plain group text is part of the demo, disable privacy mode in BotFather, re-add the bot if needed, and confirm ordinary text routes only in the intended topic or private chat.
+6. If ordinary group text is part of the demo, disable privacy mode in BotFather, re-add the bot if needed, and confirm ordinary text routes only in the intended trusted group or topic.
 7. In a forum-enabled supergroup, run `/topic new <name>` with the bot missing topic-management rights and confirm the error is understandable.
 8. Grant the needed topic rights and rerun `/topic new <name>`.
 9. Send messages in two topics and confirm each topic remains bound to its own session.

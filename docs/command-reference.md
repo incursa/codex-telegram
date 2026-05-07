@@ -10,8 +10,8 @@ Use [README.md](../README.md) for first setup and [usage.md](usage.md) for day-t
 2. Arguments are separated by whitespace unless a command says otherwise.
 3. Session IDs can be abbreviated if the prefix is unambiguous.
 4. Project selectors can be a list number, project key, project name prefix, or full path.
-5. Private chats and forum topics can auto-route plain text to the active session.
-6. Group-root plain text does not auto-route; use `/send <text>`.
+5. Private chats, trusted group roots, and forum topics can auto-route plain text to the active session.
+6. Use `/send <text>` when Telegram privacy mode or an unsupported chat type prevents normal auto-routing.
 7. Attachments are forwarded to Codex when they are attached to a routed message.
 8. Voice notes are transcribed first, then sent to the active session.
 9. Groups and forum topics require an allowed user plus either `AllowedChatIds` or `/trust` from an allowed user in that chat.
@@ -101,7 +101,7 @@ Expected behavior:
 2. In a private chat, explains that no chat trust entry is required.
 3. In a group or forum topic, stores the current chat ID in local Telegram state.
 4. Allows future commands, callbacks, topic workflows, audio, and attachments from allowlisted users in that chat.
-5. Keeps group-root plain text blocked from automatic routing; use `/send <text>` or a forum topic.
+5. Allows the trusted chat root and each forum topic to keep separate active project/session state.
 6. `/trust remove` removes Telegram-granted trust for the current chat. If the chat is also listed in `TelegramBot:AllowedChatIds`, configuration still allows it.
 
 ### `/doctor`
@@ -213,13 +213,14 @@ Expected behavior:
 1. Shows project name/key/path when a project is selected.
 2. Gives selection guidance when no project is active.
 
-### `/new <name>`
+### `/new [name]`
 
 Creates and selects a new Codex session in the active project.
 
 Syntax:
 
 ```text
+/new
 /new <session name>
 ```
 
@@ -232,14 +233,14 @@ Example:
 Expected behavior:
 
 1. Requires an active project.
-2. Creates a Codex session with the supplied name.
+2. Creates a Codex session with the supplied name, or an auto-generated project-based name when omitted.
 3. Selects it for the current conversation.
 4. Starts following live output for that session.
 5. Includes a compact `Rate limits` line when Codex account data is available quickly.
 
 ### Plain Text Message
 
-In a private chat or forum topic, a normal message continues the active session.
+In a private chat, trusted group root, or forum topic, a normal message continues the active session.
 
 Example:
 
@@ -250,7 +251,7 @@ Review the README and tell me the top three setup gaps. Do not edit files.
 Expected behavior:
 
 1. Uses the selected session when one exists.
-2. Creates a default `Telegram session` if no session is selected.
+2. Creates a project-based default session if no session is selected.
 3. Sends attachments with the prompt when attachments are present.
 4. Queues the prompt if a turn is already active.
 
@@ -273,7 +274,7 @@ Example:
 Expected behavior:
 
 1. Routes text to the active session or creates one when allowed.
-2. Useful in group roots where plain text does not auto-route.
+2. Useful when Telegram privacy mode or an unsupported chat type prevents normal auto-routing.
 3. Queues the prompt if a turn is already active.
 
 ### `/steer <text>`

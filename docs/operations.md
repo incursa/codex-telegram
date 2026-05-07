@@ -57,13 +57,13 @@ If an OpenAI key is rotated, update `OpenAI:ApiKey` or `OPENAI_API_KEY` and rest
 
 ## Group And Forum Operations
 
-Private chat is the primary operating mode.
+Private chat is the primary setup mode. A trusted group root can also be used as a project/session lane, and forum topics can split one group into multiple lanes.
 
 For groups and forum topics:
 
 1. Add only trusted users to `TelegramBot:AllowedUserIds`.
 2. Trust the group with `/trust` from an allowlisted admin account, or add the group chat ID to `TelegramBot:AllowedChatIds`.
-3. Keep Telegram privacy mode enabled unless plain group text is required.
+3. Keep Telegram privacy mode enabled unless ordinary group-root text should route to Codex.
 4. Grant topic-management rights only if `/topic new` is part of the supported workflow.
 
 Group and forum messages require both an allowed user and a trusted chat.

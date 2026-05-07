@@ -12,7 +12,7 @@ internal static class TelegramRoutingPolicy
     /// <param name="messageThreadId">Telegram forum topic thread ID, when present.</param>
     /// <returns><see langword="true"/> when automatic routing is allowed.</returns>
     public static bool CanAutoRoute(string chatType, int? messageThreadId)
-        => IsPrivateChat(chatType) || messageThreadId is not null;
+        => IsPrivateChat(chatType) || IsGroupChat(chatType) || messageThreadId is not null;
 
     /// <summary>
     /// Determines whether the Telegram update came from a private chat.
@@ -23,12 +23,19 @@ internal static class TelegramRoutingPolicy
         => string.Equals(chatType, "private", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
+    /// Determines whether the Telegram update came from a group-style chat.
+    /// </summary>
+    /// <param name="chatType">Telegram chat type.</param>
+    /// <returns><see langword="true"/> for group and supergroup chats.</returns>
+    public static bool IsGroupChat(string chatType)
+        => string.Equals(chatType, "group", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(chatType, "supergroup", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
     /// Builds the user-facing explanation shown when a message is not automatically routed.
     /// </summary>
     /// <param name="chatType">Telegram chat type.</param>
     /// <returns>Routing guidance message.</returns>
     public static string BuildNotRoutedMessage(string chatType)
-        => string.Equals(chatType, "supergroup", StringComparison.OrdinalIgnoreCase)
-            ? "I only auto-route messages from private chats or forum topics. This message was sent to the group root, so I did not send it to Codex. Use /send <text>, open a topic, or message me privately."
-            : $"I only auto-route messages from private chats or topic threads. This {chatType} message was not sent to Codex. Use /send <text> or message me privately.";
+        => $"I only auto-route messages from private chats, trusted groups, or topic threads. This {chatType} message was not sent to Codex. Use /send <text> or message me privately.";
 }

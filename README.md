@@ -330,11 +330,11 @@ After a successful test, you should see the transcription in Telegram before the
 | `/projects` | List known local project directories. |
 | `/project add <path>` | Add and select a repository or workspace. |
 | `/project current` | Confirm the active project for this Telegram conversation. |
-| `/new <name>` | Create and select a fresh Codex session. |
+| `/new [name]` | Create and select a fresh Codex session; omit the name to auto-generate one from the active project. |
 | `/sessions` | Show active and Telegram-managed sessions. |
 | `/sessions all [count]` | Show older Codex history. |
 | `/use <sessionId>` | Resume an existing session. |
-| `/send <text>` | Send text when plain text is not automatically routed, especially in groups. |
+| `/send <text>` | Explicitly send text when privacy mode or chat type prevents normal auto-routing. |
 | `/steer <text>` | Add guidance to a currently active turn. |
 | `/queue` | View queued prompts for the conversation, then edit, delete, or send one now. |
 | `/model` | Show or change the active session model. |
@@ -385,16 +385,16 @@ Security rules:
 
 ## Supported Modes
 
-Private chat is the primary supported operating mode and the recommended first setup path.
+Private chat is the recommended first setup path. Trusted groups and forum topics are also supported conversation scopes.
 
-Groups and forum topics are available for advanced workflows, but they require:
+Groups and forum topics require:
 
 1. An allowed Telegram user.
 2. A trusted group chat, either from `TelegramBot:AllowedChatIds` or `/trust` sent in that chat by an allowlisted user.
 3. BotFather privacy settings that match the desired behavior.
 4. Topic-management rights if the bot should create forum topics.
 
-Start privately first. Add groups only after the private flow works.
+Start privately first. Then use a trusted group root as a single project/session lane, or use forum topics when one group needs multiple independent sessions.
 
 ## Support And Security
 

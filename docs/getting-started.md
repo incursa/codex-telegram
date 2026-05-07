@@ -23,7 +23,7 @@ It can:
 1. Accept Telegram messages from allowlisted users and optional allowlisted chats.
 2. Create and select Codex sessions.
 3. Route plain text, attachments, and voice notes into the active session.
-4. Keep per-conversation session state so a private chat or a forum topic can continue independently.
+4. Keep per-conversation session state so a private chat, trusted group root, or forum topic can continue independently.
 5. Stream and queue Codex session updates back to Telegram.
 
 It does not:
@@ -375,7 +375,7 @@ Suggested sequence:
 1. Send `/projects`.
 2. Add one known repository with `/project add <absolute path>`.
 3. Confirm the selected project with `/project current`.
-4. Start a session with `/new <name>`.
+4. Start a session with `/new`, or use `/new <name>` when you want a specific name.
 5. Send a plain text message.
 6. Confirm the bot replies with active-session output.
 7. Try `/doctor`, `/tail`, `/status`, `/model`, and `/thinking`.
@@ -399,16 +399,16 @@ Group behavior:
 1. The bot should still be tested privately first.
 2. Group IDs are numeric and often negative.
 3. A group must be trusted in addition to the individual Telegram user.
-4. Plain text in the group root is not auto-routed to Codex. In an allowed group, the bot explains that you should use `/send <text>`, a forum topic, or a private chat.
-5. If the group is busy, private-mode behavior and allowlists matter more than in a private chat.
+4. Plain text in a trusted group root can auto-route to that group's active session, which makes one group per project a simple workflow.
+5. If the group is busy, privacy-mode behavior and allowlists matter more than in a private chat.
 
 Recommended group workflow:
 
 1. Add the bot to the group.
 2. If necessary, make it an admin with topic-management rights.
 3. Send `/trust` in the group from the allowlisted admin account.
-4. Decide whether privacy should stay enabled.
-5. Use `/send <text>` for group-root messages.
+4. Decide whether privacy should stay enabled. With privacy enabled, Telegram may only deliver commands and mentions to the bot.
+5. Use `/project add <path>` or `/projects` in the group root, then send a normal message or `/new` to start the group's default session.
 
 ## Use The Bot In Forum Topics
 
@@ -473,7 +473,7 @@ For a complete parameter-by-parameter reference, see [command-reference.md](comm
 | `/topic current` | Shows the active topic/session binding. | Use to confirm where the topic is connected. |
 | `/sessions` | Shows active and Telegram-managed sessions. | Use to resume or inspect current work. |
 | `/sessions all [count]` | Shows recent Codex history. | Use when you need older sessions that are not active. |
-| `/new <name>` | Creates and selects a new Codex session. | Use to begin fresh work in the current conversation. |
+| `/new [name]` | Creates and selects a new Codex session. | Omit the name to auto-generate one from the active project. |
 | `/use <sessionId>` | Selects an existing session. | Use to continue a previous thread. |
 | `/send <text>` | Sends text to the active session. | Use when plain text is not automatically routed. |
 | `/steer <text>` | Adds steering text to the active turn. | Use when you want to guide a live session. |

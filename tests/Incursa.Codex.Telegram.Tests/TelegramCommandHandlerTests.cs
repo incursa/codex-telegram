@@ -132,13 +132,21 @@ public sealed class TelegramCommandHandlerTests
     }
 
     [Fact]
-    public async Task HandleMessageAsync_ExplainsGroupRootPlainTextInsteadOfSilentlyIgnoringIt()
+    public async Task HandleMessageAsync_RoutesTrustedGroupRootPlainTextToChatRootSession()
     {
         using CommandHandlerHarness harness = CommandHandlerHarness.Create(new TelegramBotOptions
         {
             AllowedUserIds = [1234],
             AllowedChatIds = [-1005555],
         });
+        string projectPath = harness.Temp.CreateDirectory("repo");
+        TelegramConversationScope conversation = new(-1005555, null);
+        harness.ProjectCatalog.Projects.Add(new CodexProjectCatalogRecord
+        {
+            WorkingDirectory = projectPath,
+            AddedAt = DateTimeOffset.Parse("2026-05-04T00:00:00Z"),
+        });
+        await harness.StateStore.SetActiveProjectWorkingDirectoryAsync(conversation, projectPath, CancellationToken.None);
 
         await harness.Handler.HandleMessageAsync(
             new TelegramInboundMessage(1234, -1005555, "supergroup", "please look at this"),
@@ -146,20 +154,30 @@ public sealed class TelegramCommandHandlerTests
             CancellationToken.None);
 
         SentTelegramMessage sent = Assert.Single(harness.Sender.Sent);
-        Assert.Contains("group root", sent.Text);
-        Assert.Contains("/send <text>", sent.Text);
-        Assert.Contains("forum topics", sent.Text);
-        Assert.Empty(harness.SessionManager.SendRequests);
+        CreateCodexSessionRequest request = Assert.Single(harness.SessionManager.CreateRequests);
+        Assert.StartsWith("repo session ", request.Name, StringComparison.Ordinal);
+        Assert.Equal(projectPath, request.WorkingDirectory);
+        Assert.Equal("please look at this", Assert.Single(harness.SessionManager.SendRequests));
+        Assert.Equal("thread-1", await harness.StateStore.GetActiveSessionIdAsync(conversation, CancellationToken.None));
+        Assert.Contains("Sent to repo session", sent.Text);
     }
 
     [Fact]
-    public async Task HandleMessageAsync_ExplainsGroupRootAttachmentInsteadOfRoutingIt()
+    public async Task HandleMessageAsync_RoutesTrustedGroupRootAttachment()
     {
         using CommandHandlerHarness harness = CommandHandlerHarness.Create(new TelegramBotOptions
         {
             AllowedUserIds = [1234],
             AllowedChatIds = [-1005555],
         });
+        string projectPath = harness.Temp.CreateDirectory("repo");
+        TelegramConversationScope conversation = new(-1005555, null);
+        harness.ProjectCatalog.Projects.Add(new CodexProjectCatalogRecord
+        {
+            WorkingDirectory = projectPath,
+            AddedAt = DateTimeOffset.Parse("2026-05-04T00:00:00Z"),
+        });
+        await harness.StateStore.SetActiveProjectWorkingDirectoryAsync(conversation, projectPath, CancellationToken.None);
 
         await harness.Handler.HandleMessageAsync(
             new TelegramInboundMessage(
@@ -178,20 +196,28 @@ public sealed class TelegramCommandHandlerTests
             harness.Sender,
             CancellationToken.None);
 
-        SentTelegramMessage sent = Assert.Single(harness.Sender.Sent);
-        Assert.Contains("group root", sent.Text);
-        Assert.Contains("did not send it to Codex", sent.Text);
-        Assert.Empty(harness.SessionManager.SendRequests);
+        IReadOnlyList<CodexInputItem> input = Assert.IsAssignableFrom<IReadOnlyList<CodexInputItem>>(Assert.Single(harness.SessionManager.SendRequests));
+        CodexLocalImageInput image = Assert.IsType<CodexLocalImageInput>(Assert.Single(input));
+        Assert.EndsWith("photo.png", image.Path, StringComparison.Ordinal);
+        Assert.Contains("Sent to repo session", Assert.Single(harness.Sender.Sent).Text);
     }
 
     [Fact]
-    public async Task HandleMessageAsync_ExplainsGroupRootAudioInsteadOfTranscribingIt()
+    public async Task HandleMessageAsync_RoutesTrustedGroupRootAudio()
     {
         using CommandHandlerHarness harness = CommandHandlerHarness.Create(new TelegramBotOptions
         {
             AllowedUserIds = [1234],
             AllowedChatIds = [-1005555],
         });
+        string projectPath = harness.Temp.CreateDirectory("repo");
+        TelegramConversationScope conversation = new(-1005555, null);
+        harness.ProjectCatalog.Projects.Add(new CodexProjectCatalogRecord
+        {
+            WorkingDirectory = projectPath,
+            AddedAt = DateTimeOffset.Parse("2026-05-04T00:00:00Z"),
+        });
+        await harness.StateStore.SetActiveProjectWorkingDirectoryAsync(conversation, projectPath, CancellationToken.None);
 
         await harness.Handler.HandleMessageAsync(
             new TelegramInboundMessage(
@@ -203,10 +229,11 @@ public sealed class TelegramCommandHandlerTests
             harness.Sender,
             CancellationToken.None);
 
-        SentTelegramMessage sent = Assert.Single(harness.Sender.Sent);
-        Assert.Contains("group root", sent.Text);
-        Assert.Contains("did not send it to Codex", sent.Text);
-        Assert.Empty(harness.SessionManager.SendRequests);
+        Assert.Equal("transcribed text", Assert.Single(harness.SessionManager.SendRequests));
+        Assert.Collection(
+            harness.Sender.Sent,
+            sent => Assert.Contains("Here's what I transcribed:", sent.Text),
+            sent => Assert.Contains("Sent to repo session", sent.Text));
     }
 
     [Fact]
@@ -281,8 +308,8 @@ public sealed class TelegramCommandHandlerTests
 
         SentTelegramMessage sent = Assert.Single(harness.Sender.Sent);
         Assert.Contains("supergroup root", sent.Text);
-        Assert.Contains("Plain text and attachments do not auto-route", sent.Text);
-        Assert.Contains("Next: use /send <text>", sent.Text);
+        Assert.Contains("Plain text, audio, and attachments can auto-route", sent.Text);
+        Assert.Contains("Next: use /projects or /project add", sent.Text);
     }
 
     [Fact]
@@ -339,6 +366,31 @@ public sealed class TelegramCommandHandlerTests
         Assert.Equal(["Sessions", "Projects", "Help"], FlattenButtonLabels(sent));
         Assert.DoesNotContain(FlattenButtonLabels(sent), label => IsSessionControlLabel(label));
         Assert.DoesNotContain(FlattenButtonLabels(sent), label => label.StartsWith("Use", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public async Task HandleMessageAsync_NewWithoutNameUsesProjectBasedDefaultName()
+    {
+        using CommandHandlerHarness harness = CommandHandlerHarness.Create();
+        string projectPath = harness.Temp.CreateDirectory("repo");
+        TelegramConversationScope conversation = new(5555, null);
+        harness.ProjectCatalog.Projects.Add(new CodexProjectCatalogRecord
+        {
+            WorkingDirectory = projectPath,
+            AddedAt = DateTimeOffset.Parse("2026-05-04T00:00:00Z"),
+        });
+        await harness.StateStore.SetActiveProjectWorkingDirectoryAsync(conversation, projectPath, CancellationToken.None);
+
+        await harness.Handler.HandleMessageAsync(
+            new TelegramInboundMessage(1234, conversation.ChatId, "private", "/new"),
+            harness.Sender,
+            CancellationToken.None);
+
+        SentTelegramMessage sent = Assert.Single(harness.Sender.Sent);
+        CreateCodexSessionRequest request = Assert.Single(harness.SessionManager.CreateRequests);
+        Assert.StartsWith("repo session ", request.Name, StringComparison.Ordinal);
+        Assert.Equal(projectPath, request.WorkingDirectory);
+        Assert.Contains("Created and selected repo session", sent.Text);
     }
 
     [Fact]
@@ -557,7 +609,7 @@ public sealed class TelegramCommandHandlerTests
             harness.Sender.Sent,
             sent => Assert.Contains("Here's what I transcribed:", sent.Text),
             sent => Assert.Contains("could not be resumed", sent.Text),
-            sent => Assert.Contains("Sent to Telegram session.", sent.Text));
+            sent => Assert.Contains("Sent to repo session", sent.Text));
     }
 
     [Fact]
@@ -628,7 +680,7 @@ public sealed class TelegramCommandHandlerTests
 
         string text = Assert.Single(harness.Sender.Sent).Text;
         Assert.Contains("private chat", text);
-        Assert.Contains("/new <name>", text);
+        Assert.Contains("/new [name]", text);
     }
 
     [Fact]

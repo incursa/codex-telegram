@@ -31,7 +31,7 @@ Use this short checklist at the start of a real work session:
 1. Confirm you are talking to the intended bot account.
 2. Send `/doctor` if authorization, routing, project, session, workspace, or queue state is unclear.
 3. Send `/project current` before asking Codex to edit files.
-4. Send `/new <short name>` when the work should not continue an older thread.
+4. Send `/new` when the work should not continue an older thread; add a short name only when it helps.
 5. Send `/status` before assuming a long-running turn is stuck.
 6. Send `/usage` when you need current five-hour and weekly Codex usage percentages and reset times.
 7. Send `/tail` before assuming Telegram scrollback contains the complete transcript.
@@ -41,18 +41,18 @@ Use this short checklist at the start of a real work session:
 1. Send `/projects` to see known repositories.
 2. Send `/project current` to confirm the active repository.
 3. If needed, send `/project add <absolute repository path>`.
-4. Send `/new <short name>` for a fresh Codex session.
+4. Send `/new` for a fresh Codex session, or `/new <short name>` when you want a specific label.
 5. Send normal messages to continue the active session.
 6. Use `/tail` when Telegram scrollback is not enough.
 7. Use `/status` when you need the current session state.
 8. Use `/usage` when you need five-hour or weekly Codex reset timing.
 
-Private chat is the primary supported workflow. Groups and forum topics are useful, but they add Telegram privacy-mode, permissions, and chat allowlist behavior.
+Private chat is the primary setup workflow. Trusted group roots and forum topics are useful once you understand Telegram privacy mode, permissions, and chat allowlists.
 
 ## Sending Work
 
-Plain text in a private chat or forum topic normally goes to the active session.
-Use `/send <text>` when plain text is not automatically routed, especially in a group root.
+Plain text in a private chat, trusted group root, or forum topic normally goes to the active session.
+Use `/send <text>` when Telegram privacy mode or an unsupported chat type prevents normal auto-routing.
 
 Useful examples:
 
@@ -123,7 +123,7 @@ Queue controls:
 
 Queued prompts are editable until they are drained or sent now. Once a prompt has been steered into an active turn, the bot cannot edit or recall that steering message.
 
-Queueing is per session and per Telegram conversation. Separate forum topics can continue independently when they are bound to different sessions.
+Queueing is per session and per Telegram conversation. A trusted group root and each forum topic can continue independently when they are bound to different sessions.
 
 ## Attachments And Voice
 
@@ -146,9 +146,9 @@ For groups and forum topics:
 
 1. Add the individual Telegram user ID to `TelegramBot:AllowedUserIds`.
 2. Send `/trust` in the group from that allowlisted user, or add the group chat ID to `TelegramBot:AllowedChatIds`.
-3. Keep privacy mode enabled unless ordinary group text is intentionally supported.
-4. Prefer forum topics for multiple concurrent Codex sessions.
-5. Use `/send <text>` in the group root.
+3. Keep privacy mode enabled unless ordinary group text should route to Codex.
+4. Use a trusted group root for one project/session lane.
+5. Prefer forum topics when one group needs multiple concurrent Codex sessions.
 
 Forum-topic flow:
 
