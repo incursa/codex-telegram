@@ -239,18 +239,23 @@ internal static class InteractiveBootstrapMenu
         Console.WriteLine("Admin User ID");
         Console.WriteLine();
         Console.WriteLine("BotFather cannot tell you your personal Telegram user ID, and most Telegram clients do not show it directly.");
-        Console.WriteLine("The easiest setup path is to send one private message to your new bot while this wizard waits.");
+        Console.WriteLine("The easiest setup path is to send one private message containing a terminal challenge to your new bot while this wizard waits.");
         Console.WriteLine();
 
         if (Confirm("Capture your user ID automatically now?"))
         {
-            Console.WriteLine($"Open a private chat with the bot and send /whoami or any short message. Waiting up to {TelegramUserCaptureTimeout.TotalMinutes.ToString("0", CultureInfo.InvariantCulture)} minutes...");
+            string setupChallenge = TelegramSetupClient.CreateSetupChallenge();
+            Console.WriteLine("Open a private chat with the bot and send this exact setup code:");
+            Console.WriteLine();
+            Console.WriteLine($"    {setupChallenge}");
+            Console.WriteLine();
+            Console.WriteLine($"Waiting up to {TelegramUserCaptureTimeout.TotalMinutes.ToString("0", CultureInfo.InvariantCulture)} minutes for a private message containing that code...");
             try
             {
-                TelegramSetupUser? user = await telegramSetupClient.WaitForPrivateUserMessageAsync(telegramToken, TelegramUserCaptureTimeout, cancellationToken).ConfigureAwait(false);
+                TelegramSetupUser? user = await telegramSetupClient.WaitForPrivateUserMessageAsync(telegramToken, setupChallenge, TelegramUserCaptureTimeout, cancellationToken).ConfigureAwait(false);
                 if (user is not null)
                 {
-                    Console.WriteLine($"Captured {user.DisplayName}: {user.UserId.ToString(CultureInfo.InvariantCulture)}.");
+                    Console.WriteLine($"Captured {user.DisplayName}: {user.UserId.ToString(CultureInfo.InvariantCulture)} from a message containing the setup code.");
                     if (Confirm("Save this user as the Telegram admin?"))
                     {
                         store.SetAllowedUserIds([user.UserId]);
@@ -260,7 +265,7 @@ internal static class InteractiveBootstrapMenu
                 }
                 else
                 {
-                    Console.WriteLine("No private message was received before the setup wait expired.");
+                    Console.WriteLine("No private message containing the setup code was received before the setup wait expired.");
                 }
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
