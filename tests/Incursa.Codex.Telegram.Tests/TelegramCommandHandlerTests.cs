@@ -355,9 +355,26 @@ public sealed class TelegramCommandHandlerTests
         Assert.Contains("/projects", sent.Text);
         Assert.Contains("/sessions", sent.Text);
         Assert.Contains("/model", sent.Text);
+        Assert.Contains("/version", sent.Text);
+        Assert.Contains("/queue", sent.Text);
         Assert.Contains("/outbound", sent.Text);
         Assert.Contains("configured OpenAI transcription model", sent.Text);
         Assert.Equal(["Sessions", "Projects", "Help"], FlattenButtonLabels(sent));
+    }
+
+    [Fact]
+    public async Task HandleMessageAsync_VersionShowsRunningBinaryVersion()
+    {
+        using CommandHandlerHarness harness = CommandHandlerHarness.Create();
+
+        await harness.Handler.HandleMessageAsync(
+            new TelegramInboundMessage(1234, 5555, "private", "/version"),
+            harness.Sender,
+            CancellationToken.None);
+
+        SentTelegramMessage sent = Assert.Single(harness.Sender.Sent);
+        Assert.Contains("Incursa Codex Telegram", sent.Text);
+        Assert.Contains("older binary", sent.Text);
     }
 
     [Fact]
@@ -967,6 +984,25 @@ public sealed class TelegramCommandHandlerTests
         Assert.Contains("first line second line", sent.Text);
         Assert.DoesNotContain("other topic", sent.Text);
         Assert.Equal(["Send now", "Edit", "Delete", "Sessions", "Projects", "Help"], FlattenButtonLabels(sent));
+    }
+
+    [Fact]
+    public async Task HandleMessageAsync_QueueMentionListsConversationPrompts()
+    {
+        using CommandHandlerHarness harness = CommandHandlerHarness.Create();
+        TelegramConversationScope conversation = new(5555, null);
+        await harness.StateStore.EnqueueQueuedPromptAsync(
+            CreateQueuedPrompt("aaaaaaaa11111111", 1234, conversation, "queued text"),
+            CancellationToken.None);
+
+        await harness.Handler.HandleMessageAsync(
+            new TelegramInboundMessage(1234, conversation.ChatId, "private", "/queue@codex_bot"),
+            harness.Sender,
+            CancellationToken.None);
+
+        SentTelegramMessage sent = Assert.Single(harness.Sender.Sent);
+        Assert.Contains("Queued prompts:", sent.Text);
+        Assert.Contains("queued text", sent.Text);
     }
 
     [Fact]

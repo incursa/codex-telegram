@@ -214,6 +214,9 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
                         null,
                         cancellationToken).ConfigureAwait(false);
                     break;
+                case "version":
+                    await ReplyAsync(sender, message, BuildVersionText(), null, cancellationToken).ConfigureAwait(false);
+                    break;
                 case "trust":
                     await HandleTrustAsync(message, command.Arguments, sender, cancellationToken).ConfigureAwait(false);
                     break;
@@ -1734,7 +1737,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
     private async Task HandleDoctorAsync(TelegramInboundMessage message, ITelegramBotMessageSender sender, CancellationToken cancellationToken)
     {
         StringBuilder builder = new();
-        builder.AppendLine("Codex Telegram doctor");
+        builder.AppendLine($"Codex Telegram doctor {GetApplicationVersion()}");
         builder.AppendLine();
         builder.AppendLine(await FormatDoctorConversationAsync(message, cancellationToken).ConfigureAwait(false));
         builder.AppendLine();
@@ -2145,6 +2148,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             "Use the buttons below for quick navigation between sessions, projects, and help.",
             "/help - show this help",
             "/whoami - show Telegram user, chat, and topic thread IDs",
+            "/version - show the running Codex Telegram app version",
             "/trust - trust the current group or forum chat for allowlisted users",
             "/projects - list known project directories",
             "/project add <path> - add and select a project",
@@ -2178,6 +2182,15 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             "Images, documents, and other attachments are forwarded to Codex; voice notes are transcribed with the configured OpenAI transcription model first.",
             "Voice/text control phrase: Codex settings model gpt-5.4-mini thinking high: <prompt>"
         ]);
+
+    private static string BuildVersionText()
+        => string.Join(Environment.NewLine, [
+            $"Incursa Codex Telegram {GetApplicationVersion()}",
+            "If a documented command is unknown, the Telegram process is probably running an older binary than the repository or release you are reading."
+        ]);
+
+    private static string GetApplicationVersion()
+        => typeof(TelegramCodexBotCommandHandler).Assembly.GetName().Version?.ToString() ?? "unknown";
 
     private static string FormatProjects(IReadOnlyList<ProjectChoice> projects, string? activeProject)
     {

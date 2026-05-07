@@ -111,7 +111,8 @@ Useful checks:
 3. `/tail` shows recent session output.
 4. `/queue` shows your queued prompts for the current conversation with Send now, Edit, and Delete buttons.
 5. `/usage` shows five-hour and weekly Codex usage and reset times.
-6. `/stop` clears pending queued messages for the stopped session.
+6. `/version` confirms which app binary is answering in Telegram.
+7. `/stop` clears pending queued messages for the stopped session.
 
 Queue controls:
 

@@ -460,6 +460,7 @@ For a complete parameter-by-parameter reference, see [command-reference.md](comm
 | --- | --- | --- |
 | `/help` | Shows the supported commands and basic usage. | Start here if you forget the syntax. |
 | `/whoami` | Shows your Telegram user ID, chat ID, and topic thread ID. | Use this during bootstrap and debugging. |
+| `/version` | Shows the running app version. | Use when Telegram behavior does not match the docs or release notes. |
 | `/projects` | Lists configured project directories. | Use before selecting or adding a project. |
 | `/project add <path>` | Adds a project directory and selects it. | Use when you want to make a repo available to Codex. |
 | `/project <number|name|path>` | Selects a known project. | Use when multiple projects exist. |

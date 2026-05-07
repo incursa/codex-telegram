@@ -325,6 +325,7 @@ After a successful test, you should see the transcription in Telegram before the
 | `/doctor` | Explain authorization, routing, active project/session, workspace roots, queue state, and next action. |
 | `/help` | Show the built-in command summary. |
 | `/whoami` | Show Telegram user, chat, and topic IDs for setup and troubleshooting. |
+| `/version` | Show the running app version. |
 | `/trust` | Trust the current group or forum chat for allowlisted users. |
 | `/projects` | List known local project directories. |
 | `/project add <path>` | Add and select a repository or workspace. |

@@ -87,6 +87,7 @@ Choose your bot, then paste:
 ```text
 help - Show supported commands
 whoami - Show Telegram user, chat, and topic IDs
+version - Show the running app version
 trust - Trust the current group or forum chat
 doctor - Diagnose authorization, routing, project, session, and queue state
 projects - List known local projects

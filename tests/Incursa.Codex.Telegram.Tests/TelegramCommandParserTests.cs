@@ -18,6 +18,19 @@ public sealed class TelegramCommandParserTests
     }
 
     [Fact]
+    public void Parse_StripsBotMentionFromQueueCommand()
+    {
+        TelegramCommandParser parser = new();
+
+        ParsedTelegramCommand parsed = parser.Parse("/queue@codex_bot");
+
+        Assert.True(parsed.IsCommand);
+        Assert.Equal("queue", parsed.Name);
+        Assert.Equal(string.Empty, parsed.Arguments);
+        Assert.Equal("/queue@codex_bot", parsed.Text);
+    }
+
+    [Fact]
     public void Parse_CommandMentionWithoutCommandNameProducesEmptyCommandName()
     {
         TelegramCommandParser parser = new();

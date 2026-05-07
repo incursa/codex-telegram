@@ -68,6 +68,21 @@ Expected behavior:
 
 Do not show `/whoami` in a public video unless you are comfortable exposing the IDs.
 
+### `/version`
+
+Shows the app version for the currently running Telegram process.
+
+Syntax:
+
+```text
+/version
+```
+
+Expected behavior:
+
+1. Shows the Incursa Codex Telegram assembly version.
+2. Helps confirm whether Telegram is talking to the binary you just installed or an older process.
+
 ### `/trust`
 
 Trusts the current group or forum chat for allowlisted users without copying a chat ID into configuration.
