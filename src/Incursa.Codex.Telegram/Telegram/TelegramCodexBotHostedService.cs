@@ -16,17 +16,20 @@ internal sealed class TelegramCodexBotHostedService : BackgroundService
 
     private readonly ITelegramCodexBotUpdateHandler _handler;
     private readonly ITelegramBotMessageSender _sender;
+    private readonly ITelegramBotStateStore _stateStore;
     private readonly TelegramBotOptions _options;
     private readonly ILogger<TelegramCodexBotHostedService> _logger;
 
     public TelegramCodexBotHostedService(
         ITelegramCodexBotUpdateHandler handler,
         ITelegramBotMessageSender sender,
+        ITelegramBotStateStore stateStore,
         IOptions<TelegramBotOptions> options,
         ILogger<TelegramCodexBotHostedService> logger)
     {
         _handler = handler;
         _sender = sender;
+        _stateStore = stateStore;
         _options = options.Value;
         _logger = logger;
     }
@@ -144,7 +147,7 @@ internal sealed class TelegramCodexBotHostedService : BackgroundService
 
         if (message is not null && TryGetAudioMessage(message, out TelegramAudioMessage audioMessage))
         {
-            if (!IsAuthorized(message))
+            if (!await IsAuthorizedAsync(message, cancellationToken).ConfigureAwait(false))
             {
                 _logger.LogWarning(
                     "Ignoring unauthorized Telegram audio sender {SenderId} ({SenderKind}) in chat {ChatId}.",
@@ -170,9 +173,23 @@ internal sealed class TelegramCodexBotHostedService : BackgroundService
 
         if (message is not null)
         {
-            if (!IsAuthorized(message))
+            if (!await IsAuthorizedAsync(message, cancellationToken).ConfigureAwait(false))
             {
-                if (!IsWhoAmIMessage(message))
+                if (CanForwardUnauthorizedSetupCommand(message))
+                {
+                    // `/whoami`, `/doctor`, and `/trust` are intentionally reachable before a
+                    // shared chat is trusted so setup can be completed without manual ID copying.
+                }
+                else if (CanExplainUntrustedSharedChat(message))
+                {
+                    await sender.SendTextMessageAsync(
+                        new TelegramConversationScope(message.Chat.Id, message.MessageThreadId),
+                        "This chat is not trusted yet. Ask an allowlisted admin to send /trust here, or continue in a private chat.",
+                        null,
+                        cancellationToken).ConfigureAwait(false);
+                    return;
+                }
+                else
                 {
                     _logger.LogWarning(
                         "Ignoring unauthorized Telegram sender {SenderId} ({SenderKind}) in chat {ChatId}.",
@@ -642,27 +659,56 @@ internal sealed class TelegramCodexBotHostedService : BackgroundService
         }
     }
 
-    private bool IsAuthorized(Message message)
+    private async Task<bool> IsAuthorizedAsync(Message message, CancellationToken cancellationToken)
     {
         if (message.From is null)
         {
             return false;
         }
 
+        IReadOnlyCollection<long> trustedChatIds = await _stateStore.GetTrustedChatIdsAsync(cancellationToken).ConfigureAwait(false);
         return TelegramAuthorization.IsAuthorized(
             message.From.Id,
             message.Chat.Id,
             message.Chat.Type.ToString(),
             _options.AllowedUserIds,
-            _options.AllowedChatIds);
+            _options.AllowedChatIds,
+            trustedChatIds);
     }
+
+    private bool CanForwardUnauthorizedSetupCommand(Message message)
+        => IsWhoAmIMessage(message)
+            || (IsAllowedUser(message)
+                && !IsPrivateChat(message.Chat.Type.ToString())
+                && (IsTrustMessage(message) || IsDoctorMessage(message)));
+
+    private bool CanExplainUntrustedSharedChat(Message message)
+        => IsAllowedUser(message)
+            && !IsPrivateChat(message.Chat.Type.ToString())
+            && IsCommandMessage(message);
+
+    private bool IsAllowedUser(Message message)
+        => message.From is not null && _options.AllowedUserIds.Contains(message.From.Id);
 
     private static bool IsWhoAmIMessage(Message message)
         => TryGetCommand(message, out string commandToken, out _)
             && commandToken.Equals("whoami", StringComparison.OrdinalIgnoreCase);
 
+    private static bool IsTrustMessage(Message message)
+        => TryGetCommand(message, out string commandToken, out _)
+            && commandToken.Equals("trust", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsDoctorMessage(Message message)
+        => TryGetCommand(message, out string commandToken, out _)
+            && (commandToken.Equals("doctor", StringComparison.OrdinalIgnoreCase)
+                || commandToken.Equals("diag", StringComparison.OrdinalIgnoreCase)
+                || commandToken.Equals("diagnostics", StringComparison.OrdinalIgnoreCase));
+
     private static bool IsCommandMessage(Message message)
         => TryGetCommand(message, out _, out _);
+
+    private static bool IsPrivateChat(string chatType)
+        => chatType.Equals("private", StringComparison.OrdinalIgnoreCase);
 
     private static bool IsSendCommandWithArguments(Message message)
         => TryGetCommand(message, out string commandToken, out string arguments)

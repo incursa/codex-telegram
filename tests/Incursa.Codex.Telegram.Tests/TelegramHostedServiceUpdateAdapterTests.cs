@@ -125,6 +125,50 @@ public sealed class TelegramHostedServiceUpdateAdapterTests
     }
 
     [Fact]
+    public async Task HandleUpdateAsync_ForwardsTrustCommandFromAllowedUserInUntrustedGroup()
+    {
+        using Harness harness = Harness.Create(new TelegramBotOptions
+        {
+            AllowedUserIds = [1234],
+            AllowedChatIds = [],
+        });
+        Update update = new()
+        {
+            Id = 33,
+            Message = CreateMessage(text: "/trust", chatId: -1005555, chatType: ChatType.Supergroup),
+        };
+
+        await harness.Service.HandleUpdateAsync(harness.FileClient, update, harness.Sender, CancellationToken.None);
+
+        TelegramInboundMessage message = Assert.Single(harness.Handler.Messages);
+        Assert.Equal("/trust", message.Text);
+        Assert.Equal(-1005555, message.ChatId);
+        Assert.Empty(harness.Sender.Sent);
+    }
+
+    [Fact]
+    public async Task HandleUpdateAsync_ExplainsUntrustedGroupCommandFromAllowedUser()
+    {
+        using Harness harness = Harness.Create(new TelegramBotOptions
+        {
+            AllowedUserIds = [1234],
+            AllowedChatIds = [],
+        });
+        Update update = new()
+        {
+            Id = 34,
+            Message = CreateMessage(text: "/sessions", chatId: -1005555, chatType: ChatType.Supergroup),
+        };
+
+        await harness.Service.HandleUpdateAsync(harness.FileClient, update, harness.Sender, CancellationToken.None);
+
+        Assert.Empty(harness.Handler.Messages);
+        SentTelegramMessage sent = Assert.Single(harness.Sender.Sent);
+        Assert.Contains("not trusted", sent.Text);
+        Assert.Contains("/trust", sent.Text);
+    }
+
+    [Fact]
     public async Task HandleUpdateAsync_IgnoresUnauthorizedAudioWithoutDownloading()
     {
         using Harness harness = Harness.Create();
@@ -644,16 +688,22 @@ public sealed class TelegramHostedServiceUpdateAdapterTests
     private sealed class Harness : IDisposable
     {
         private Harness(
+            TemporaryDirectory temp,
             CapturingTelegramUpdateHandler handler,
             TestTelegramBotMessageSender sender,
             FakeTelegramUpdateFileClient fileClient,
+            TelegramBotStateStore stateStore,
             TelegramCodexBotHostedService service)
         {
+            Temp = temp;
             Handler = handler;
             Sender = sender;
             FileClient = fileClient;
+            StateStore = stateStore;
             Service = service;
         }
+
+        public TemporaryDirectory Temp { get; }
 
         public CapturingTelegramUpdateHandler Handler { get; }
 
@@ -661,13 +711,23 @@ public sealed class TelegramHostedServiceUpdateAdapterTests
 
         public FakeTelegramUpdateFileClient FileClient { get; }
 
+        public TelegramBotStateStore StateStore { get; }
+
         public TelegramCodexBotHostedService Service { get; }
 
         public static Harness Create(TelegramBotOptions? options = null)
         {
+            TemporaryDirectory temp = TemporaryDirectory.Create();
             CapturingTelegramUpdateHandler handler = new();
             TestTelegramBotMessageSender sender = new();
             FakeTelegramUpdateFileClient fileClient = new();
+            TelegramBotStateStore stateStore = new(Microsoft.Extensions.Options.Options.Create(new CodexTelegramOptions
+            {
+                Workspace = new CodexWorkspaceOptions
+                {
+                    DataRoot = temp.Path,
+                },
+            }));
             options ??= new TelegramBotOptions
             {
                 AllowedUserIds = [1234],
@@ -676,10 +736,11 @@ public sealed class TelegramHostedServiceUpdateAdapterTests
             TelegramCodexBotHostedService service = new(
                 handler,
                 sender,
+                stateStore,
                 Microsoft.Extensions.Options.Options.Create(options),
                 NullLogger<TelegramCodexBotHostedService>.Instance);
 
-            return new Harness(handler, sender, fileClient, service);
+            return new Harness(temp, handler, sender, fileClient, stateStore, service);
         }
 
         public void Dispose()
@@ -693,6 +754,8 @@ public sealed class TelegramHostedServiceUpdateAdapterTests
 
                 TryDelete(message.AudioFilePath);
             }
+
+            Temp.Dispose();
         }
 
         private static void TryDelete(string? path)

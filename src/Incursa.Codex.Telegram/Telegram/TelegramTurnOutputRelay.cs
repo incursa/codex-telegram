@@ -456,7 +456,7 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
 
                 int boundary = index + 1;
                 if (boundary >= minimumBoundary
-                    && (!requireFollowingWhitespace || boundary >= text.Length || char.IsWhiteSpace(text[boundary])))
+                    && (!requireFollowingWhitespace || (boundary < text.Length && char.IsWhiteSpace(text[boundary]))))
                 {
                     return boundary;
                 }

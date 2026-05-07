@@ -62,11 +62,11 @@ Private chat is the primary operating mode.
 For groups and forum topics:
 
 1. Add only trusted users to `TelegramBot:AllowedUserIds`.
-2. Add the group chat ID to `TelegramBot:AllowedChatIds`.
+2. Trust the group with `/trust` from an allowlisted admin account, or add the group chat ID to `TelegramBot:AllowedChatIds`.
 3. Keep Telegram privacy mode enabled unless plain group text is required.
 4. Grant topic-management rights only if `/topic new` is part of the supported workflow.
 
-Group and forum messages require both an allowed user and an allowed chat.
+Group and forum messages require both an allowed user and a trusted chat.
 
 ## Health Checks
 

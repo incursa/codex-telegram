@@ -32,14 +32,15 @@ Record the date, operator, OS, published asset or commit SHA, Codex CLI version,
 
 1. From an unallowlisted Telegram user, send `/help` and confirm the bot ignores it.
 2. From an unallowlisted Telegram user, send `/whoami` and confirm the ID discovery response still works.
-3. In a group not listed in `TelegramBot:AllowedChatIds`, send a command from an allowlisted user and confirm it is ignored.
-4. In an allowed group, send a command from an unallowlisted user and confirm it is ignored.
-5. In an allowed group, send a command from an allowlisted user and confirm it works.
+3. In an untrusted group, send `/sessions` from an allowlisted user and confirm the bot asks for `/trust`.
+4. In that same group, send `/trust` from the allowlisted user and confirm the bot trusts the chat.
+5. In a trusted group, send a command from an unallowlisted user and confirm it is ignored.
+6. In a trusted group, send a command from an allowlisted user and confirm it works.
 
 ## Group And Forum Topics
 
 1. Add the bot to a normal group and record the group chat ID with `/whoami`.
-2. Add that chat ID to `TelegramBot:AllowedChatIds`.
+2. Send `/trust` in the group from an allowlisted admin account.
 3. Send `/doctor` in the group root and confirm it clearly says root messages do not auto-route.
 4. Send plain text to the group root and confirm the bot explains that it was not sent to Codex.
 5. With privacy mode enabled, confirm `/send <text>` works and plain text behavior matches Telegram privacy expectations.

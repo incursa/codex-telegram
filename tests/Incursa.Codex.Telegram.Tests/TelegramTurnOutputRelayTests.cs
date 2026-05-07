@@ -468,6 +468,48 @@ public sealed class TelegramTurnOutputRelayTests
     }
 
     [Fact]
+    public async Task PublishTurnEventAsync_DoesNotSplitAgentProgressAtTrailingVersionPeriod()
+    {
+        FakeOutboundTelegramQueue queue = new();
+        TelegramThreadFollowRegistry followRegistry = FollowThread();
+        TelegramTurnOutputRelay relay = CreateRelay(queue, followRegistry, new TelegramOutboundOptions
+        {
+            AgentMessageUpdateMinChars = 5,
+            AgentMessageUpdateMaxChars = 80,
+        });
+
+        await relay.PublishTurnEventAsync(
+            CreateEntry(type: "item.agentMessage.delta", title: "Agent", body: "Published package 1.0."),
+            CancellationToken.None);
+        await relay.PublishTurnEventAsync(
+            CreateEntry(type: "item.agentMessage.delta", title: "Agent", body: "13 for release. Next step"),
+            CancellationToken.None);
+
+        Assert.Equal("Published package 1.0.13 for release.", Assert.Single(queue.Messages).Text);
+    }
+
+    [Fact]
+    public async Task PublishTurnEventAsync_DoesNotSplitAgentProgressAtTrailingDotNetPeriod()
+    {
+        FakeOutboundTelegramQueue queue = new();
+        TelegramThreadFollowRegistry followRegistry = FollowThread();
+        TelegramTurnOutputRelay relay = CreateRelay(queue, followRegistry, new TelegramOutboundOptions
+        {
+            AgentMessageUpdateMinChars = 5,
+            AgentMessageUpdateMaxChars = 80,
+        });
+
+        await relay.PublishTurnEventAsync(
+            CreateEntry(type: "item.agentMessage.delta", title: "Agent", body: "Use ."),
+            CancellationToken.None);
+        await relay.PublishTurnEventAsync(
+            CreateEntry(type: "item.agentMessage.delta", title: "Agent", body: "NET 10. It works"),
+            CancellationToken.None);
+
+        Assert.Equal("Use .NET 10.", Assert.Single(queue.Messages).Text);
+    }
+
+    [Fact]
     public async Task PublishTurnEventAsync_PublishesFinishedMarkerSeparatelyForFailures()
     {
         FakeOutboundTelegramQueue queue = new();

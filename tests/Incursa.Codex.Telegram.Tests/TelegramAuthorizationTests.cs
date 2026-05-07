@@ -55,4 +55,18 @@ public sealed class TelegramAuthorizationTests
 
         Assert.True(authorized);
     }
+
+    [Fact]
+    public void IsAuthorized_AllowsGroupWhenAllowedUserAndChatIsTrustedAtRuntime()
+    {
+        bool authorized = TelegramAuthorization.IsAuthorized(
+            userId: 1234,
+            chatId: -1001234,
+            chatType: "supergroup",
+            allowedUserIds: [1234],
+            allowedChatIds: [],
+            trustedChatIds: [-1001234]);
+
+        Assert.True(authorized);
+    }
 }

@@ -11,7 +11,7 @@ The terminal menu appears when the app starts without `--run` in an interactive 
 Use it to configure:
 
 1. Telegram token and admin allowlist.
-2. Optional chat allowlist for groups/forums.
+2. Optional trusted-chat setup for groups/forums.
 3. OpenAI transcription key and model.
 4. Codex executable path.
 5. Codex default model and thinking effort.

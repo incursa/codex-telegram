@@ -48,6 +48,24 @@ public sealed class TelegramBotStateStoreTests
     }
 
     [Fact]
+    public async Task TrustedChatsPersistAndCanBeRemoved()
+    {
+        using TemporaryDirectory temp = TemporaryDirectory.Create();
+        TelegramBotStateStore store = CreateStore(temp.Path);
+
+        await store.TrustChatAsync(-1005555, CancellationToken.None);
+        await store.TrustChatAsync(-1005555, CancellationToken.None);
+
+        TelegramBotStateStore reloaded = CreateStore(temp.Path);
+        Assert.True(await reloaded.IsChatTrustedAsync(-1005555, CancellationToken.None));
+        Assert.Equal([-1005555], await reloaded.GetTrustedChatIdsAsync(CancellationToken.None));
+
+        Assert.True(await reloaded.RemoveTrustedChatAsync(-1005555, CancellationToken.None));
+        Assert.False(await reloaded.IsChatTrustedAsync(-1005555, CancellationToken.None));
+        Assert.False(await reloaded.RemoveTrustedChatAsync(-1005555, CancellationToken.None));
+    }
+
+    [Fact]
     public async Task QueuedPromptSkipsUnavailableSessions()
     {
         using TemporaryDirectory temp = TemporaryDirectory.Create();

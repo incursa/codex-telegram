@@ -19,6 +19,36 @@ internal interface ITelegramBotStateStore
 
     Task ClearActiveProjectAsync(TelegramConversationScope conversation, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Stores a Telegram group or supergroup chat as trusted for allowlisted users.
+    /// </summary>
+    /// <param name="chatId">Telegram chat ID to trust.</param>
+    /// <param name="cancellationToken">Token that cancels the operation.</param>
+    Task TrustChatAsync(long chatId, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Removes Telegram-granted trust for a group or supergroup chat.
+    /// </summary>
+    /// <param name="chatId">Telegram chat ID to remove.</param>
+    /// <param name="cancellationToken">Token that cancels the operation.</param>
+    /// <returns><see langword="true"/> when a trusted chat entry was removed.</returns>
+    Task<bool> RemoveTrustedChatAsync(long chatId, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Determines whether a group or supergroup chat has Telegram-granted trust.
+    /// </summary>
+    /// <param name="chatId">Telegram chat ID to inspect.</param>
+    /// <param name="cancellationToken">Token that cancels the operation.</param>
+    /// <returns><see langword="true"/> when the chat has runtime trust.</returns>
+    Task<bool> IsChatTrustedAsync(long chatId, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Gets all group or supergroup chat IDs trusted from Telegram.
+    /// </summary>
+    /// <param name="cancellationToken">Token that cancels the operation.</param>
+    /// <returns>Trusted Telegram chat IDs.</returns>
+    Task<IReadOnlyCollection<long>> GetTrustedChatIdsAsync(CancellationToken cancellationToken);
+
     Task<IReadOnlyCollection<TelegramConversationState>> ListConversationStatesAsync(CancellationToken cancellationToken);
 
     Task<IReadOnlyCollection<TelegramConversationState>> ListConversationStatesForChatAsync(long chatId, CancellationToken cancellationToken);
@@ -125,6 +155,50 @@ internal sealed class TelegramBotStateStore : ITelegramBotStateStore
             state.ActiveProjectsByScope.Remove(conversation.ToStorageKey());
             return state;
         }, cancellationToken);
+
+    public Task TrustChatAsync(long chatId, CancellationToken cancellationToken)
+        => MutateAsync(state =>
+        {
+            if (!state.TrustedChatIds.Contains(chatId))
+            {
+                state.TrustedChatIds.Add(chatId);
+                state.TrustedChatIds.Sort();
+            }
+
+            return state;
+        }, cancellationToken);
+
+    public async Task<bool> RemoveTrustedChatAsync(long chatId, CancellationToken cancellationToken)
+    {
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            TelegramBotState state = await LoadStateCoreAsync(cancellationToken).ConfigureAwait(false);
+            bool removed = state.TrustedChatIds.Remove(chatId);
+            if (removed)
+            {
+                await SaveStateCoreAsync(state, cancellationToken).ConfigureAwait(false);
+            }
+
+            return removed;
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    public async Task<bool> IsChatTrustedAsync(long chatId, CancellationToken cancellationToken)
+    {
+        TelegramBotState state = await LoadStateAsync(cancellationToken).ConfigureAwait(false);
+        return state.TrustedChatIds.Contains(chatId);
+    }
+
+    public async Task<IReadOnlyCollection<long>> GetTrustedChatIdsAsync(CancellationToken cancellationToken)
+    {
+        TelegramBotState state = await LoadStateAsync(cancellationToken).ConfigureAwait(false);
+        return state.TrustedChatIds.ToArray();
+    }
 
     public async Task<IReadOnlyCollection<TelegramConversationState>> ListConversationStatesAsync(CancellationToken cancellationToken)
     {
@@ -494,6 +568,8 @@ internal sealed class TelegramBotStateStore : ITelegramBotStateStore
         public List<string> TrackedSessionIds { get; set; } = [];
 
         public List<string> ForgottenSessionIds { get; set; } = [];
+
+        public List<long> TrustedChatIds { get; set; } = [];
 
         public List<TelegramQueuedPrompt> QueuedPrompts { get; set; } = [];
     }
