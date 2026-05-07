@@ -771,12 +771,6 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
 
     private async Task HandleNewAsync(TelegramInboundMessage message, string arguments, ITelegramBotMessageSender sender, CancellationToken cancellationToken)
     {
-        if (string.IsNullOrWhiteSpace(arguments))
-        {
-            await ReplyAsync(sender, message, "Usage: /new <name>", null, cancellationToken).ConfigureAwait(false);
-            return;
-        }
-
         ResolvedProject resolvedProject = await ResolveActiveProjectAsync(message.ConversationScope, cancellationToken).ConfigureAwait(false);
         if (resolvedProject.Project is null)
         {
@@ -784,9 +778,12 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             return;
         }
 
+        string sessionName = string.IsNullOrWhiteSpace(arguments)
+            ? BuildDefaultSessionName(resolvedProject.Project)
+            : arguments.Trim();
         CodexSessionSummary session = await CreateAndSelectSessionAsync(
             message.ConversationScope,
-            arguments.Trim(),
+            sessionName,
             resolvedProject.Project.WorkingDirectory,
             cancellationToken).ConfigureAwait(false);
         CodexSessionModelSettings settings = await _sessionManager.GetModelSettingsAsync(session.Id, cancellationToken).ConfigureAwait(false);
@@ -1014,7 +1011,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         await _stateStore.ClearActiveSessionAsync(message.ConversationScope, cancellationToken).ConfigureAwait(false);
         string? workingDirectory = await ResolvePreferredWorkingDirectoryAsync(message.ConversationScope, cancellationToken).ConfigureAwait(false);
         CodexSessionSummary replacement = await _sessionManager.CreateSessionAsync(
-            new CreateCodexSessionRequest("Telegram session", workingDirectory),
+            new CreateCodexSessionRequest(BuildDefaultSessionNameForWorkingDirectory(workingDirectory), workingDirectory),
             cancellationToken).ConfigureAwait(false);
         await _stateStore.SetActiveSessionIdAsync(message.ConversationScope, replacement.Id, cancellationToken).ConfigureAwait(false);
         _followRegistry.FollowThread(message.ConversationScope, replacement.Id);
@@ -1835,7 +1832,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         string? activeSessionId = await _stateStore.GetActiveSessionIdAsync(conversation, cancellationToken).ConfigureAwait(false);
         if (string.IsNullOrWhiteSpace(activeSessionId))
         {
-            return new ResolvedSession(null, "No active session is selected in this conversation. Use /sessions, /new <name>, /use <sessionId>, or just send a message to start a new session.");
+            return new ResolvedSession(null, "No active session is selected in this conversation. Use /sessions, /new [name], /use <sessionId>, or just send a message to start a new session.");
         }
 
         CodexSessionSummary? session;
@@ -1850,13 +1847,13 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
                 "Clearing selected Codex session {SessionId} because its local thread store is unreadable.",
                 activeSessionId);
             await _stateStore.ClearActiveSessionAsync(conversation, cancellationToken).ConfigureAwait(false);
-            return new ResolvedSession(null, "The selected session could not be read and was cleared. Use /sessions, /new <name>, /use <sessionId>, or send a message to start a new session.");
+            return new ResolvedSession(null, "The selected session could not be read and was cleared. Use /sessions, /new [name], /use <sessionId>, or send a message to start a new session.");
         }
 
         if (session is null)
         {
             await _stateStore.ClearActiveSessionAsync(conversation, cancellationToken).ConfigureAwait(false);
-            return new ResolvedSession(null, "The selected session is no longer known. Use /sessions, /new <name>, /use <sessionId>, or send a message to start a new session.");
+            return new ResolvedSession(null, "The selected session is no longer known. Use /sessions, /new [name], /use <sessionId>, or send a message to start a new session.");
         }
 
         return new ResolvedSession(session, string.Empty);
@@ -1912,7 +1909,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
 
         string? workingDirectory = await ResolvePreferredWorkingDirectoryAsync(message.ConversationScope, cancellationToken).ConfigureAwait(false);
         CodexSessionSummary session = await _sessionManager.CreateSessionAsync(
-            new CreateCodexSessionRequest("Telegram session", workingDirectory),
+            new CreateCodexSessionRequest(BuildDefaultSessionNameForWorkingDirectory(workingDirectory), workingDirectory),
             cancellationToken).ConfigureAwait(false);
         await _stateStore.SetActiveSessionIdAsync(message.ConversationScope, session.Id, cancellationToken).ConfigureAwait(false);
         _followRegistry.FollowThread(message.ConversationScope, session.Id);
@@ -2102,8 +2099,8 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
 
     private static string BuildTopicCreationUnsupportedMessage(TelegramInboundMessage message)
         => IsPrivateChat(message)
-            ? "This is a private chat, so /topic new cannot create a Telegram forum topic here. Use /new <name> to create a Codex session in this chat, or run /topic new inside a forum-enabled supergroup."
-            : $"This is a {message.ChatType} chat, so /topic new only works in a forum-enabled supergroup. Use /new <name> to create a Codex session here.";
+            ? "This is a private chat, so /topic new cannot create a Telegram forum topic here. Use /new [name] to create a Codex session in this chat, or run /topic new inside a forum-enabled supergroup."
+            : $"This is a {message.ChatType} chat, so /topic new only works in a forum-enabled supergroup. Use /new [name] to create a Codex session here.";
 
     private static string FormatActionFailurePrefix(ParsedTelegramCommand command, TelegramInboundMessage message)
         => command.IsCommand
@@ -2160,7 +2157,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             "/topic current - show the active topic/session in this conversation",
             "/sessions - show active and Telegram-managed sessions",
             "/sessions all [count] - show recent Codex history",
-            "/new <name> - create and select a Codex session in the active project for this conversation",
+            "/new [name] - create and select a Codex session in the active project for this conversation",
             "/use <sessionId> - select the active session for this conversation",
             "/send <text> - send text to the active session",
             "/steer <text> - steer the active turn in the selected session",
@@ -2177,7 +2174,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             "/kill <sessionId> confirm - hard-stop a session",
             "/rename <sessionId> <new name> - rename a session",
             "/forget <sessionId> - hide a stopped/exited session without deleting logs",
-            "Plain text and audio in a private chat or topic stay on that conversation's session; if the conversation has none yet, the first message starts one and live output follows automatically.",
+            "Plain text and audio in a private chat, trusted group, or topic stay on that conversation's session; if the conversation has none yet, the first message starts one and live output follows automatically.",
             "In forum topics, if plain text gets no response, Telegram bot privacy is likely hiding non-command messages; use /send <text> or disable privacy for this bot.",
             "Images, documents, and other attachments are forwarded to Codex; voice notes are transcribed with the configured OpenAI transcription model first.",
             "Voice/text control phrase: Codex settings model gpt-5.4-mini thinking high: <prompt>"
@@ -2228,8 +2225,8 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             action,
             $"Chat ID: {message.ChatId.ToString(CultureInfo.InvariantCulture)}",
             topicLine,
-            "Trust applies to this Telegram chat; each forum topic still keeps its own active project and session.",
-            "Group-root plain text still will not auto-route. Use /send <text>, a forum topic, or private chat.",
+            "Trust applies to this Telegram chat; the chat root and each forum topic keep their own active project and session.",
+            "Group-root messages can auto-route after trust, using the chat root as its own project/session scope.",
             "Use /trust remove here to remove Telegram-granted trust."
         ]);
     }
@@ -2238,7 +2235,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         => string.Join(Environment.NewLine, [
             $"{action} project {project.Name}.",
             project.WorkingDirectory,
-            "Use /new <name> to start a Codex session there."
+            "Use /new [name] to start a Codex session there."
         ]);
 
     private static string FormatProjectStatus(ProjectChoice project)
@@ -2278,8 +2275,8 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         if (view.Sessions.Count == 0)
         {
             return view.TotalSessionCount == 0
-                ? "No Codex sessions are known yet. Use /new <name> to create one."
-                : "No active or Telegram-managed sessions. Use /new <name>, or /sessions all 10 to browse recent Codex history.";
+                ? "No Codex sessions are known yet. Use /new [name] to create one."
+                : "No active or Telegram-managed sessions. Use /new [name], or /sessions all 10 to browse recent Codex history.";
         }
 
         StringBuilder builder = new();
@@ -2859,7 +2856,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         bool authorized = await IsAuthorizedAsync(message, cancellationToken).ConfigureAwait(false);
         string routing = CanRoutePlainText(message)
             ? "Plain text, audio, and attachments can auto-route in this conversation."
-            : "Plain text and attachments do not auto-route from this chat root. Use /send <text>, open a forum topic, or message me privately.";
+            : "Plain text and attachments do not auto-route from this chat type. Use /send <text> or message me privately.";
         string chatAllowlistText = chatNeedsAllowlist
             ? chatAllowed ? configuredChatAllowed ? "allowed by config" : "trusted from Telegram" : "not allowed"
             : "not required for private chat";
@@ -2989,7 +2986,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
 
         if (!CanRoutePlainText(message))
         {
-            return "Next: use /send <text>, open a forum topic, or message me privately. I will not silently send group-root messages to Codex.";
+            return "Next: use /send <text> or message me privately. This chat type is not automatically routed to Codex.";
         }
 
         try
@@ -2997,13 +2994,13 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             string? activeProject = await _stateStore.GetActiveProjectWorkingDirectoryAsync(message.ConversationScope, cancellationToken).ConfigureAwait(false);
             if (string.IsNullOrWhiteSpace(activeProject))
             {
-                return "Next: use /projects or /project add <absolute directory path>, then /new <name>.";
+                return "Next: use /projects or /project add <absolute directory path>, then /new [name].";
             }
 
             string? activeSessionId = await _stateStore.GetActiveSessionIdAsync(message.ConversationScope, cancellationToken).ConfigureAwait(false);
             if (string.IsNullOrWhiteSpace(activeSessionId))
             {
-                return "Next: use /new <name>, or just send a message to start a session in the active project.";
+                return "Next: use /new [name], or just send a message to start a session in the active project.";
             }
         }
         catch
@@ -3178,6 +3175,29 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
 
         string topicName = $"{projectName} lane {DateTimeOffset.UtcNow:yyyyMMdd HHmm}";
         return topicName.Length <= 120 ? topicName : topicName[..120].TrimEnd();
+    }
+
+    private static string BuildDefaultSessionName(ProjectChoice project)
+    {
+        string projectName = string.IsNullOrWhiteSpace(project.Name)
+            ? CodexTextFormatting.ResolveProjectName(project.WorkingDirectory)
+            : project.Name.Trim();
+
+        return BuildDefaultSessionNameFromProjectName(projectName);
+    }
+
+    private static string BuildDefaultSessionNameForWorkingDirectory(string? workingDirectory)
+        => string.IsNullOrWhiteSpace(workingDirectory)
+            ? BuildDefaultSessionNameFromProjectName("Telegram")
+            : BuildDefaultSessionNameFromProjectName(CodexTextFormatting.ResolveProjectName(workingDirectory));
+
+    private static string BuildDefaultSessionNameFromProjectName(string? projectName)
+    {
+        string normalizedProjectName = string.IsNullOrWhiteSpace(projectName)
+            ? "Telegram"
+            : projectName.Trim();
+        string sessionName = $"{normalizedProjectName} session {DateTimeOffset.UtcNow:yyyyMMdd HHmm}";
+        return sessionName.Length <= 80 ? sessionName : sessionName[..80].TrimEnd();
     }
 
     private static IReadOnlyList<IReadOnlyList<TelegramReplyButton>>? MergeButtons(
@@ -3560,7 +3580,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             await ReplyAsync(
                 sender,
                 message.ConversationScope,
-                "This Telegram chat does not have Topics enabled, so /topic new cannot create a forum topic here. Enable Topics in the group settings or use /new <name> to create a Codex session in this chat.",
+                "This Telegram chat does not have Topics enabled, so /topic new cannot create a forum topic here. Enable Topics in the group settings or use /new [name] to create a Codex session in this chat.",
                 null,
                 cancellationToken).ConfigureAwait(false);
             return;

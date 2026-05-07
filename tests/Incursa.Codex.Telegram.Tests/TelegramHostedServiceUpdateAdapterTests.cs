@@ -194,7 +194,7 @@ public sealed class TelegramHostedServiceUpdateAdapterTests
     }
 
     [Fact]
-    public async Task HandleUpdateAsync_RejectsGroupRootAudioWithoutRequestingFile()
+    public async Task HandleUpdateAsync_DownloadsGroupRootAudioForTrustedChat()
     {
         using Harness harness = Harness.Create();
         Message telegramMessage = CreateMessage(chatId: -1005555, chatType: ChatType.Supergroup);
@@ -213,17 +213,18 @@ public sealed class TelegramHostedServiceUpdateAdapterTests
 
         await harness.Service.HandleUpdateAsync(harness.FileClient, update, harness.Sender, CancellationToken.None);
 
-        Assert.Empty(harness.Handler.Messages);
-        Assert.Empty(harness.FileClient.RequestedFileIds);
-        Assert.Empty(harness.FileClient.DownloadedFileIds);
-        SentTelegramMessage sent = Assert.Single(harness.Sender.Sent);
-        Assert.Equal(new TelegramConversationScope(-1005555, null), sent.Conversation);
-        Assert.Contains("group root", sent.Text);
-        Assert.Contains("did not send it to Codex", sent.Text);
+        TelegramInboundMessage message = Assert.Single(harness.Handler.Messages);
+        Assert.Equal(-1005555, message.ChatId);
+        Assert.Null(message.MessageThreadId);
+        Assert.Null(message.Text);
+        Assert.NotNull(message.AudioFilePath);
+        Assert.Equal(["voice-file"], harness.FileClient.RequestedFileIds);
+        Assert.Equal(["voice-file"], harness.FileClient.DownloadedFileIds);
+        Assert.Empty(harness.Sender.Sent);
     }
 
     [Fact]
-    public async Task HandleUpdateAsync_RejectsGroupRootAttachmentWithoutRequestingFile()
+    public async Task HandleUpdateAsync_DownloadsGroupRootAttachmentForTrustedChat()
     {
         using Harness harness = Harness.Create();
         Message telegramMessage = CreateMessage(caption: "read this", chatId: -1005555, chatType: ChatType.Supergroup);
@@ -242,13 +243,13 @@ public sealed class TelegramHostedServiceUpdateAdapterTests
 
         await harness.Service.HandleUpdateAsync(harness.FileClient, update, harness.Sender, CancellationToken.None);
 
-        Assert.Empty(harness.Handler.Messages);
-        Assert.Empty(harness.FileClient.RequestedFileIds);
-        Assert.Empty(harness.FileClient.DownloadedFileIds);
-        SentTelegramMessage sent = Assert.Single(harness.Sender.Sent);
-        Assert.Equal(new TelegramConversationScope(-1005555, null), sent.Conversation);
-        Assert.Contains("group root", sent.Text);
-        Assert.Contains("did not send it to Codex", sent.Text);
+        TelegramInboundMessage message = Assert.Single(harness.Handler.Messages);
+        Assert.Equal("read this", message.Text);
+        TelegramAttachmentDescriptor attachment = Assert.Single(message.Attachments ?? []);
+        Assert.Equal("notes.pdf", attachment.FileName);
+        Assert.Equal(["doc-file"], harness.FileClient.RequestedFileIds);
+        Assert.Equal(["doc-file"], harness.FileClient.DownloadedFileIds);
+        Assert.Empty(harness.Sender.Sent);
     }
 
     [Fact]

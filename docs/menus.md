@@ -63,7 +63,7 @@ Behavior:
 1. If there is only one project, the button is labeled `Use`.
 2. If there are multiple projects, buttons are numbered to match the visible list.
 3. Tapping a button selects that project for the current conversation.
-4. Project selection does not automatically create a Codex session; use `/new <name>` or send a message after selecting.
+4. Project selection does not automatically create a Codex session; use `/new` or send a message after selecting.
 
 ## Session Buttons
 
