@@ -143,7 +143,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         CancellationToken cancellationToken)
     {
         ParsedTelegramCommand command = _parser.Parse(message.Text);
-        bool isAuthorized = IsAuthorized(message);
+        bool isAuthorized = await IsAuthorizedAsync(message, cancellationToken).ConfigureAwait(false);
         _logger.LogDebug(
             "Parsed Telegram message for chat {ChatId} topic {MessageThreadId}; command: {IsCommand}; command name: {CommandName}; text length: {TextLength}; has audio path: {HasAudioPath}; attachments: {AttachmentCount}.",
             message.ChatId,
@@ -154,8 +154,19 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             !string.IsNullOrWhiteSpace(message.AudioFilePath),
             message.Attachments?.Count ?? 0);
 
-        if (!isAuthorized && !IsWhoAmI(command))
+        if (!isAuthorized && !IsWhoAmI(command) && !CanRunChatTrustSetup(message, command))
         {
+            if (IsAllowedUser(message.UserId) && !IsPrivateChat(message) && command.IsCommand)
+            {
+                await ReplyAsync(
+                    sender,
+                    message,
+                    "This chat is not trusted yet. Send /trust here from an allowlisted admin account, or continue in a private chat.",
+                    null,
+                    cancellationToken).ConfigureAwait(false);
+                return;
+            }
+
             _logger.LogWarning("Ignoring unauthorized Telegram user {UserId}.", message.UserId);
             return;
         }
@@ -202,6 +213,12 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
                         $"Telegram user ID: {message.UserId}{Environment.NewLine}Chat ID: {message.ChatId}{Environment.NewLine}Topic thread ID: {(message.MessageThreadId?.ToString(CultureInfo.InvariantCulture) ?? "(none)")}",
                         null,
                         cancellationToken).ConfigureAwait(false);
+                    break;
+                case "version":
+                    await ReplyAsync(sender, message, BuildVersionText(), null, cancellationToken).ConfigureAwait(false);
+                    break;
+                case "trust":
+                    await HandleTrustAsync(message, command.Arguments, sender, cancellationToken).ConfigureAwait(false);
                     break;
                 case "projects":
                     await HandleProjectsAsync(message, sender, cancellationToken).ConfigureAwait(false);
@@ -299,7 +316,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         ITelegramBotMessageSender sender,
         CancellationToken cancellationToken)
     {
-        if (!IsAuthorized(callback))
+        if (!await IsAuthorizedAsync(callback, cancellationToken).ConfigureAwait(false))
         {
             _logger.LogWarning("Ignoring unauthorized Telegram callback user {UserId}.", callback.UserId);
             await sender.AnswerCallbackQueryAsync(callback.Id, null, cancellationToken).ConfigureAwait(false);
@@ -433,6 +450,58 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
                 await ReplyAsync(sender, message, "Unsupported navigation action.", null, cancellationToken).ConfigureAwait(false);
                 return;
         }
+    }
+
+    private async Task HandleTrustAsync(
+        TelegramInboundMessage message,
+        string arguments,
+        ITelegramBotMessageSender sender,
+        CancellationToken cancellationToken)
+    {
+        if (!IsAllowedUser(message.UserId))
+        {
+            _logger.LogWarning("Ignoring chat trust request from unauthorized Telegram user {UserId}.", message.UserId);
+            return;
+        }
+
+        if (IsPrivateChat(message))
+        {
+            await ReplyAsync(sender, message, "Private chats already trust allowlisted users. No chat trust entry is needed.", null, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        string action = arguments.Trim();
+        if (action.Equals("remove", StringComparison.OrdinalIgnoreCase)
+            || action.Equals("revoke", StringComparison.OrdinalIgnoreCase)
+            || action.Equals("delete", StringComparison.OrdinalIgnoreCase))
+        {
+            bool removed = await _stateStore.RemoveTrustedChatAsync(message.ChatId, cancellationToken).ConfigureAwait(false);
+            bool configured = IsConfiguredAllowedSharedChat(message.ChatId);
+            string removalStatus = removed
+                ? "Removed Telegram-granted trust for this chat."
+                : "This chat did not have Telegram-granted trust.";
+            string configurationStatus = configured
+                ? " It is still allowed by TelegramBot:AllowedChatIds."
+                : string.Empty;
+
+            await ReplyAsync(sender, message, removalStatus + configurationStatus, null, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        if (!string.IsNullOrWhiteSpace(action) && !action.Equals("chat", StringComparison.OrdinalIgnoreCase) && !action.Equals("here", StringComparison.OrdinalIgnoreCase))
+        {
+            await ReplyAsync(sender, message, "Usage: /trust, /trust chat, or /trust remove", null, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        bool alreadyConfigured = IsConfiguredAllowedSharedChat(message.ChatId);
+        bool alreadyTrusted = await _stateStore.IsChatTrustedAsync(message.ChatId, cancellationToken).ConfigureAwait(false);
+        if (!alreadyConfigured && !alreadyTrusted)
+        {
+            await _stateStore.TrustChatAsync(message.ChatId, cancellationToken).ConfigureAwait(false);
+        }
+
+        await ReplyAsync(sender, message, FormatTrustResult(message, alreadyConfigured, alreadyTrusted), null, cancellationToken).ConfigureAwait(false);
     }
 
     private async Task HandleProjectAsync(
@@ -1668,9 +1737,9 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
     private async Task HandleDoctorAsync(TelegramInboundMessage message, ITelegramBotMessageSender sender, CancellationToken cancellationToken)
     {
         StringBuilder builder = new();
-        builder.AppendLine("Codex Telegram doctor");
+        builder.AppendLine($"Codex Telegram doctor {GetApplicationVersion()}");
         builder.AppendLine();
-        builder.AppendLine(FormatDoctorConversation(message));
+        builder.AppendLine(await FormatDoctorConversationAsync(message, cancellationToken).ConfigureAwait(false));
         builder.AppendLine();
         await AppendDoctorProjectAndSessionAsync(builder, message, cancellationToken).ConfigureAwait(false);
         builder.AppendLine();
@@ -1975,24 +2044,46 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             cancellationToken: cancellationToken).ConfigureAwait(false);
     }
 
-    private bool IsAuthorized(TelegramInboundCallback callback)
+    private async Task<bool> IsAuthorizedAsync(TelegramInboundCallback callback, CancellationToken cancellationToken)
         => TelegramAuthorization.IsAuthorized(
             callback.UserId,
             callback.ChatId,
             callback.ChatType,
             _options.AllowedUserIds,
-            _options.AllowedChatIds);
+            _options.AllowedChatIds,
+            await _stateStore.GetTrustedChatIdsAsync(cancellationToken).ConfigureAwait(false));
 
-    private bool IsAuthorized(TelegramInboundMessage message)
+    private async Task<bool> IsAuthorizedAsync(TelegramInboundMessage message, CancellationToken cancellationToken)
         => TelegramAuthorization.IsAuthorized(
             message.UserId,
             message.ChatId,
             message.ChatType,
             _options.AllowedUserIds,
-            _options.AllowedChatIds);
+            _options.AllowedChatIds,
+            await _stateStore.GetTrustedChatIdsAsync(cancellationToken).ConfigureAwait(false));
 
     private static bool IsWhoAmI(ParsedTelegramCommand command)
         => command.IsCommand && string.Equals(command.Name, "whoami", StringComparison.OrdinalIgnoreCase);
+
+    private bool CanRunChatTrustSetup(TelegramInboundMessage message, ParsedTelegramCommand command)
+        => IsAllowedUser(message.UserId)
+            && !IsPrivateChat(message)
+            && (IsTrust(command) || IsDoctor(command));
+
+    private static bool IsTrust(ParsedTelegramCommand command)
+        => command.IsCommand && string.Equals(command.Name, "trust", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsDoctor(ParsedTelegramCommand command)
+        => command.IsCommand
+            && (string.Equals(command.Name, "doctor", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(command.Name, "diag", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(command.Name, "diagnostics", StringComparison.OrdinalIgnoreCase));
+
+    private bool IsAllowedUser(long userId)
+        => _options.AllowedUserIds.Contains(userId);
+
+    private bool IsConfiguredAllowedSharedChat(long chatId)
+        => _options.AllowedChatIds.Contains(chatId);
 
     private static bool IsPrivateChat(TelegramInboundMessage message)
         => TelegramRoutingPolicy.IsPrivateChat(message.ChatType);
@@ -2057,6 +2148,8 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             "Use the buttons below for quick navigation between sessions, projects, and help.",
             "/help - show this help",
             "/whoami - show Telegram user, chat, and topic thread IDs",
+            "/version - show the running Codex Telegram app version",
+            "/trust - trust the current group or forum chat for allowlisted users",
             "/projects - list known project directories",
             "/project add <path> - add and select a project",
             "/project <number|name|path> - select a project",
@@ -2090,6 +2183,15 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             "Voice/text control phrase: Codex settings model gpt-5.4-mini thinking high: <prompt>"
         ]);
 
+    private static string BuildVersionText()
+        => string.Join(Environment.NewLine, [
+            $"Incursa Codex Telegram {GetApplicationVersion()}",
+            "If a documented command is unknown, the Telegram process is probably running an older binary than the repository or release you are reading."
+        ]);
+
+    private static string GetApplicationVersion()
+        => typeof(TelegramCodexBotCommandHandler).Assembly.GetName().Version?.ToString() ?? "unknown";
+
     private static string FormatProjects(IReadOnlyList<ProjectChoice> projects, string? activeProject)
     {
         if (projects.Count == 0)
@@ -2109,6 +2211,27 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
 
         builder.AppendLine("Use /project add <absolute path> to add another.");
         return builder.ToString().TrimEnd();
+    }
+
+    private static string FormatTrustResult(TelegramInboundMessage message, bool alreadyConfigured, bool alreadyTrusted)
+    {
+        string action = alreadyConfigured
+            ? "This chat is already allowed by TelegramBot:AllowedChatIds."
+            : alreadyTrusted
+                ? "This chat is already trusted from Telegram."
+                : "Trusted this chat for allowlisted users.";
+        string topicLine = message.MessageThreadId.HasValue
+            ? $"Topic thread ID: {message.MessageThreadId.Value.ToString(CultureInfo.InvariantCulture)}"
+            : "Topic thread ID: (none)";
+
+        return string.Join(Environment.NewLine, [
+            action,
+            $"Chat ID: {message.ChatId.ToString(CultureInfo.InvariantCulture)}",
+            topicLine,
+            "Trust applies to this Telegram chat; each forum topic still keeps its own active project and session.",
+            "Group-root plain text still will not auto-route. Use /send <text>, a forum topic, or private chat.",
+            "Use /trust remove here to remove Telegram-granted trust."
+        ]);
     }
 
     private static string BuildSelectedProjectReply(string action, ProjectChoice project)
@@ -2726,23 +2849,28 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         return builder.ToString().TrimEnd();
     }
 
-    private string FormatDoctorConversation(TelegramInboundMessage message)
+    private async Task<string> FormatDoctorConversationAsync(TelegramInboundMessage message, CancellationToken cancellationToken)
     {
-        bool userAllowed = _options.AllowedUserIds.Contains(message.UserId);
+        bool userAllowed = IsAllowedUser(message.UserId);
         bool chatNeedsAllowlist = !IsPrivateChat(message);
-        bool chatAllowed = !chatNeedsAllowlist || _options.AllowedChatIds.Contains(message.ChatId);
-        bool authorized = IsAuthorized(message);
+        bool configuredChatAllowed = IsConfiguredAllowedSharedChat(message.ChatId);
+        bool telegramTrustedChat = chatNeedsAllowlist && await _stateStore.IsChatTrustedAsync(message.ChatId, cancellationToken).ConfigureAwait(false);
+        bool chatAllowed = !chatNeedsAllowlist || configuredChatAllowed || telegramTrustedChat;
+        bool authorized = await IsAuthorizedAsync(message, cancellationToken).ConfigureAwait(false);
         string routing = CanRoutePlainText(message)
             ? "Plain text, audio, and attachments can auto-route in this conversation."
             : "Plain text and attachments do not auto-route from this chat root. Use /send <text>, open a forum topic, or message me privately.";
+        string chatAllowlistText = chatNeedsAllowlist
+            ? chatAllowed ? configuredChatAllowed ? "allowed by config" : "trusted from Telegram" : "not allowed"
+            : "not required for private chat";
 
         return string.Join(Environment.NewLine, [
             "Conversation:",
             $"- Chat: {message.ChatId.ToString(CultureInfo.InvariantCulture)} ({DescribeChat(message)})",
             $"- Topic thread: {message.MessageThreadId?.ToString(CultureInfo.InvariantCulture) ?? "<none>"}",
             $"- User allowlist: {(userAllowed ? "allowed" : "not allowed")}",
-            $"- Chat allowlist: {(chatNeedsAllowlist ? chatAllowed ? "allowed" : "not allowed" : "not required for private chat")}",
-            $"- Effective access: {(authorized ? "allowed" : "blocked except /whoami")}",
+            $"- Chat allowlist: {chatAllowlistText}",
+            $"- Effective access: {(authorized ? "allowed" : "blocked except setup commands")}",
             $"- Routing: {routing}"
         ]);
     }
@@ -2846,15 +2974,17 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
 
     private async Task<string> BuildDoctorNextActionAsync(TelegramInboundMessage message, CancellationToken cancellationToken)
     {
-        bool userAllowed = _options.AllowedUserIds.Contains(message.UserId);
+        bool userAllowed = IsAllowedUser(message.UserId);
         if (!userAllowed)
         {
             return "Next: add this Telegram user ID to TelegramBot:AllowedUserIds, then restart or relaunch if your configuration source does not reload.";
         }
 
-        if (!IsPrivateChat(message) && !_options.AllowedChatIds.Contains(message.ChatId))
+        if (!IsPrivateChat(message)
+            && !IsConfiguredAllowedSharedChat(message.ChatId)
+            && !await _stateStore.IsChatTrustedAsync(message.ChatId, cancellationToken).ConfigureAwait(false))
         {
-            return "Next: add this chat ID to TelegramBot:AllowedChatIds, or continue in a private chat.";
+            return "Next: send /trust here to trust this chat for allowlisted users, or continue in a private chat.";
         }
 
         if (!CanRoutePlainText(message))

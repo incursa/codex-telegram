@@ -66,7 +66,7 @@ public sealed class TelegramCommandHandlerTests
     }
 
     [Fact]
-    public async Task HandleMessageAsync_IgnoresGroupCommandsWhenChatIsNotAllowed()
+    public async Task HandleMessageAsync_ExplainsGroupCommandsWhenChatIsNotTrusted()
     {
         using CommandHandlerHarness harness = CommandHandlerHarness.Create(new TelegramBotOptions
         {
@@ -79,8 +79,38 @@ public sealed class TelegramCommandHandlerTests
             harness.Sender,
             CancellationToken.None);
 
-        Assert.Empty(harness.Sender.Sent);
+        SentTelegramMessage sent = Assert.Single(harness.Sender.Sent);
+        Assert.Contains("not trusted", sent.Text);
+        Assert.Contains("/trust", sent.Text);
         Assert.Empty(harness.Sender.Edited);
+    }
+
+    [Fact]
+    public async Task HandleMessageAsync_TrustAllowsGroupCommandsWithoutConfiguredChatAllowlist()
+    {
+        using CommandHandlerHarness harness = CommandHandlerHarness.Create(new TelegramBotOptions
+        {
+            AllowedUserIds = [1234],
+            AllowedChatIds = [],
+        });
+
+        await harness.Handler.HandleMessageAsync(
+            new TelegramInboundMessage(1234, -1005555, "supergroup", "/trust"),
+            harness.Sender,
+            CancellationToken.None);
+
+        SentTelegramMessage trustReply = Assert.Single(harness.Sender.Sent);
+        Assert.Contains("Trusted this chat", trustReply.Text);
+        Assert.True(await harness.StateStore.IsChatTrustedAsync(-1005555, CancellationToken.None));
+
+        harness.Sender.Sent.Clear();
+        await harness.Handler.HandleMessageAsync(
+            new TelegramInboundMessage(1234, -1005555, "supergroup", "/sessions"),
+            harness.Sender,
+            CancellationToken.None);
+
+        SentTelegramMessage sessionsReply = Assert.Single(harness.Sender.Sent);
+        Assert.Contains("No Codex sessions are known yet.", sessionsReply.Text);
     }
 
     [Fact]
@@ -325,9 +355,26 @@ public sealed class TelegramCommandHandlerTests
         Assert.Contains("/projects", sent.Text);
         Assert.Contains("/sessions", sent.Text);
         Assert.Contains("/model", sent.Text);
+        Assert.Contains("/version", sent.Text);
+        Assert.Contains("/queue", sent.Text);
         Assert.Contains("/outbound", sent.Text);
         Assert.Contains("configured OpenAI transcription model", sent.Text);
         Assert.Equal(["Sessions", "Projects", "Help"], FlattenButtonLabels(sent));
+    }
+
+    [Fact]
+    public async Task HandleMessageAsync_VersionShowsRunningBinaryVersion()
+    {
+        using CommandHandlerHarness harness = CommandHandlerHarness.Create();
+
+        await harness.Handler.HandleMessageAsync(
+            new TelegramInboundMessage(1234, 5555, "private", "/version"),
+            harness.Sender,
+            CancellationToken.None);
+
+        SentTelegramMessage sent = Assert.Single(harness.Sender.Sent);
+        Assert.Contains("Incursa Codex Telegram", sent.Text);
+        Assert.Contains("older binary", sent.Text);
     }
 
     [Fact]
@@ -940,6 +987,25 @@ public sealed class TelegramCommandHandlerTests
     }
 
     [Fact]
+    public async Task HandleMessageAsync_QueueMentionListsConversationPrompts()
+    {
+        using CommandHandlerHarness harness = CommandHandlerHarness.Create();
+        TelegramConversationScope conversation = new(5555, null);
+        await harness.StateStore.EnqueueQueuedPromptAsync(
+            CreateQueuedPrompt("aaaaaaaa11111111", 1234, conversation, "queued text"),
+            CancellationToken.None);
+
+        await harness.Handler.HandleMessageAsync(
+            new TelegramInboundMessage(1234, conversation.ChatId, "private", "/queue@codex_bot"),
+            harness.Sender,
+            CancellationToken.None);
+
+        SentTelegramMessage sent = Assert.Single(harness.Sender.Sent);
+        Assert.Contains("Queued prompts:", sent.Text);
+        Assert.Contains("queued text", sent.Text);
+    }
+
+    [Fact]
     public async Task HandleMessageAsync_QueueEditUpdatesOwnedPromptText()
     {
         using CommandHandlerHarness harness = CommandHandlerHarness.Create();
@@ -1092,6 +1158,27 @@ public sealed class TelegramCommandHandlerTests
         Assert.Null(answer.Text);
         Assert.Empty(harness.Sender.Sent);
         Assert.Empty(harness.Sender.Edited);
+    }
+
+    [Fact]
+    public async Task HandleCallbackAsync_AllowsTrustedGroupCallbacks()
+    {
+        using CommandHandlerHarness harness = CommandHandlerHarness.Create(new TelegramBotOptions
+        {
+            AllowedUserIds = [1234],
+            AllowedChatIds = [],
+        });
+        await harness.StateStore.TrustChatAsync(-1005555, CancellationToken.None);
+
+        await harness.Handler.HandleCallbackAsync(
+            new TelegramInboundCallback("callback-1", 1234, -1005555, "supergroup", "nav:sessions"),
+            harness.Sender,
+            CancellationToken.None);
+
+        CallbackAnswer answer = Assert.Single(harness.Sender.CallbackAnswers);
+        Assert.Equal("Opening menu.", answer.Text);
+        SentTelegramMessage sent = Assert.Single(harness.Sender.Sent);
+        Assert.Contains("No Codex sessions are known yet.", sent.Text);
     }
 
     [Fact]

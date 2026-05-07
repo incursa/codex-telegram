@@ -87,6 +87,8 @@ Choose your bot, then paste:
 ```text
 help - Show supported commands
 whoami - Show Telegram user, chat, and topic IDs
+version - Show the running app version
+trust - Trust the current group or forum chat
 doctor - Diagnose authorization, routing, project, session, and queue state
 projects - List known local projects
 project - Select, add, or show the current project
@@ -95,7 +97,7 @@ sessions - List active and managed sessions
 use - Select an existing session
 send - Send text to the active session
 steer - Steer the active turn
-queue - View and manage queued prompts
+queue - View, edit, send, or delete queued prompts
 model - Show or change model settings
 thinking - Show or change thinking effort
 tail - Show recent session output
@@ -112,7 +114,8 @@ Command behavior:
 
 1. Keep the command descriptions short; Telegram rejects invalid command definitions.
 2. BotFather may take a few minutes to reflect command-list changes in every client.
-3. `/kill`, `/rename`, and `/forget` are supported but intentionally omitted from the public command picker to keep the common menu simple. They remain documented in [command-reference.md](command-reference.md).
+3. Telegram's command picker lists top-level commands only, so `/queue edit`, `/queue delete`, and `/queue send` stay under the `/queue` entry.
+4. `/kill`, `/rename`, and `/forget` are supported but intentionally omitted from the public command picker to keep the common menu simple. They remain documented in [command-reference.md](command-reference.md).
 
 ## Group Join Setting
 

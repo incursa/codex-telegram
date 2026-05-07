@@ -325,6 +325,8 @@ After a successful test, you should see the transcription in Telegram before the
 | `/doctor` | Explain authorization, routing, active project/session, workspace roots, queue state, and next action. |
 | `/help` | Show the built-in command summary. |
 | `/whoami` | Show Telegram user, chat, and topic IDs for setup and troubleshooting. |
+| `/version` | Show the running app version. |
+| `/trust` | Trust the current group or forum chat for allowlisted users. |
 | `/projects` | List known local project directories. |
 | `/project add <path>` | Add and select a repository or workspace. |
 | `/project current` | Confirm the active project for this Telegram conversation. |
@@ -376,7 +378,7 @@ Secrets should stay in `appsettings.Local.json`, user secrets, environment varia
 Security rules:
 
 1. Keep `TelegramBot:AllowedUserIds` narrow.
-2. Keep `TelegramBot:AllowedChatIds` empty unless you intentionally want group or forum-topic access.
+2. Keep `TelegramBot:AllowedChatIds` empty unless you intentionally want config-managed group or forum-topic access.
 3. Set explicit workspace roots and a default working directory before enabling polling.
 4. Review Codex sandbox and approval settings before exposing sensitive repositories.
 5. Rotate the BotFather token if it is exposed.
@@ -388,7 +390,7 @@ Private chat is the primary supported operating mode and the recommended first s
 Groups and forum topics are available for advanced workflows, but they require:
 
 1. An allowed Telegram user.
-2. An allowed group chat ID.
+2. A trusted group chat, either from `TelegramBot:AllowedChatIds` or `/trust` sent in that chat by an allowlisted user.
 3. BotFather privacy settings that match the desired behavior.
 4. Topic-management rights if the bot should create forum topics.
 

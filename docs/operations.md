@@ -62,22 +62,23 @@ Private chat is the primary operating mode.
 For groups and forum topics:
 
 1. Add only trusted users to `TelegramBot:AllowedUserIds`.
-2. Add the group chat ID to `TelegramBot:AllowedChatIds`.
+2. Trust the group with `/trust` from an allowlisted admin account, or add the group chat ID to `TelegramBot:AllowedChatIds`.
 3. Keep Telegram privacy mode enabled unless plain group text is required.
 4. Grant topic-management rights only if `/topic new` is part of the supported workflow.
 
-Group and forum messages require both an allowed user and an allowed chat.
+Group and forum messages require both an allowed user and a trusted chat.
 
 ## Health Checks
 
 Use these Telegram commands during operation:
 
 1. `/whoami` to confirm user, chat, and topic IDs.
-2. `/project current` to confirm the working directory binding.
-3. `/status` to confirm the active session state.
-4. `/outbound` to inspect delayed Telegram output.
-5. `/usage` to inspect five-hour and weekly Codex usage percentages and reset timing.
-6. `/tail` to inspect recent session output.
+2. `/version` to confirm which app binary is answering in Telegram.
+3. `/project current` to confirm the working directory binding.
+4. `/status` to confirm the active session state.
+5. `/outbound` to inspect delayed Telegram output.
+6. `/usage` to inspect five-hour and weekly Codex usage percentages and reset timing.
+7. `/tail` to inspect recent session output.
 
 If Telegram output looks delayed, batched, or incomplete, use `/outbound` and `/tail` before changing configuration. Those commands separate delivery/backlog questions from Codex session-output questions.
 

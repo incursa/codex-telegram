@@ -111,7 +111,8 @@ Useful checks:
 3. `/tail` shows recent session output.
 4. `/queue` shows your queued prompts for the current conversation with Send now, Edit, and Delete buttons.
 5. `/usage` shows five-hour and weekly Codex usage and reset times.
-6. `/stop` clears pending queued messages for the stopped session.
+6. `/version` confirms which app binary is answering in Telegram.
+7. `/stop` clears pending queued messages for the stopped session.
 
 Queue controls:
 
@@ -119,6 +120,8 @@ Queue controls:
 2. Tap `Edit` to get the exact `/queue edit <id> <new text>` command for replacing prompt text.
 3. Tap `Delete` to remove one queued prompt and clean up any temporary attachment files.
 4. Send `/queue all` to see your queued prompts across conversations.
+
+Queued prompts are editable until they are drained or sent now. Once a prompt has been steered into an active turn, the bot cannot edit or recall that steering message.
 
 Queueing is per session and per Telegram conversation. Separate forum topics can continue independently when they are bound to different sessions.
 
@@ -142,7 +145,7 @@ If voice fails, send `/doctor`, then check `OpenAI:ApiKey`, `OpenAI:Model`, and 
 For groups and forum topics:
 
 1. Add the individual Telegram user ID to `TelegramBot:AllowedUserIds`.
-2. Add the group chat ID to `TelegramBot:AllowedChatIds`.
+2. Send `/trust` in the group from that allowlisted user, or add the group chat ID to `TelegramBot:AllowedChatIds`.
 3. Keep privacy mode enabled unless ordinary group text is intentionally supported.
 4. Prefer forum topics for multiple concurrent Codex sessions.
 5. Use `/send <text>` in the group root.

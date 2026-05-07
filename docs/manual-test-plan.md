@@ -19,27 +19,29 @@ Record the date, operator, OS, published asset or commit SHA, Codex CLI version,
 2. Paste a BotFather token and confirm the wizard validates it without printing the token.
 3. Let the wizard show a setup code and wait for a private Telegram message, send that exact code to the bot, and confirm the wizard captures the user ID.
 4. Confirm `TelegramBot:AllowedUserIds` contains the captured user ID after setup.
-5. Send `/projects` and confirm the response does not expose unrelated local paths.
-6. Send `/project add <absolute repository path>` for a directory under an allowed workspace root.
-7. Send `/project current` and confirm the selected project is correct.
-8. Send `/doctor` and confirm it explains access, routing, active project/session state, workspace roots, queue state, and a plausible next action.
-9. Send `/new <short name>` and confirm the reply summarizes the session without noisy status/model/thinking buttons; if Codex rate limits are available, confirm it includes a compact `Rate limits` line.
-10. Send a normal text prompt and confirm live output returns to the private chat.
-11. Send `/tail`, `/status`, `/usage`, `/model`, and `/thinking` and confirm each command is understandable without stale or truncated buttons; `/status`, `/model`, and `/thinking` should include compact rate limits when available.
-12. Send `/stop` and confirm pending queued messages for the session are cleared.
+5. Send `/version` and confirm the running app version matches the binary or commit being tested.
+6. Send `/projects` and confirm the response does not expose unrelated local paths.
+7. Send `/project add <absolute repository path>` for a directory under an allowed workspace root.
+8. Send `/project current` and confirm the selected project is correct.
+9. Send `/doctor` and confirm it explains access, routing, active project/session state, workspace roots, queue state, and a plausible next action.
+10. Send `/new <short name>` and confirm the reply summarizes the session without noisy status/model/thinking buttons; if Codex rate limits are available, confirm it includes a compact `Rate limits` line.
+11. Send a normal text prompt and confirm live output returns to the private chat.
+12. Send `/tail`, `/status`, `/usage`, `/model`, and `/thinking` and confirm each command is understandable without stale or truncated buttons; `/status`, `/model`, and `/thinking` should include compact rate limits when available.
+13. Send `/stop` and confirm pending queued messages for the session are cleared.
 
 ## Authorization
 
 1. From an unallowlisted Telegram user, send `/help` and confirm the bot ignores it.
 2. From an unallowlisted Telegram user, send `/whoami` and confirm the ID discovery response still works.
-3. In a group not listed in `TelegramBot:AllowedChatIds`, send a command from an allowlisted user and confirm it is ignored.
-4. In an allowed group, send a command from an unallowlisted user and confirm it is ignored.
-5. In an allowed group, send a command from an allowlisted user and confirm it works.
+3. In an untrusted group, send `/sessions` from an allowlisted user and confirm the bot asks for `/trust`.
+4. In that same group, send `/trust` from the allowlisted user and confirm the bot trusts the chat.
+5. In a trusted group, send a command from an unallowlisted user and confirm it is ignored.
+6. In a trusted group, send a command from an allowlisted user and confirm it works.
 
 ## Group And Forum Topics
 
 1. Add the bot to a normal group and record the group chat ID with `/whoami`.
-2. Add that chat ID to `TelegramBot:AllowedChatIds`.
+2. Send `/trust` in the group from an allowlisted admin account.
 3. Send `/doctor` in the group root and confirm it clearly says root messages do not auto-route.
 4. Send plain text to the group root and confirm the bot explains that it was not sent to Codex.
 5. With privacy mode enabled, confirm `/send <text>` works and plain text behavior matches Telegram privacy expectations.

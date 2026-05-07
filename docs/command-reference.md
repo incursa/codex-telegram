@@ -14,6 +14,7 @@ Use [README.md](../README.md) for first setup and [usage.md](usage.md) for day-t
 6. Group-root plain text does not auto-route; use `/send <text>`.
 7. Attachments are forwarded to Codex when they are attached to a routed message.
 8. Voice notes are transcribed first, then sent to the active session.
+9. Groups and forum topics require an allowed user plus either `AllowedChatIds` or `/trust` from an allowed user in that chat.
 
 ## Quick Workflow
 
@@ -66,6 +67,42 @@ Expected behavior:
 4. Works before the user allowlist is configured so first-time setup can discover IDs.
 
 Do not show `/whoami` in a public video unless you are comfortable exposing the IDs.
+
+### `/version`
+
+Shows the app version for the currently running Telegram process.
+
+Syntax:
+
+```text
+/version
+```
+
+Expected behavior:
+
+1. Shows the Incursa Codex Telegram assembly version.
+2. Helps confirm whether Telegram is talking to the binary you just installed or an older process.
+
+### `/trust`
+
+Trusts the current group or forum chat for allowlisted users without copying a chat ID into configuration.
+
+Syntax:
+
+```text
+/trust
+/trust chat
+/trust remove
+```
+
+Expected behavior:
+
+1. Works only for users already listed in `TelegramBot:AllowedUserIds`.
+2. In a private chat, explains that no chat trust entry is required.
+3. In a group or forum topic, stores the current chat ID in local Telegram state.
+4. Allows future commands, callbacks, topic workflows, audio, and attachments from allowlisted users in that chat.
+5. Keeps group-root plain text blocked from automatic routing; use `/send <text>` or a forum topic.
+6. `/trust remove` removes Telegram-granted trust for the current chat. If the chat is also listed in `TelegramBot:AllowedChatIds`, configuration still allows it.
 
 ### `/doctor`
 
@@ -261,7 +298,7 @@ Expected behavior:
 2. Sends steering text to the currently active Codex turn.
 3. Replies with an error if there is no live turn to steer.
 
-Use `/send` for normal new work. Use `/steer` only while Codex is already working.
+Use `/send` for normal new work. Use `/steer` only while Codex is already working. Steering text is sent immediately and cannot be edited after the bot hands it to Codex; edit queued text first with `/queue edit <id> <new text>`.
 
 ### `/queue`
 

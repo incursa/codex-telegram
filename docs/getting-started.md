@@ -91,7 +91,7 @@ Privacy mode matters most in groups and forum supergroups:
 
 ## Discover Your Telegram IDs
 
-The app only trusts allowlisted users and optional allowlisted chats.
+The app trusts allowlisted users in private chats. Groups and forum topics also need a trusted chat, either from `TelegramBot:AllowedChatIds` or from `/trust` sent in that chat by an allowlisted user.
 
 BotFather gives you the bot token, but it cannot give you your personal Telegram user ID. Most Telegram clients also do not show the numeric user ID directly.
 
@@ -102,7 +102,7 @@ The easiest bootstrap path is the first-run wizard:
 3. Let the wizard show a random setup code and wait for one private message to the bot.
 4. Send that exact setup code to the bot in a private chat.
 5. Confirm that the wizard captured and saved your numeric user ID.
-6. If you want the bot in a group, send `/whoami` there after private chat setup and copy the group chat ID.
+6. If you want the bot in a group, add the bot to the group and send `/trust` there from the allowlisted admin account.
 
 The manual fallback is still available:
 
@@ -260,7 +260,7 @@ Configuration behavior:
 1. `TelegramBot.Enabled` must be `true` or the bot will not poll Telegram.
 2. `TelegramBot.Token` is the BotFather token.
 3. `TelegramBot.AllowedUserIds` should contain your numeric Telegram user ID.
-4. `TelegramBot.AllowedChatIds` is required for group and forum-topic workflows. Private chats use the user allowlist only.
+4. `TelegramBot.AllowedChatIds` is the config-managed group/forum allowlist. You can also trust a group from Telegram with `/trust` after the admin user is allowlisted.
 5. `TelegramBot.DefaultWorkingDirectory` is the fallback working directory for new sessions that do not already have a project selected.
 6. `Codex:CodexPathOverride` is the preferred place to point at a local `codex` executable if it is not on `PATH`.
    The app also accepts `TelegramBot:CodexExecutablePath` and `CODEX_PATH` as fallbacks.
@@ -392,13 +392,13 @@ If the bot never replies, stop and check:
 
 ## Use The Bot In A Group
 
-If you want the bot in a group chat, add the group chat ID to `AllowedChatIds`. Group and forum-topic messages require both an allowed user and an allowed chat.
+If you want the bot in a group chat, add the bot to the group and send `/trust` there from an allowlisted admin account. Group and forum-topic messages require both an allowed user and a trusted chat.
 
 Group behavior:
 
 1. The bot should still be tested privately first.
 2. Group IDs are numeric and often negative.
-3. A group must be allowed in addition to the individual Telegram user.
+3. A group must be trusted in addition to the individual Telegram user.
 4. Plain text in the group root is not auto-routed to Codex. In an allowed group, the bot explains that you should use `/send <text>`, a forum topic, or a private chat.
 5. If the group is busy, private-mode behavior and allowlists matter more than in a private chat.
 
@@ -406,7 +406,7 @@ Recommended group workflow:
 
 1. Add the bot to the group.
 2. If necessary, make it an admin with topic-management rights.
-3. Allowlist the group chat ID.
+3. Send `/trust` in the group from the allowlisted admin account.
 4. Decide whether privacy should stay enabled.
 5. Use `/send <text>` for group-root messages.
 
@@ -460,6 +460,7 @@ For a complete parameter-by-parameter reference, see [command-reference.md](comm
 | --- | --- | --- |
 | `/help` | Shows the supported commands and basic usage. | Start here if you forget the syntax. |
 | `/whoami` | Shows your Telegram user ID, chat ID, and topic thread ID. | Use this during bootstrap and debugging. |
+| `/version` | Shows the running app version. | Use when Telegram behavior does not match the docs or release notes. |
 | `/projects` | Lists configured project directories. | Use before selecting or adding a project. |
 | `/project add <path>` | Adds a project directory and selects it. | Use when you want to make a repo available to Codex. |
 | `/project <number|name|path>` | Selects a known project. | Use when multiple projects exist. |
@@ -553,7 +554,7 @@ Check these in order:
 2. `TelegramBot.Enabled` is `true`.
 3. The bot process is actually running.
 4. Your user ID is in `AllowedUserIds`.
-5. The chat ID is in `AllowedChatIds` if you are in a group or forum topic.
+5. The chat is trusted with `/trust`, or the chat ID is in `AllowedChatIds`, if you are in a group or forum topic.
 6. You are talking to the right bot account.
 7. The executable folder contains the `appsettings.Local.json` file you think it does.
 
