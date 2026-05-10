@@ -101,6 +101,52 @@ public sealed class OutboundTelegramQueueTests
     }
 
     [Fact]
+    public async Task ExecuteAsync_WakesImmediatelyWhenWorkIsEnqueuedDuringLongFlushDelay()
+    {
+        TestTelegramSender sender = new();
+        OutboundTelegramScheduler scheduler = CreateScheduler(sender, new TelegramOutboundOptions
+        {
+            BatchWindowSeconds = 0,
+            PrivateMinimumSendIntervalSeconds = 0,
+            GroupMinimumSendIntervalSeconds = 0,
+            FlushIntervalMilliseconds = TelegramOutboundLimits.MaxFlushIntervalMilliseconds,
+        });
+
+        await scheduler.StartAsync(CancellationToken.None);
+        try
+        {
+            await Task.Delay(200);
+            await scheduler.EnqueueAsync(CreateMessage(CodexOutboundMessageKind.Update, "wake now"), CancellationToken.None);
+
+            SentTelegramMessage sent = await sender.NextSend.WaitAsync(TimeSpan.FromSeconds(2));
+
+            Assert.Equal("wake now", sent.Text);
+        }
+        finally
+        {
+            await scheduler.StopAsync(CancellationToken.None);
+        }
+    }
+
+    [Fact]
+    public async Task ProcessNextAsync_RespectsBatchWindowAfterWakeSignal()
+    {
+        TestTelegramSender sender = new();
+        TestTimeProvider timeProvider = new(TestNow);
+        OutboundTelegramScheduler scheduler = CreateScheduler(sender, new TelegramOutboundOptions
+        {
+            BatchWindowSeconds = 120,
+            PrivateMinimumSendIntervalSeconds = 0,
+            GroupMinimumSendIntervalSeconds = 0,
+        }, timeProvider);
+
+        await scheduler.EnqueueAsync(CreateMessage(CodexOutboundMessageKind.Update, "not ready yet"), CancellationToken.None);
+
+        Assert.False(await scheduler.ProcessNextAsync(CancellationToken.None));
+        Assert.Empty(sender.Sent);
+    }
+
+    [Fact]
     public async Task EnqueueAsync_TrimsTextAndUsesCurrentTimeWhenCreatedUtcIsMissing()
     {
         TestTimeProvider timeProvider = new(TestNow);
@@ -740,7 +786,11 @@ public sealed class OutboundTelegramQueueTests
 
     private sealed class TestTelegramSender : IOutboundTelegramMessageSender
     {
+        private readonly TaskCompletionSource<SentTelegramMessage> _nextSend = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
         public List<SentTelegramMessage> Sent { get; } = [];
+
+        public Task<SentTelegramMessage> NextSend => _nextSend.Task;
 
         public Queue<Exception> Exceptions { get; } = [];
 
@@ -758,7 +808,9 @@ public sealed class OutboundTelegramQueueTests
                 throw new InvalidOperationException("send failed");
             }
 
-            Sent.Add(new SentTelegramMessage(conversation, text));
+            SentTelegramMessage sent = new(conversation, text);
+            Sent.Add(sent);
+            _nextSend.TrySetResult(sent);
             return Task.CompletedTask;
         }
     }

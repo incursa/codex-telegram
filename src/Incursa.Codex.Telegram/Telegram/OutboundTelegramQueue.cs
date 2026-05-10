@@ -254,6 +254,7 @@ internal sealed class OutboundTelegramScheduler : BackgroundService, IOutboundTe
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<OutboundTelegramScheduler> _logger;
     private TelegramOutboundOptions _options;
+    private TaskCompletionSource<bool> _workAvailableSignal = CreateWorkAvailableSignal();
     private DateTimeOffset? _globalBackoffUntilUtc;
 
     /// <summary>
@@ -307,6 +308,7 @@ internal sealed class OutboundTelegramScheduler : BackgroundService, IOutboundTe
             DestinationBuffer buffer = _buffers.GetOrAdd(destination, _ => new DestinationBuffer(destination));
             buffer.Enqueue(normalized, now);
             CompactIfNeeded(buffer, options);
+            SignalWorkAvailableLocked();
         }
 
         return ValueTask.CompletedTask;
@@ -448,9 +450,8 @@ internal sealed class OutboundTelegramScheduler : BackgroundService, IOutboundTe
                 }
                 while (processed && !stoppingToken.IsCancellationRequested);
 
-                await Task.Delay(
+                await WaitForWorkOrDelayAsync(
                     TimeSpan.FromMilliseconds(Math.Max(TelegramOutboundLimits.MinFlushIntervalMilliseconds, _options.FlushIntervalMilliseconds)),
-                    _timeProvider,
                     stoppingToken).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
@@ -559,6 +560,50 @@ internal sealed class OutboundTelegramScheduler : BackgroundService, IOutboundTe
 
     private BudgetState GetBudget(long chatId)
         => _chatBudgets.GetOrAdd(new TelegramSendBudgetKey(chatId), _ => new BudgetState());
+
+    private void SignalWorkAvailableLocked()
+    {
+        _workAvailableSignal.TrySetResult(true);
+    }
+
+    private async Task WaitForWorkOrDelayAsync(TimeSpan delay, CancellationToken cancellationToken)
+    {
+        Task wakeTask;
+        lock (_gate)
+        {
+            wakeTask = _workAvailableSignal.Task;
+        }
+
+        using CancellationTokenSource delayCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        Task delayTask = Task.Delay(delay, _timeProvider, delayCancellation.Token);
+        Task completed = await Task.WhenAny(wakeTask, delayTask).ConfigureAwait(false);
+        if (ReferenceEquals(completed, delayTask))
+        {
+            await delayTask.ConfigureAwait(false);
+            return;
+        }
+
+        await wakeTask.ConfigureAwait(false);
+        delayCancellation.Cancel();
+        try
+        {
+            await delayTask.ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+        }
+
+        lock (_gate)
+        {
+            if (ReferenceEquals(_workAvailableSignal.Task, wakeTask))
+            {
+                _workAvailableSignal = CreateWorkAvailableSignal();
+            }
+        }
+    }
+
+    private static TaskCompletionSource<bool> CreateWorkAvailableSignal()
+        => new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     private void TrimGlobalSendTimestamps(DateTimeOffset now)
     {
