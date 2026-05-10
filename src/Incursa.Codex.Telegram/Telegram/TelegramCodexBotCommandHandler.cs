@@ -258,6 +258,9 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
                 case "thinking":
                     await HandleThinkingAsync(message, command.Arguments, sender, cancellationToken).ConfigureAwait(false);
                     break;
+                case "goal":
+                    await HandleGoalAsync(message, command.Arguments, sender, cancellationToken).ConfigureAwait(false);
+                    break;
                 case "tail":
                     await HandleTailAsync(message, command.Arguments, sender, cancellationToken).ConfigureAwait(false);
                     break;
@@ -1247,6 +1250,66 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         await HandleModelAsync(message, "thinking " + arguments, sender, cancellationToken).ConfigureAwait(false);
     }
 
+    private async Task HandleGoalAsync(TelegramInboundMessage message, string arguments, ITelegramBotMessageSender sender, CancellationToken cancellationToken)
+    {
+        ResolvedSession resolved = await ResolveActiveSessionAsync(message.ConversationScope, cancellationToken).ConfigureAwait(false);
+        if (resolved.Session is null)
+        {
+            await ReplyAsync(sender, message, resolved.Message, null, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        GoalCommandRequest request = ParseGoalCommand(arguments);
+        if (request.Action is GoalCommandAction.Invalid)
+        {
+            await ReplyAsync(sender, message, "Usage: /goal [objective|set <objective>|clear|pause|resume|complete]", null, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        try
+        {
+            if (request.Action is GoalCommandAction.Clear)
+            {
+                bool cleared = await _sessionManager.ClearGoalAsync(resolved.Session.Id, cancellationToken).ConfigureAwait(false);
+                await ReplyAsync(sender, message, cleared ? "Cleared the session goal." : "No session goal was set.", null, cancellationToken).ConfigureAwait(false);
+                return;
+            }
+
+            CodexThreadGoalVm? goal = request.Action switch
+            {
+                GoalCommandAction.Show => await _sessionManager.GetGoalAsync(resolved.Session.Id, cancellationToken).ConfigureAwait(false),
+                GoalCommandAction.Set => await _sessionManager.SetGoalAsync(resolved.Session.Id, request.Objective, request.TokenBudget, cancellationToken).ConfigureAwait(false),
+                GoalCommandAction.Pause => await _sessionManager.SetGoalStatusAsync(resolved.Session.Id, CodexThreadGoalStatus.Paused, cancellationToken).ConfigureAwait(false),
+                GoalCommandAction.Resume => await _sessionManager.SetGoalStatusAsync(resolved.Session.Id, CodexThreadGoalStatus.Active, cancellationToken).ConfigureAwait(false),
+                GoalCommandAction.Complete => await _sessionManager.SetGoalStatusAsync(resolved.Session.Id, CodexThreadGoalStatus.Complete, cancellationToken).ConfigureAwait(false),
+                _ => null,
+            };
+
+            string prefix = request.Action switch
+            {
+                GoalCommandAction.Set => "Updated session goal:",
+                GoalCommandAction.Pause => "Paused session goal:",
+                GoalCommandAction.Resume => "Resumed session goal:",
+                GoalCommandAction.Complete => "Completed session goal:",
+                _ => "Session goal:",
+            };
+
+            await ReplyAsync(sender, message, goal is null ? "No session goal is set." : $"{prefix}{Environment.NewLine}{FormatGoal(goal)}", null, cancellationToken).ConfigureAwait(false);
+        }
+        catch (CodexCapabilityNotSupportedException)
+        {
+            await ReplyAsync(sender, message, "Goals are unavailable: use the app-server backend with an up-to-date Codex CLI.", null, cancellationToken).ConfigureAwait(false);
+        }
+        catch (CodexMethodNotFoundException)
+        {
+            await ReplyAsync(sender, message, "Goals are unavailable: the installed Codex app-server does not expose thread goal methods. Update Codex and try /goal again.", null, cancellationToken).ConfigureAwait(false);
+        }
+        catch (ArgumentException exception)
+        {
+            await ReplyAsync(sender, message, exception.Message, null, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
     private async Task HandleModelMenuAsync(
         TelegramInboundMessage message,
         string arguments,
@@ -2164,6 +2227,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             "/queue - view, edit, delete, or send queued prompts now",
             "/model [model] [thinking <effort>] - show or change the selected session model",
             "/thinking <minimal|low|medium|high|xhigh> - change the selected session thinking effort",
+            "/goal [objective|set <objective>|clear|pause|resume|complete] - show or change the selected session goal",
             "/tail [count] - show recent output and keep following the session live",
             "/status [sessionId] - show session status",
             "/usage - show Codex account usage remaining and reset times",
@@ -2383,6 +2447,55 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         }
 
         return builder.ToString().TrimEnd();
+    }
+
+    private static string FormatGoal(CodexThreadGoalVm goal)
+    {
+        StringBuilder builder = new();
+        builder.AppendLine($"Objective: {goal.Objective}");
+        builder.AppendLine($"Status: {FormatGoalStatus(goal.Status)}");
+
+        if (goal.TokenBudget.HasValue)
+        {
+            builder.AppendLine($"Token budget: {goal.TokensUsed.ToString("N0", CultureInfo.InvariantCulture)}/{goal.TokenBudget.Value.ToString("N0", CultureInfo.InvariantCulture)}");
+        }
+        else if (goal.TokensUsed > 0)
+        {
+            builder.AppendLine($"Tokens used: {goal.TokensUsed.ToString("N0", CultureInfo.InvariantCulture)}");
+        }
+
+        if (goal.TimeUsedSeconds > 0)
+        {
+            builder.AppendLine($"Time used: {FormatDuration(TimeSpan.FromSeconds(goal.TimeUsedSeconds))}");
+        }
+
+        builder.AppendLine($"Updated: {FormatRelativeAge(goal.UpdatedAt)}");
+        return builder.ToString().TrimEnd();
+    }
+
+    private static string FormatGoalStatus(CodexThreadGoalStatus status)
+        => status switch
+        {
+            CodexThreadGoalStatus.Active => "active",
+            CodexThreadGoalStatus.Paused => "paused",
+            CodexThreadGoalStatus.BudgetLimited => "budget limited",
+            CodexThreadGoalStatus.Complete => "complete",
+            _ => status.ToString(),
+        };
+
+    private static string FormatDuration(TimeSpan duration)
+    {
+        if (duration.TotalHours >= 1)
+        {
+            return $"{(int)duration.TotalHours}h {duration.Minutes}m";
+        }
+
+        if (duration.TotalMinutes >= 1)
+        {
+            return $"{(int)duration.TotalMinutes}m {duration.Seconds}s";
+        }
+
+        return $"{Math.Max(0, (int)duration.TotalSeconds)}s";
     }
 
     private static string FormatAccountUsage(CodexAccountUsageVm usage)
@@ -3008,7 +3121,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             return "Next: use /projects and /sessions to refresh local state; check the terminal logs if either command fails.";
         }
 
-        return "Next: send a normal message to continue, or use /status, /tail, /usage, /model, /thinking, and /outbound if something seems off.";
+        return "Next: send a normal message to continue, or use /status, /tail, /usage, /model, /thinking, /goal, and /outbound if something seems off.";
     }
 
     private static string DescribeChat(TelegramInboundMessage message)
@@ -3126,7 +3239,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             lines.Add(usageSummary);
         }
 
-        lines.Add("Send a message to continue, or use /tail, /status, /model, /thinking, or /usage when you need a control.");
+        lines.Add("Send a message to continue, or use /tail, /status, /model, /thinking, /goal, or /usage when you need a control.");
         return string.Join(Environment.NewLine, lines);
     }
 
@@ -3359,6 +3472,86 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         }
 
         return new SessionListRequest(includeAll, Math.Clamp(limit, 1, 20));
+    }
+
+    private static GoalCommandRequest ParseGoalCommand(string arguments)
+    {
+        string text = arguments.Trim();
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return new GoalCommandRequest(GoalCommandAction.Show, string.Empty, null);
+        }
+
+        string[] parts = SplitArguments(text, 2);
+        string verb = parts[0];
+        string remainder = parts.Length > 1 ? parts[1] : string.Empty;
+
+        if (verb.Equals("show", StringComparison.OrdinalIgnoreCase)
+            || verb.Equals("current", StringComparison.OrdinalIgnoreCase)
+            || verb.Equals("status", StringComparison.OrdinalIgnoreCase))
+        {
+            return new GoalCommandRequest(GoalCommandAction.Show, string.Empty, null);
+        }
+
+        if (verb.Equals("clear", StringComparison.OrdinalIgnoreCase)
+            || verb.Equals("remove", StringComparison.OrdinalIgnoreCase)
+            || verb.Equals("delete", StringComparison.OrdinalIgnoreCase))
+        {
+            return new GoalCommandRequest(GoalCommandAction.Clear, string.Empty, null);
+        }
+
+        if (verb.Equals("pause", StringComparison.OrdinalIgnoreCase))
+        {
+            return new GoalCommandRequest(GoalCommandAction.Pause, string.Empty, null);
+        }
+
+        if (verb.Equals("resume", StringComparison.OrdinalIgnoreCase)
+            || verb.Equals("active", StringComparison.OrdinalIgnoreCase))
+        {
+            return new GoalCommandRequest(GoalCommandAction.Resume, string.Empty, null);
+        }
+
+        if (verb.Equals("complete", StringComparison.OrdinalIgnoreCase)
+            || verb.Equals("done", StringComparison.OrdinalIgnoreCase))
+        {
+            return new GoalCommandRequest(GoalCommandAction.Complete, string.Empty, null);
+        }
+
+        string objective = verb.Equals("set", StringComparison.OrdinalIgnoreCase)
+            ? remainder.Trim()
+            : text;
+        if (string.IsNullOrWhiteSpace(objective))
+        {
+            return GoalCommandRequest.Invalid;
+        }
+
+        long? tokenBudget = ExtractTokenBudget(ref objective);
+        return string.IsNullOrWhiteSpace(objective)
+            ? GoalCommandRequest.Invalid
+            : new GoalCommandRequest(GoalCommandAction.Set, objective.Trim(), tokenBudget);
+    }
+
+    private static long? ExtractTokenBudget(ref string objective)
+    {
+        foreach (string marker in new[] { " --budget ", " --tokens ", " budget ", " tokens " })
+        {
+            int markerIndex = objective.LastIndexOf(marker, StringComparison.OrdinalIgnoreCase);
+            if (markerIndex < 0)
+            {
+                continue;
+            }
+
+            string value = objective[(markerIndex + marker.Length)..].Trim().Replace(",", string.Empty, StringComparison.Ordinal);
+            if (!long.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out long parsedBudget) || parsedBudget <= 0)
+            {
+                return null;
+            }
+
+            objective = objective[..markerIndex].Trim();
+            return parsedBudget;
+        }
+
+        return null;
     }
 
     private static string GetShortSessionId(string sessionId)
@@ -3638,6 +3831,22 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
     private sealed record ModelControlRequest(string? Model, string? ReasoningEffort, string RemainingText, bool HasControl)
     {
         public static ModelControlRequest Empty { get; } = new(null, null, string.Empty, false);
+    }
+
+    private sealed record GoalCommandRequest(GoalCommandAction Action, string Objective, long? TokenBudget)
+    {
+        public static GoalCommandRequest Invalid { get; } = new(GoalCommandAction.Invalid, string.Empty, null);
+    }
+
+    private enum GoalCommandAction
+    {
+        Invalid,
+        Show,
+        Set,
+        Clear,
+        Pause,
+        Resume,
+        Complete,
     }
 
     private sealed record SessionListRequest(bool IncludeAll, int Limit);

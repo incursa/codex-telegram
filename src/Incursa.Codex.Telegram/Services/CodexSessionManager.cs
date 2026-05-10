@@ -30,6 +30,21 @@ internal interface ICodexSessionManager
         string? reasoningEffort,
         CancellationToken cancellationToken);
 
+    Task<CodexThreadGoalVm?> GetGoalAsync(string sessionId, CancellationToken cancellationToken);
+
+    Task<CodexThreadGoalVm> SetGoalAsync(
+        string sessionId,
+        string objective,
+        long? tokenBudget,
+        CancellationToken cancellationToken);
+
+    Task<CodexThreadGoalVm> SetGoalStatusAsync(
+        string sessionId,
+        CodexThreadGoalStatus status,
+        CancellationToken cancellationToken);
+
+    Task<bool> ClearGoalAsync(string sessionId, CancellationToken cancellationToken);
+
     Task<string> TailAsync(string sessionId, int lineCount, CancellationToken cancellationToken);
 
     Task StopAsync(string sessionId, CancellationToken cancellationToken);
@@ -274,6 +289,42 @@ internal sealed class CodexGatewaySessionManager : ICodexSessionManager
             cancellationToken).ConfigureAwait(false);
 
         return BuildModelSettings(session, updatedManifest, models);
+    }
+
+    public async Task<CodexThreadGoalVm?> GetGoalAsync(string sessionId, CancellationToken cancellationToken)
+    {
+        await RequireSessionAsync(sessionId, cancellationToken).ConfigureAwait(false);
+        return await _gateway.GetThreadGoalAsync(sessionId, cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<CodexThreadGoalVm> SetGoalAsync(
+        string sessionId,
+        string objective,
+        long? tokenBudget,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(objective))
+        {
+            throw new ArgumentException("Goal objective cannot be empty.", nameof(objective));
+        }
+
+        await RequireSessionAsync(sessionId, cancellationToken).ConfigureAwait(false);
+        return await _gateway.SetThreadGoalAsync(sessionId, objective.Trim(), tokenBudget, cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<CodexThreadGoalVm> SetGoalStatusAsync(
+        string sessionId,
+        CodexThreadGoalStatus status,
+        CancellationToken cancellationToken)
+    {
+        await RequireSessionAsync(sessionId, cancellationToken).ConfigureAwait(false);
+        return await _gateway.SetThreadGoalStatusAsync(sessionId, status, cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<bool> ClearGoalAsync(string sessionId, CancellationToken cancellationToken)
+    {
+        await RequireSessionAsync(sessionId, cancellationToken).ConfigureAwait(false);
+        return await _gateway.ClearThreadGoalAsync(sessionId, cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<string> TailAsync(string sessionId, int lineCount, CancellationToken cancellationToken)

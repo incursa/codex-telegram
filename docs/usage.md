@@ -82,6 +82,19 @@ You can also include an inline control phrase in a prompt:
 Codex settings model gpt-5.4 thinking high: inspect this repository and summarize the safest next setup check
 ```
 
+## Goal Controls
+
+Use `/goal` to inspect or change the selected session's Codex goal when the connected Codex app-server supports thread goals.
+
+Common flow:
+
+1. Send `/goal` to view the current goal.
+2. Send `/goal <objective>` or `/goal set <objective>` to set the session goal.
+3. Add a token budget with `/goal set <objective> --budget <tokens>` when you want Codex to track a budget.
+4. Send `/goal pause`, `/goal resume`, `/goal complete`, or `/goal clear` to change goal state.
+
+If the bot says goals are unavailable, update Codex and confirm the app-server backend is being used.
+
 ## Reading Output
 
 Telegram output is rate-limited and batched so busy sessions do not flood a chat.

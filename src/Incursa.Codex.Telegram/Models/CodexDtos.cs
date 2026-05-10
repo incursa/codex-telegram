@@ -25,6 +25,7 @@ namespace Incursa.Codex.Telegram.Models;
 /// <param name="SupportsArchiveThread">Whether Codex can archive threads.</param>
 /// <param name="SupportsUnarchiveThread">Whether Codex can unarchive threads.</param>
 /// <param name="SupportsListModels">Whether Codex can list available models.</param>
+/// <param name="SupportsThreadGoals">Whether Codex can get and change thread goals.</param>
 internal sealed record CodexRuntimeStateVm(
     bool Initialized,
     string? Message,
@@ -45,7 +46,8 @@ internal sealed record CodexRuntimeStateVm(
     bool SupportsCompactThread,
     bool SupportsArchiveThread,
     bool SupportsUnarchiveThread,
-    bool SupportsListModels);
+    bool SupportsListModels,
+    bool SupportsThreadGoals);
 
 /// <summary>
 /// Summary row for a Codex thread shown in Telegram session lists.
@@ -120,6 +122,27 @@ internal sealed record CodexUsageVm(
     int ReasoningOutputTokens,
     int TotalTokens,
     int? ModelContextWindow);
+
+/// <summary>
+/// Current goal configured on a Codex thread.
+/// </summary>
+/// <param name="ThreadId">Codex thread ID.</param>
+/// <param name="Objective">Goal objective text.</param>
+/// <param name="Status">Goal lifecycle status.</param>
+/// <param name="TokenBudget">Optional token budget associated with the goal.</param>
+/// <param name="TokensUsed">Tokens consumed against the goal, when reported.</param>
+/// <param name="TimeUsedSeconds">Elapsed goal time in seconds, when reported.</param>
+/// <param name="CreatedAt">Goal creation timestamp.</param>
+/// <param name="UpdatedAt">Goal update timestamp.</param>
+internal sealed record CodexThreadGoalVm(
+    string ThreadId,
+    string Objective,
+    CodexThreadGoalStatus Status,
+    long? TokenBudget,
+    long TokensUsed,
+    long TimeUsedSeconds,
+    DateTimeOffset CreatedAt,
+    DateTimeOffset UpdatedAt);
 
 /// <summary>
 /// Account-level Codex usage and rate-limit windows reported by the local Codex app-server.

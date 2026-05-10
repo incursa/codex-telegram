@@ -29,6 +29,21 @@ internal interface ICodexGateway
 
     Task<CodexThreadDetailVm> CompactThreadAsync(string threadId, CancellationToken cancellationToken = default);
 
+    Task<CodexThreadGoalVm?> GetThreadGoalAsync(string threadId, CancellationToken cancellationToken = default);
+
+    Task<CodexThreadGoalVm> SetThreadGoalAsync(
+        string threadId,
+        string objective,
+        long? tokenBudget = null,
+        CancellationToken cancellationToken = default);
+
+    Task<CodexThreadGoalVm> SetThreadGoalStatusAsync(
+        string threadId,
+        CodexThreadGoalStatus status,
+        CancellationToken cancellationToken = default);
+
+    Task<bool> ClearThreadGoalAsync(string threadId, CancellationToken cancellationToken = default);
+
     Task<IReadOnlyList<CodexWorkspaceEntryVm>> SearchWorkspaceAsync(string? query = null, CancellationToken cancellationToken = default);
 
     Task<IReadOnlyList<CodexModelVm>> ListModelsAsync(CancellationToken cancellationToken = default);
@@ -262,6 +277,44 @@ internal sealed class CodexGateway : ICodexGateway
         CodexThread thread = await runtime.Client.ResumeThreadAsync(threadId, null, cancellationToken).ConfigureAwait(false);
         await thread.CompactAsync(cancellationToken).ConfigureAwait(false);
         return await GetThreadAsync(threadId, cancellationToken: cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<CodexThreadGoalVm?> GetThreadGoalAsync(string threadId, CancellationToken cancellationToken = default)
+    {
+        CodexRuntimeSlot runtime = await _runtimeRegistry.GetBestForThreadAsync(threadId, cancellationToken).ConfigureAwait(false);
+        CodexThread thread = await runtime.Client.ResumeThreadAsync(threadId, null, cancellationToken).ConfigureAwait(false);
+        CodexThreadGoal? goal = await thread.GetGoalAsync(cancellationToken).ConfigureAwait(false);
+        return goal is null ? null : CodexViewModelMapper.ToThreadGoalVm(goal);
+    }
+
+    public async Task<CodexThreadGoalVm> SetThreadGoalAsync(
+        string threadId,
+        string objective,
+        long? tokenBudget = null,
+        CancellationToken cancellationToken = default)
+    {
+        CodexRuntimeSlot runtime = await _runtimeRegistry.GetBestForThreadAsync(threadId, cancellationToken).ConfigureAwait(false);
+        CodexThread thread = await runtime.Client.ResumeThreadAsync(threadId, null, cancellationToken).ConfigureAwait(false);
+        CodexThreadGoal goal = await thread.SetGoalAsync(objective, tokenBudget, cancellationToken).ConfigureAwait(false);
+        return CodexViewModelMapper.ToThreadGoalVm(goal);
+    }
+
+    public async Task<CodexThreadGoalVm> SetThreadGoalStatusAsync(
+        string threadId,
+        CodexThreadGoalStatus status,
+        CancellationToken cancellationToken = default)
+    {
+        CodexRuntimeSlot runtime = await _runtimeRegistry.GetBestForThreadAsync(threadId, cancellationToken).ConfigureAwait(false);
+        CodexThread thread = await runtime.Client.ResumeThreadAsync(threadId, null, cancellationToken).ConfigureAwait(false);
+        CodexThreadGoal goal = await thread.SetGoalStatusAsync(status, cancellationToken).ConfigureAwait(false);
+        return CodexViewModelMapper.ToThreadGoalVm(goal);
+    }
+
+    public async Task<bool> ClearThreadGoalAsync(string threadId, CancellationToken cancellationToken = default)
+    {
+        CodexRuntimeSlot runtime = await _runtimeRegistry.GetBestForThreadAsync(threadId, cancellationToken).ConfigureAwait(false);
+        CodexThread thread = await runtime.Client.ResumeThreadAsync(threadId, null, cancellationToken).ConfigureAwait(false);
+        return await thread.ClearGoalAsync(cancellationToken).ConfigureAwait(false);
     }
 
     public Task<IReadOnlyList<CodexWorkspaceEntryVm>> SearchWorkspaceAsync(string? query = null, CancellationToken cancellationToken = default)

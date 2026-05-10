@@ -18,14 +18,22 @@
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <DebugType Condition="'$(Configuration)' == 'Release'">embedded</DebugType>
+    <UseLocalCodexDotNetProject Condition="'$(UseLocalCodexDotNetProject)' == '' and Exists('..\..\..\codex-dotnet\src\Incursa.OpenAI.Codex\Incursa.OpenAI.Codex.csproj')">true</UseLocalCodexDotNetProject>
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Incursa.OpenAI.Codex" Version="1.1.0" />
     <PackageReference Include="Microsoft.Extensions.Configuration.UserSecrets" Version="10.0.7" />
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.7" />
     <PackageReference Include="Microsoft.Extensions.Http" Version="10.0.7" />
     <PackageReference Include="Telegram.Bot" Version="22.9.6.2" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(UseLocalCodexDotNetProject)' == 'true'">
+    <ProjectReference Include="..\..\..\codex-dotnet\src\Incursa.OpenAI.Codex\Incursa.OpenAI.Codex.csproj" AdditionalProperties="Configuration=$(Configuration)" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(UseLocalCodexDotNetProject)' != 'true'">
+    <PackageReference Include="Incursa.OpenAI.Codex" Version="1.1.0" />
   </ItemGroup>
 
 </Project>

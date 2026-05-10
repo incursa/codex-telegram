@@ -480,6 +480,7 @@ For a complete parameter-by-parameter reference, see [command-reference.md](comm
 | `/queue` | Shows queued prompts with Send now, Edit, and Delete buttons. | Use when you want to inspect or change prompts waiting behind an active turn. |
 | `/model [model] [thinking <effort>]` | Shows or changes the selected session model. | Use when you need to switch the active model. |
 | `/thinking <minimal|low|medium|high|xhigh>` | Changes the reasoning effort for the selected session. | Use when you want more or less reasoning budget. |
+| `/goal [objective|clear|pause|resume|complete]` | Shows or changes the selected session goal. | Use when you want Codex to track an explicit objective for the thread. |
 | `/tail [count]` | Shows recent output and keeps following the session. | Use while waiting on a live turn. |
 | `/status [sessionId]` | Shows session status and compact Codex usage when available. | Use when you want a quick health check. |
 | `/usage` | Shows five-hour and weekly Codex usage and reset times. | Use when planning around Codex usage blocks. |

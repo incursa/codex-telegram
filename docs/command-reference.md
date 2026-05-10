@@ -636,6 +636,71 @@ Expected behavior:
 2. Leaves the model unchanged.
 3. Returns the updated model settings.
 
+### `/goal`
+
+Shows the current goal for the active session.
+
+Syntax:
+
+```text
+/goal
+/goal show
+```
+
+Expected behavior:
+
+1. Resolves the active session for the current conversation.
+2. Shows the objective, status, optional token budget, tokens used, time used, and update age when a goal is set.
+3. Replies that no session goal is set when Codex has no goal for the thread.
+4. Replies with setup guidance when the connected Codex backend does not support thread goals.
+
+### `/goal [objective]`
+
+Sets the goal objective for the active session.
+
+Syntax:
+
+```text
+/goal <objective>
+/goal set <objective>
+/goal set <objective> --budget <tokens>
+```
+
+Examples:
+
+```text
+/goal get /goal working in the Telegram app
+/goal set stabilize this branch --budget 12000
+```
+
+Expected behavior:
+
+1. Creates or replaces the active session goal.
+2. Sets goal status to active.
+3. Sends an optional token budget when provided.
+4. Returns the updated goal.
+
+### `/goal clear|pause|resume|complete`
+
+Changes goal state for the active session.
+
+Syntax:
+
+```text
+/goal clear
+/goal pause
+/goal resume
+/goal complete
+```
+
+Expected behavior:
+
+1. `/goal clear` removes the goal from the thread.
+2. `/goal pause` changes goal status to paused.
+3. `/goal resume` changes goal status to active.
+4. `/goal complete` changes goal status to complete.
+5. Returns the updated goal unless the goal was cleared.
+
 ### Inline Model Control Phrase
 
 Sets model/thinking and sends a prompt in one message.
