@@ -568,6 +568,30 @@ public sealed class TelegramCommandHandlerTests
     }
 
     [Fact]
+    public async Task HandleMessageAsync_QueuesTextWhenSelectedSessionIsReportedRunning()
+    {
+        using CommandHandlerHarness harness = CommandHandlerHarness.Create();
+        TelegramConversationScope conversation = new(5555, null);
+        harness.SessionManager.Sessions.Add(CreateSession(
+            "thread-1",
+            "Goal session",
+            harness.Temp.Path,
+            CodexSessionStatus.Running));
+        await harness.StateStore.SetActiveSessionIdAsync(conversation, "thread-1", CancellationToken.None);
+
+        await harness.Handler.HandleMessageAsync(
+            new TelegramInboundMessage(1234, conversation.ChatId, "private", "tell me about the goal"),
+            harness.Sender,
+            CancellationToken.None);
+
+        Assert.Empty(harness.SessionManager.SendRequests);
+        TelegramQueuedPrompt queued = Assert.Single(await harness.StateStore.ListQueuedPromptsAsync(1234, conversation, CancellationToken.None));
+        Assert.Equal("thread-1", queued.SessionId);
+        Assert.Equal("tell me about the goal", queued.Text);
+        Assert.Contains("Queued for Goal session", Assert.Single(harness.Sender.Sent).Text);
+    }
+
+    [Fact]
     public async Task HandleMessageAsync_AudioTranscribesRoutesAndDeletesTemporaryFile()
     {
         using CommandHandlerHarness harness = CommandHandlerHarness.Create();
@@ -1601,11 +1625,15 @@ public sealed class TelegramCommandHandlerTests
         Assert.Empty(harness.SessionManager.UpdateRequests);
     }
 
-    private static CodexSessionSummary CreateSession(string id, string name, string? workingDirectory)
+    private static CodexSessionSummary CreateSession(
+        string id,
+        string name,
+        string? workingDirectory,
+        CodexSessionStatus status = CodexSessionStatus.Exited)
         => new(
             id,
             name,
-            CodexSessionStatus.Exited,
+            status,
             workingDirectory,
             DateTimeOffset.Parse("2026-05-04T00:00:00Z"),
             DateTimeOffset.Parse("2026-05-04T00:00:00Z"),

@@ -45,6 +45,11 @@ public static class TelegramOutboundDefaults
     public const int FlushIntervalMilliseconds = 500;
 
     /// <summary>
+    /// Default maximum time to wait for one Telegram outbound send before retrying later.
+    /// </summary>
+    public const int SendTimeoutSeconds = 30;
+
+    /// <summary>
     /// Default minimum accumulated assistant-message characters before live progress is published.
     /// </summary>
     public const int AgentMessageUpdateMinChars = 40;
@@ -137,6 +142,16 @@ public static class TelegramOutboundLimits
     public const int MaxFlushIntervalMilliseconds = 10000;
 
     /// <summary>
+    /// Smallest allowed Telegram outbound send timeout.
+    /// </summary>
+    public const int MinSendTimeoutSeconds = 1;
+
+    /// <summary>
+    /// Largest allowed Telegram outbound send timeout.
+    /// </summary>
+    public const int MaxSendTimeoutSeconds = 300;
+
+    /// <summary>
     /// Smallest allowed assistant progress update size.
     /// </summary>
     public const int MinAgentMessageUpdateChars = 12;
@@ -196,6 +211,11 @@ public sealed class TelegramOutboundOptions
     /// Gets or sets the scheduler loop delay used while polling for outbound work.
     /// </summary>
     public int FlushIntervalMilliseconds { get; set; } = TelegramOutboundDefaults.FlushIntervalMilliseconds;
+
+    /// <summary>
+    /// Gets or sets the maximum time to wait for one Telegram API send before keeping it queued for retry.
+    /// </summary>
+    public int SendTimeoutSeconds { get; set; } = TelegramOutboundDefaults.SendTimeoutSeconds;
 
     /// <summary>
     /// Gets or sets a value indicating whether internal Codex progress events should be sent to Telegram.

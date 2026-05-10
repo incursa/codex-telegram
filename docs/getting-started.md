@@ -537,11 +537,12 @@ If you are tuning a busier bot or a noisy session, the outbound queue settings m
 6. `TelegramBot:Outbound:MaxBufferedCharsPerDestination`
 7. `TelegramBot:Outbound:MaxBufferedMessagesPerDestination`
 8. `TelegramBot:Outbound:FlushIntervalMilliseconds`
-9. `TelegramBot:Outbound:IncludeProgressMessages`
-10. `TelegramBot:Outbound:AgentMessageUpdateMinChars`
-11. `TelegramBot:Outbound:AgentMessageUpdateMaxChars`
-12. `TelegramBot:Outbound:BatchWindowSeconds`
-13. `TelegramBot:Outbound:DropPolicy`
+9. `TelegramBot:Outbound:SendTimeoutSeconds`
+10. `TelegramBot:Outbound:IncludeProgressMessages`
+11. `TelegramBot:Outbound:AgentMessageUpdateMinChars`
+12. `TelegramBot:Outbound:AgentMessageUpdateMaxChars`
+13. `TelegramBot:Outbound:BatchWindowSeconds`
+14. `TelegramBot:Outbound:DropPolicy`
 
 The app also clamps several of those values to safe ranges at startup, so wildly out-of-range values will be normalized rather than trusted blindly.
 

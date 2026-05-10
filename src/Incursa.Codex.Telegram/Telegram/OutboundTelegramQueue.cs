@@ -236,6 +236,27 @@ internal sealed class TelegramOutboundRateLimitException : Exception
 }
 
 /// <summary>
+/// Exception raised when one Telegram outbound send exceeds the configured scheduler timeout.
+/// </summary>
+internal sealed class TelegramOutboundSendTimeoutException : TimeoutException
+{
+    /// <summary>
+    /// Initializes a new instance of the <see cref="TelegramOutboundSendTimeoutException"/> class.
+    /// </summary>
+    /// <param name="timeout">Configured send timeout.</param>
+    public TelegramOutboundSendTimeoutException(TimeSpan timeout)
+        : base($"Telegram outbound send did not complete within {timeout}.")
+    {
+        Timeout = timeout;
+    }
+
+    /// <summary>
+    /// Gets the timeout that was exceeded.
+    /// </summary>
+    public TimeSpan Timeout { get; }
+}
+
+/// <summary>
 /// Background scheduler that batches, chunks, and rate-limits live Codex output for Telegram.
 /// </summary>
 internal sealed class OutboundTelegramScheduler : BackgroundService, IOutboundTelegramQueue
@@ -394,7 +415,7 @@ internal sealed class OutboundTelegramScheduler : BackgroundService, IOutboundTe
 
         try
         {
-            await _sender.SendTextMessageAsync(pending.Value.Destination.ToConversationScope(), pending.Value.Text, cancellationToken).ConfigureAwait(false);
+            await SendWithTimeoutAsync(pending.Value, options, cancellationToken).ConfigureAwait(false);
         }
         catch (TelegramOutboundRateLimitException exception)
         {
@@ -405,6 +426,20 @@ internal sealed class OutboundTelegramScheduler : BackgroundService, IOutboundTe
                 pending.Value.Destination.ChatId,
                 exception.RetryAfter);
             return false;
+        }
+        catch (TelegramOutboundSendTimeoutException exception)
+        {
+            ApplyBackoff(pending.Value.Destination.ChatId, Max(GetChatInterval(pending.Value.Destination.ChatId, options), exception.Timeout), global: false);
+            _logger.LogWarning(
+                exception,
+                "Telegram outbound send timed out for chat {ChatId} topic {MessageThreadId}; message remains queued and other destinations can continue.",
+                pending.Value.Destination.ChatId,
+                pending.Value.Destination.MessageThreadId);
+            return false;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception exception)
         {
@@ -434,6 +469,60 @@ internal sealed class OutboundTelegramScheduler : BackgroundService, IOutboundTe
         }
 
         return true;
+    }
+
+    private async Task SendWithTimeoutAsync(PendingSend pending, TelegramOutboundOptions options, CancellationToken cancellationToken)
+    {
+        TimeSpan timeout = TimeSpan.FromSeconds(Math.Max(1, options.SendTimeoutSeconds));
+        using CancellationTokenSource sendCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        Task sendTask = _sender.SendTextMessageAsync(pending.Destination.ToConversationScope(), pending.Text, sendCancellation.Token);
+        Task timeoutTask = Task.Delay(timeout, _timeProvider, cancellationToken);
+
+        Task completed = await Task.WhenAny(sendTask, timeoutTask).ConfigureAwait(false);
+        if (ReferenceEquals(completed, sendTask))
+        {
+            await sendTask.ConfigureAwait(false);
+            return;
+        }
+
+        await timeoutTask.ConfigureAwait(false);
+        await sendCancellation.CancelAsync().ConfigureAwait(false);
+        ObserveTimedOutSend(sendTask, pending);
+        throw new TelegramOutboundSendTimeoutException(timeout);
+    }
+
+    private void ObserveTimedOutSend(Task sendTask, PendingSend pending)
+    {
+        _ = sendTask.ContinueWith(
+            task =>
+            {
+                if (task.IsFaulted)
+                {
+                    _logger.LogDebug(
+                        task.Exception,
+                        "Timed-out Telegram outbound send later faulted for chat {ChatId} topic {MessageThreadId}.",
+                        pending.Destination.ChatId,
+                        pending.Destination.MessageThreadId);
+                    return;
+                }
+
+                if (task.IsCanceled)
+                {
+                    _logger.LogDebug(
+                        "Timed-out Telegram outbound send was cancelled for chat {ChatId} topic {MessageThreadId}.",
+                        pending.Destination.ChatId,
+                        pending.Destination.MessageThreadId);
+                    return;
+                }
+
+                _logger.LogWarning(
+                    "Timed-out Telegram outbound send later completed for chat {ChatId} topic {MessageThreadId}; the queued chunk may be retried because Telegram acceptance could not be confirmed before the timeout.",
+                    pending.Destination.ChatId,
+                    pending.Destination.MessageThreadId);
+            },
+            CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
     }
 
     /// <inheritdoc />
@@ -621,6 +710,9 @@ internal sealed class OutboundTelegramScheduler : BackgroundService, IOutboundTe
 
     private static DateTimeOffset? Max(DateTimeOffset? left, DateTimeOffset right)
         => left is null || right > left.Value ? right : left;
+
+    private static TimeSpan Max(TimeSpan left, TimeSpan right)
+        => left >= right ? left : right;
 
     private readonly record struct PendingSend(TelegramDestinationKey Destination, string Text);
 

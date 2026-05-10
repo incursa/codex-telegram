@@ -926,6 +926,18 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             return true;
         }
 
+        if (IsLive(session.Status))
+        {
+            _logger.LogDebug(
+                "Telegram message for chat {ChatId} topic {MessageThreadId} is being queued because session {SessionId} is reported as {SessionStatus}.",
+                message.ChatId,
+                message.MessageThreadId,
+                session.Id,
+                session.Status);
+            await QueuePromptAsync(message, session, trimmed, sender, cancellationToken).ConfigureAwait(false);
+            return true;
+        }
+
         TelegramOutboundQueueStatus outboundStatus = await _outboundQueue.GetStatusAsync(cancellationToken).ConfigureAwait(false);
         if (HasPendingOutboundForConversation(outboundStatus, message.ConversationScope))
         {

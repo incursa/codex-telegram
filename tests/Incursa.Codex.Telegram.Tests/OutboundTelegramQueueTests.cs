@@ -744,6 +744,33 @@ public sealed class OutboundTelegramQueueTests
         Assert.Equal(1, status.PendingChunkCount);
     }
 
+    [Fact]
+    public async Task ProcessNextAsync_TimedOutSendDoesNotBlockOtherDestinations()
+    {
+        TestTelegramSender sender = new();
+        sender.HangingTexts.Add("stuck send");
+        OutboundTelegramScheduler scheduler = CreateScheduler(sender, new TelegramOutboundOptions
+        {
+            BatchWindowSeconds = 0,
+            PrivateMinimumSendIntervalSeconds = 0,
+            GroupMinimumSendIntervalSeconds = 0,
+            SendTimeoutSeconds = 1,
+        });
+
+        await scheduler.EnqueueAsync(CreateMessage(CodexOutboundMessageKind.Update, "stuck send", chatId: 1), CancellationToken.None);
+        await scheduler.EnqueueAsync(CreateMessage(CodexOutboundMessageKind.Update, "other send", chatId: 2), CancellationToken.None);
+
+        Assert.False(await scheduler.ProcessNextAsync(CancellationToken.None));
+        Assert.True(await scheduler.ProcessNextAsync(CancellationToken.None));
+
+        SentTelegramMessage sent = Assert.Single(sender.Sent);
+        Assert.Equal(2, sent.Conversation.ChatId);
+        Assert.Equal("other send", sent.Text);
+        TelegramOutboundQueueStatus status = await scheduler.GetStatusAsync(CancellationToken.None);
+        TelegramOutboundDestinationStatus stuck = Assert.Single(status.Destinations, destination => destination.ChatId == 1);
+        Assert.Equal(1, stuck.PendingChunkCount);
+    }
+
     private static OutboundTelegramScheduler CreateScheduler(TestTelegramSender sender, TelegramOutboundOptions options, TimeProvider? timeProvider = null)
         => new(
             sender,
@@ -794,6 +821,8 @@ public sealed class OutboundTelegramQueueTests
 
         public Queue<Exception> Exceptions { get; } = [];
 
+        public HashSet<string> HangingTexts { get; } = new(StringComparer.Ordinal);
+
         public bool ThrowOnSend { get; init; }
 
         public Task SendTextMessageAsync(TelegramConversationScope conversation, string text, CancellationToken cancellationToken)
@@ -806,6 +835,11 @@ public sealed class OutboundTelegramQueueTests
             if (ThrowOnSend)
             {
                 throw new InvalidOperationException("send failed");
+            }
+
+            if (HangingTexts.Contains(text))
+            {
+                return Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
             }
 
             SentTelegramMessage sent = new(conversation, text);

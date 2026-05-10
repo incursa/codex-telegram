@@ -61,9 +61,22 @@ internal sealed class TelegramQueuedPromptProcessor : ITelegramQueuedPromptProce
             return true;
         }
 
+        string? selectedSessionId = await _stateStore.GetActiveSessionIdAsync(prompt.ConversationScope, cancellationToken).ConfigureAwait(false);
+        if (!string.Equals(selectedSessionId, prompt.SessionId, StringComparison.OrdinalIgnoreCase))
+        {
+            TryDeleteAttachments(prompt.Attachments);
+            await _sender.SendTextMessageAsync(
+                prompt.ConversationScope,
+                $"Queued message for {prompt.SessionName} was skipped because this conversation now points at another session.",
+                null,
+                cancellationToken).ConfigureAwait(false);
+            return true;
+        }
+
         try
         {
             if (_turnCoordinator.HasActiveTurnForThread(prompt.SessionId)
+                || IsLive(session)
                 || HasPendingOutboundForConversation(outboundStatus, prompt.ConversationScope))
             {
                 await _stateStore.EnqueueQueuedPromptAsync(prompt, cancellationToken).ConfigureAwait(false);
@@ -78,6 +91,11 @@ internal sealed class TelegramQueuedPromptProcessor : ITelegramQueuedPromptProce
                     cancellationToken).ConfigureAwait(false)
                 : await _sessionManager.SendAsync(prompt.SessionId, prompt.Text, cancellationToken).ConfigureAwait(false);
             _followRegistry.FollowThread(prompt.ConversationScope, execution.ThreadId);
+            await _sender.SendTextMessageAsync(
+                prompt.ConversationScope,
+                $"Starting queued message for {session.Name}. Live updates will stream here.",
+                null,
+                cancellationToken).ConfigureAwait(false);
             TryDeleteAttachments(prompt.Attachments);
             return true;
         }
@@ -129,4 +147,7 @@ internal sealed class TelegramQueuedPromptProcessor : ITelegramQueuedPromptProce
 
     private static bool HasPendingOutbound(TelegramOutboundDestinationStatus destination)
         => destination.PendingMessageCount > 0 || destination.PendingChunkCount > 0;
+
+    private static bool IsLive(CodexSessionSummary session)
+        => session.Status is CodexSessionStatus.Running or CodexSessionStatus.Starting;
 }

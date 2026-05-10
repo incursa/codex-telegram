@@ -28,14 +28,17 @@ public sealed class TelegramQueuedPromptProcessorTests
         using ProcessorHarness harness = ProcessorHarness.Create();
         TelegramQueuedPrompt prompt = CreatePrompt("prompt-1", "thread-1", "queued text");
         harness.SessionManager.Sessions.Add(CreateSession("thread-1"));
-        await harness.StateStore.EnqueueQueuedPromptAsync(prompt, CancellationToken.None);
+        await EnqueueSelectedPromptAsync(harness, prompt);
 
         bool processed = await harness.Processor.ProcessNextAsync(CancellationToken.None);
 
         Assert.True(processed);
         Assert.Equal([("thread-1", "queued text")], harness.SessionManager.TextSends);
         Assert.Contains(prompt.ConversationScope, harness.FollowRegistry.GetTargets("thread-1"));
-        Assert.Empty(await harness.StateStore.ListConversationStatesAsync(CancellationToken.None));
+        SentTelegramMessage sent = Assert.Single(harness.Sender.Sent);
+        Assert.Contains("Starting queued message for thread-1", sent.Text);
+        TelegramConversationState state = Assert.Single(await harness.StateStore.ListConversationStatesAsync(CancellationToken.None));
+        Assert.Equal(0, state.QueuedPromptCount);
     }
 
     [Fact]
@@ -45,7 +48,7 @@ public sealed class TelegramQueuedPromptProcessorTests
         TelegramQueuedPrompt prompt = CreatePrompt("prompt-1", "thread-1", "queued text");
         harness.SessionManager.Sessions.Add(CreateSession("thread-1"));
         harness.SessionManager.ExecutionThreadId = "thread-returned";
-        await harness.StateStore.EnqueueQueuedPromptAsync(prompt, CancellationToken.None);
+        await EnqueueSelectedPromptAsync(harness, prompt);
 
         bool processed = await harness.Processor.ProcessNextAsync(CancellationToken.None);
 
@@ -69,7 +72,7 @@ public sealed class TelegramQueuedPromptProcessorTests
                 new TelegramAttachmentDescriptor(imagePath, "image.png", "image/png", IsImage: true),
             ]);
         harness.SessionManager.Sessions.Add(CreateSession("thread-1"));
-        await harness.StateStore.EnqueueQueuedPromptAsync(prompt, CancellationToken.None);
+        await EnqueueSelectedPromptAsync(harness, prompt);
 
         bool processed = await harness.Processor.ProcessNextAsync(CancellationToken.None);
 
@@ -114,7 +117,7 @@ public sealed class TelegramQueuedPromptProcessorTests
         TelegramQueuedPrompt prompt = CreatePrompt("prompt-1", "thread-1", "queued text");
         harness.SessionManager.Sessions.Add(CreateSession("thread-1"));
         harness.TurnCoordinator.ActiveThreadIds.Add("thread-1");
-        await harness.StateStore.EnqueueQueuedPromptAsync(prompt, CancellationToken.None);
+        await EnqueueSelectedPromptAsync(harness, prompt);
 
         bool processed = await harness.Processor.ProcessNextAsync(CancellationToken.None);
 
@@ -122,6 +125,44 @@ public sealed class TelegramQueuedPromptProcessorTests
         Assert.Empty(harness.SessionManager.TextSends);
         TelegramConversationState state = Assert.Single(await harness.StateStore.ListConversationStatesAsync(CancellationToken.None));
         Assert.Equal(1, state.QueuedPromptCount);
+    }
+
+    [Fact]
+    public async Task ProcessNextAsync_DefersPromptWhenSessionIsReportedRunning()
+    {
+        using ProcessorHarness harness = ProcessorHarness.Create();
+        TelegramQueuedPrompt prompt = CreatePrompt("prompt-1", "thread-1", "queued text");
+        harness.SessionManager.Sessions.Add(CreateSession("thread-1", status: CodexSessionStatus.Running));
+        await EnqueueSelectedPromptAsync(harness, prompt);
+
+        bool processed = await harness.Processor.ProcessNextAsync(CancellationToken.None);
+
+        Assert.False(processed);
+        Assert.Empty(harness.SessionManager.TextSends);
+        Assert.Empty(harness.Sender.Sent);
+        TelegramConversationState state = Assert.Single(await harness.StateStore.ListConversationStatesAsync(CancellationToken.None));
+        Assert.Equal(1, state.QueuedPromptCount);
+    }
+
+    [Fact]
+    public async Task ProcessNextAsync_SkipsPromptWhenConversationMovedToAnotherSession()
+    {
+        using ProcessorHarness harness = ProcessorHarness.Create();
+        TelegramQueuedPrompt prompt = CreatePrompt("prompt-1", "thread-1", "queued text");
+        harness.SessionManager.Sessions.Add(CreateSession("thread-1"));
+        harness.SessionManager.Sessions.Add(CreateSession("thread-2"));
+        await harness.StateStore.SetActiveSessionIdAsync(prompt.ConversationScope, "thread-2", CancellationToken.None);
+        await harness.StateStore.EnqueueQueuedPromptAsync(prompt, CancellationToken.None);
+
+        bool processed = await harness.Processor.ProcessNextAsync(CancellationToken.None);
+
+        Assert.True(processed);
+        Assert.Empty(harness.SessionManager.TextSends);
+        SentTelegramMessage sent = Assert.Single(harness.Sender.Sent);
+        Assert.Contains("conversation now points at another session", sent.Text);
+        TelegramConversationState state = Assert.Single(await harness.StateStore.ListConversationStatesAsync(CancellationToken.None));
+        Assert.Equal("thread-2", state.ActiveSessionId);
+        Assert.Equal(0, state.QueuedPromptCount);
     }
 
     [Fact]
@@ -151,7 +192,7 @@ public sealed class TelegramQueuedPromptProcessorTests
                     ChatBackoffUntilUtc: null,
                     LastSentUtc: null),
             ]);
-        await harness.StateStore.EnqueueQueuedPromptAsync(prompt, CancellationToken.None);
+        await EnqueueSelectedPromptAsync(harness, prompt);
 
         bool processed = await harness.Processor.ProcessNextAsync(CancellationToken.None);
 
@@ -188,7 +229,7 @@ public sealed class TelegramQueuedPromptProcessorTests
                     ChatBackoffUntilUtc: null,
                     LastSentUtc: null),
             ]);
-        await harness.StateStore.EnqueueQueuedPromptAsync(prompt, CancellationToken.None);
+        await EnqueueSelectedPromptAsync(harness, prompt);
 
         bool processed = await harness.Processor.ProcessNextAsync(CancellationToken.None);
 
@@ -225,13 +266,16 @@ public sealed class TelegramQueuedPromptProcessorTests
                     ChatBackoffUntilUtc: null,
                     LastSentUtc: null),
             ]);
-        await harness.StateStore.EnqueueQueuedPromptAsync(prompt, CancellationToken.None);
+        await EnqueueSelectedPromptAsync(harness, prompt);
 
         bool processed = await harness.Processor.ProcessNextAsync(CancellationToken.None);
 
         Assert.True(processed);
         Assert.Equal([("thread-1", "queued text")], harness.SessionManager.TextSends);
-        Assert.Empty(await harness.StateStore.ListConversationStatesAsync(CancellationToken.None));
+        SentTelegramMessage sent = Assert.Single(harness.Sender.Sent);
+        Assert.Contains("Starting queued message for thread-1", sent.Text);
+        TelegramConversationState state = Assert.Single(await harness.StateStore.ListConversationStatesAsync(CancellationToken.None));
+        Assert.Equal(0, state.QueuedPromptCount);
     }
 
     [Fact]
@@ -241,7 +285,7 @@ public sealed class TelegramQueuedPromptProcessorTests
         TelegramQueuedPrompt prompt = CreatePrompt("prompt-1", "thread-1", "queued text");
         harness.SessionManager.Sessions.Add(CreateSession("thread-1"));
         harness.SessionManager.SendException = new InvalidOperationException("another turn is already active");
-        await harness.StateStore.EnqueueQueuedPromptAsync(prompt, CancellationToken.None);
+        await EnqueueSelectedPromptAsync(harness, prompt);
 
         bool processed = await harness.Processor.ProcessNextAsync(CancellationToken.None);
 
@@ -267,7 +311,7 @@ public sealed class TelegramQueuedPromptProcessorTests
             ]);
         harness.SessionManager.Sessions.Add(CreateSession("thread-1", "Failing session"));
         harness.SessionManager.SendException = new ApplicationException("codex unavailable");
-        await harness.StateStore.EnqueueQueuedPromptAsync(prompt, CancellationToken.None);
+        await EnqueueSelectedPromptAsync(harness, prompt);
 
         bool processed = await harness.Processor.ProcessNextAsync(CancellationToken.None);
 
@@ -275,8 +319,15 @@ public sealed class TelegramQueuedPromptProcessorTests
         SentTelegramMessage sent = Assert.Single(harness.Sender.Sent);
         Assert.Contains("Queued message for Failing session failed to start", sent.Text);
         Assert.Contains("codex unavailable", sent.Text);
-        Assert.Empty(await harness.StateStore.ListConversationStatesAsync(CancellationToken.None));
+        TelegramConversationState state = Assert.Single(await harness.StateStore.ListConversationStatesAsync(CancellationToken.None));
+        Assert.Equal(0, state.QueuedPromptCount);
         Assert.False(File.Exists(documentPath));
+    }
+
+    private static async Task EnqueueSelectedPromptAsync(ProcessorHarness harness, TelegramQueuedPrompt prompt)
+    {
+        await harness.StateStore.SetActiveSessionIdAsync(prompt.ConversationScope, prompt.SessionId, CancellationToken.None);
+        await harness.StateStore.EnqueueQueuedPromptAsync(prompt, CancellationToken.None);
     }
 
     private static TelegramQueuedPrompt CreatePrompt(
@@ -297,11 +348,11 @@ public sealed class TelegramQueuedPromptProcessorTests
             messageThreadId,
             attachments);
 
-    private static CodexSessionSummary CreateSession(string id, string? name = null)
+    private static CodexSessionSummary CreateSession(string id, string? name = null, CodexSessionStatus status = CodexSessionStatus.Exited)
         => new(
             id,
             name ?? id,
-            CodexSessionStatus.Exited,
+            status,
             WorkingDirectory: null,
             DateTimeOffset.Parse("2026-05-04T00:00:00Z"),
             DateTimeOffset.Parse("2026-05-04T00:00:00Z"),
