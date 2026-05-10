@@ -58,7 +58,7 @@ public sealed class TelegramQueuedPromptProcessorTests
     }
 
     [Fact]
-    public async Task ProcessNextAsync_StartsQueuedAttachmentPromptAndDeletesTemporaryFiles()
+    public async Task ProcessNextAsync_StartsQueuedAttachmentPromptAndRetainsTemporaryFiles()
     {
         using ProcessorHarness harness = ProcessorHarness.Create();
         string imagePath = Path.Combine(harness.Temp.Path, "image.png");
@@ -82,7 +82,7 @@ public sealed class TelegramQueuedPromptProcessorTests
             sent,
             item => Assert.Equal("inspect this", Assert.IsType<CodexTextInput>(item).Text),
             item => Assert.Equal(imagePath, Assert.IsType<CodexLocalImageInput>(item).Path));
-        Assert.False(File.Exists(imagePath));
+        Assert.True(File.Exists(imagePath));
     }
 
     [Fact]

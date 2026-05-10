@@ -197,6 +197,8 @@ public sealed class TelegramCommandHandlerTests
             AddedAt = DateTimeOffset.Parse("2026-05-04T00:00:00Z"),
         });
         await harness.StateStore.SetActiveProjectWorkingDirectoryAsync(conversation, projectPath, CancellationToken.None);
+        string photoPath = Path.Combine(harness.Temp.Path, "photo.png");
+        await File.WriteAllBytesAsync(photoPath, [1, 2, 3]);
 
         await harness.Handler.HandleMessageAsync(
             new TelegramInboundMessage(
@@ -207,7 +209,7 @@ public sealed class TelegramCommandHandlerTests
                 Attachments:
                 [
                     new TelegramAttachmentDescriptor(
-                        Path.Combine(harness.Temp.Path, "photo.png"),
+                        photoPath,
                         "photo.png",
                         "image/png",
                         IsImage: true),
@@ -217,7 +219,8 @@ public sealed class TelegramCommandHandlerTests
 
         IReadOnlyList<CodexInputItem> input = Assert.IsAssignableFrom<IReadOnlyList<CodexInputItem>>(Assert.Single(harness.SessionManager.SendRequests));
         CodexLocalImageInput image = Assert.IsType<CodexLocalImageInput>(Assert.Single(input));
-        Assert.EndsWith("photo.png", image.Path, StringComparison.Ordinal);
+        Assert.Equal(photoPath, image.Path);
+        Assert.True(File.Exists(photoPath));
         Assert.Contains("Sent to repo session", Assert.Single(harness.Sender.Sent).Text);
     }
 
@@ -1218,6 +1221,41 @@ public sealed class TelegramCommandHandlerTests
         Assert.Equal(42, edited.MessageId);
         Assert.Contains("Sent queued item aaaaaaaa", edited.Text);
         Assert.Contains("No queued prompts", edited.Text);
+    }
+
+    [Fact]
+    public async Task HandleCallbackAsync_QueueSendNowWithAttachmentRetainsTemporaryFileAfterCodexHandoff()
+    {
+        using CommandHandlerHarness harness = CommandHandlerHarness.Create();
+        TelegramConversationScope conversation = new(5555, null);
+        string attachmentPath = Path.Combine(harness.Temp.Path, "queued.png");
+        await File.WriteAllTextAsync(attachmentPath, "image");
+        harness.SessionManager.Sessions.Add(CreateSession("thread-1", "Demo session", harness.Temp.Path));
+        await harness.StateStore.EnqueueQueuedPromptAsync(
+            CreateQueuedPrompt(
+                "aaaaaaaa11111111",
+                1234,
+                conversation,
+                "queued steering",
+                [
+                    new TelegramAttachmentDescriptor(attachmentPath, "queued.png", "image/png", IsImage: true),
+                ]),
+            CancellationToken.None);
+
+        await harness.Handler.HandleCallbackAsync(
+            new TelegramInboundCallback("callback-queue", 1234, conversation.ChatId, "private", "qnow:aaaaaaaa11111111", SourceMessageId: 42),
+            harness.Sender,
+            CancellationToken.None);
+
+        (string sessionId, object input) = Assert.Single(harness.SessionManager.SteerRequests);
+        Assert.Equal("thread-1", sessionId);
+        IReadOnlyList<CodexInputItem> items = Assert.IsAssignableFrom<IReadOnlyList<CodexInputItem>>(input);
+        Assert.Collection(
+            items,
+            item => Assert.Equal("queued steering", Assert.IsType<CodexTextInput>(item).Text),
+            item => Assert.Equal(attachmentPath, Assert.IsType<CodexLocalImageInput>(item).Path));
+        Assert.True(File.Exists(attachmentPath));
+        Assert.Empty(await harness.StateStore.ListQueuedPromptsAsync(1234, conversation, CancellationToken.None));
     }
 
     [Fact]

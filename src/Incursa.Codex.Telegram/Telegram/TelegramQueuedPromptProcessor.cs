@@ -96,7 +96,7 @@ internal sealed class TelegramQueuedPromptProcessor : ITelegramQueuedPromptProce
                 $"Starting queued message for {session.Name}. Live updates will stream here.",
                 null,
                 cancellationToken).ConfigureAwait(false);
-            TryDeleteAttachments(prompt.Attachments);
+            // Codex may read local image paths after SendAsync returns.
             return true;
         }
         catch (InvalidOperationException exception) when (exception.Message.Contains("already active", StringComparison.OrdinalIgnoreCase))

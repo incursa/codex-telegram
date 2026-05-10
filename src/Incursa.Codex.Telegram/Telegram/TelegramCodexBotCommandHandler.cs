@@ -863,6 +863,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         }
         finally
         {
+            // Attachments are local paths; keep them once they are queued or handed to Codex.
             if (!retainAttachments)
             {
                 TryDeleteAttachments(message.Attachments);
@@ -983,7 +984,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
                 execution.TurnId,
                 execution.ThreadId);
             await ReplyAsync(sender, message, $"Sent to {session.Name}. Live updates will stream here.", BuildSessionButtons([session], includeUse: false), cancellationToken).ConfigureAwait(false);
-            return false;
+            return message.Attachments is { Count: > 0 };
         }
         catch (InvalidOperationException exception) when (exception.Message.Contains("already active", StringComparison.OrdinalIgnoreCase))
         {
@@ -1076,7 +1077,6 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
                 message.MessageThreadId,
                 execution.TurnId,
                 execution.ThreadId);
-            TryDeleteAttachments(message.Attachments);
             await ReplyAsync(
                 sender,
                 message.ConversationScope,
@@ -1711,7 +1711,6 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             }
 
             _followRegistry.FollowThread(removed.ConversationScope, removed.SessionId);
-            TryDeleteAttachments(removed.Attachments);
             await ReplyWithQueueListAsync(
                 message,
                 sender,
