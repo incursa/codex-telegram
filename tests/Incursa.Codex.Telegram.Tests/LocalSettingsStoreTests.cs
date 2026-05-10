@@ -126,4 +126,42 @@ public sealed class LocalSettingsStoreTests
         Assert.Equal(300, snapshot.MaxAudioDurationSeconds);
     }
 
+    [Fact]
+    public void ResolveDefaultPath_UsesExecutableSettingsWhenPresent()
+    {
+        using TemporaryDirectory temp = TemporaryDirectory.Create();
+        string executableDirectory = temp.CreateDirectory("app");
+        string currentDirectory = temp.CreateDirectory("repo");
+        File.WriteAllText(Path.Combine(executableDirectory, LocalSettingsStore.FileName), "{}");
+        File.WriteAllText(Path.Combine(currentDirectory, LocalSettingsStore.FileName), "{}");
+
+        string resolved = LocalSettingsStore.ResolveDefaultPath(executableDirectory, currentDirectory);
+
+        Assert.Equal(Path.GetFullPath(Path.Combine(executableDirectory, LocalSettingsStore.FileName)), resolved);
+    }
+
+    [Fact]
+    public void ResolveDefaultPath_FallsBackToCurrentDirectorySettingsWhenExecutableSettingsAreMissing()
+    {
+        using TemporaryDirectory temp = TemporaryDirectory.Create();
+        string executableDirectory = temp.CreateDirectory("app");
+        string currentDirectory = temp.CreateDirectory("repo");
+        File.WriteAllText(Path.Combine(currentDirectory, LocalSettingsStore.FileName), "{}");
+
+        string resolved = LocalSettingsStore.ResolveDefaultPath(executableDirectory, currentDirectory);
+
+        Assert.Equal(Path.GetFullPath(Path.Combine(currentDirectory, LocalSettingsStore.FileName)), resolved);
+    }
+
+    [Fact]
+    public void ResolveDefaultPath_UsesExecutableSettingsPathWhenNoLocalFileExists()
+    {
+        using TemporaryDirectory temp = TemporaryDirectory.Create();
+        string executableDirectory = temp.CreateDirectory("app");
+        string currentDirectory = temp.CreateDirectory("repo");
+
+        string resolved = LocalSettingsStore.ResolveDefaultPath(executableDirectory, currentDirectory);
+
+        Assert.Equal(Path.GetFullPath(Path.Combine(executableDirectory, LocalSettingsStore.FileName)), resolved);
+    }
 }

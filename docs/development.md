@@ -24,7 +24,7 @@ dotnet run --project src\Incursa.Codex.Telegram
 dotnet run --project src\Incursa.Codex.Telegram -- --run
 ```
 
-When running from source, `appsettings.Local.json` resolves beside the built executable under `bin`, not the repository root. Use user secrets or environment variables for source-based development unless you intentionally want a local file under the build output folder.
+When running from source, `appsettings.Local.json` resolves beside the built executable under `bin` by default. If that file is missing and the launch directory has `appsettings.Local.json`, the app uses the launch-directory file.
 
 ## Publish Locally
 
@@ -43,6 +43,7 @@ The publish script writes:
 1. The self-contained binary.
 2. A `.sha256` checksum file.
 3. `LICENSE.txt`.
+4. `appsettings.Local.json` when one already exists in the publish output, or when an ignored repository-root local settings file exists.
 
 Other runtime identifiers can be passed with `-Runtime`, for example `linux-x64` or `osx-arm64`, when the .NET SDK has the required runtime packs.
 

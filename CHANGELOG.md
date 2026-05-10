@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+## 1.0.14 - 2026-05-06
+
+- Fixed published `--run` launches that missed `appsettings.Local.json` when the settings file existed in the launch directory but not beside the binary.
+- Preserved local settings during `scripts/Publish.ps1` so refreshing a publish folder does not strand Telegram token, allowlist, or workspace configuration.
+- Added shared-chat `/whoami` regression coverage for group and supergroup setup diagnostics.
+- Aligned application version defaults and issue-template placeholders for the 1.0.14 release.
+
+## 1.0.13 - 2026-05-06
+
+- Added trusted group-root sessions so allowlisted users can route plain text, audio, and attachments in trusted group roots.
+- Updated `/trust`, `/doctor`, and command guidance for group-root project/session behavior.
+- Changed `/new` to allow an omitted name and use a project-based default session name.
+
 ## 1.0.12 - 2026-05-06
 
 - Added `/queue` and `/queued` for viewing queued prompts, editing queued text, deleting queued items, and sending a queued item now as active-turn steering.
