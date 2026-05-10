@@ -26,8 +26,9 @@ Record the date, operator, OS, published asset or commit SHA, Codex CLI version,
 9. Send `/doctor` and confirm it explains access, routing, active project/session state, workspace roots, queue state, and a plausible next action.
 10. Send `/new` and confirm the reply uses an auto-generated project-based session name without noisy status/model/thinking buttons; if Codex rate limits are available, confirm it includes a compact `Rate limits` line.
 11. Send a normal text prompt and confirm live output returns to the private chat.
-12. Send `/tail`, `/status`, `/usage`, `/model`, and `/thinking` and confirm each command is understandable without stale or truncated buttons; `/status`, `/model`, and `/thinking` should include compact rate limits when available.
-13. Send `/stop` and confirm pending queued messages for the session are cleared.
+12. Send `/tail`, `/status`, `/usage`, `/model`, `/thinking`, and `/goal` and confirm each command is understandable without stale or truncated buttons; `/status`, `/model`, and `/thinking` should include compact rate limits when available.
+13. Send `/goal finish the private-chat smoke test`, then `/goal`, `/goal pause`, `/goal resume`, and `/goal clear`; confirm each reply reflects the expected objective or status when the installed Codex app-server supports thread goals.
+14. Send `/stop` and confirm pending queued messages for the session are cleared.
 
 ## Authorization
 
@@ -48,9 +49,11 @@ Record the date, operator, OS, published asset or commit SHA, Codex CLI version,
 6. If ordinary group text is part of the demo, disable privacy mode in BotFather, re-add the bot if needed, and confirm ordinary text routes only in the intended trusted group or topic.
 7. In a forum-enabled supergroup, run `/topic new <name>` with the bot missing topic-management rights and confirm the error is understandable.
 8. Grant the needed topic rights and rerun `/topic new <name>`.
-9. Send messages in two topics and confirm each topic remains bound to its own session.
-10. Close, delete, or otherwise invalidate a test topic when practical and confirm topic-scoped output is not retried in the group root.
-11. Restart the process and confirm topic/session bindings rehydrate from local state.
+9. Arm the group root with `/launchpad on`, send a plain-text or voice launch message from the root, and confirm a new topic/session pair is created, seeded from the root chat, and provisioned in a detached worktree.
+10. Launch from a subdirectory project path and confirm the new session keeps the matching relative subpath inside the detached worktree.
+11. Send messages in two topics and confirm each topic remains bound to its own session.
+12. Close, delete, or otherwise invalidate a test topic when practical and confirm topic-scoped output is not retried in the group root.
+13. Restart the process and confirm topic/session bindings rehydrate from local state.
 
 ## Voice And Attachments
 

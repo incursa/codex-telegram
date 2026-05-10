@@ -184,6 +184,7 @@ internal static class InteractiveBootstrapMenu
         Console.WriteLine("2. Send /newbot.");
         Console.WriteLine("3. Choose the bot display name and a username ending in bot.");
         Console.WriteLine("4. Copy the token BotFather returns.");
+        Console.WriteLine("5. The app will sync its commands, descriptions, and conservative group-admin defaults automatically when it starts.");
         Console.WriteLine();
 
         while (true)
@@ -208,6 +209,7 @@ internal static class InteractiveBootstrapMenu
                 store.SetTelegramEnabled(true);
                 SaveSettings(store);
                 Console.WriteLine($"Validated @{bot.Username ?? bot.Id.ToString(CultureInfo.InvariantCulture)} ({bot.DisplayName}).");
+                Console.WriteLine("The app will sync its commands, descriptions, and conservative group-admin defaults automatically on startup.");
                 WriteBotFatherHint(bot);
                 return token;
             }

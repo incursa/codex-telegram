@@ -82,6 +82,17 @@ You can also include an inline control phrase in a prompt:
 Codex settings model gpt-5.4 thinking high: inspect this repository and summarize the safest next setup check
 ```
 
+## Goal Controls
+
+Use `/goal` to inspect or change the selected session's Codex goal when the installed Codex app-server exposes thread goals.
+
+Common flow:
+
+1. Send `/goal` to view the current objective and status.
+2. Send `/goal <objective>` or `/goal set <objective>` to set a new active goal.
+3. Send `/goal pause`, `/goal resume`, or `/goal complete` to update goal status.
+4. Send `/goal clear` when the session should no longer carry a goal.
+
 ## Reading Output
 
 Telegram output is rate-limited and batched so busy sessions do not flood a chat.
@@ -153,12 +164,15 @@ For groups and forum topics:
 Forum-topic flow:
 
 ```text
+/launchpad on
 /topic new release-readiness
 /topic current
 /topic attach <sessionId>
 ```
 
-If `/topic new` fails, confirm the chat is a forum-enabled supergroup and the bot has the required topic-management rights.
+Use `/launchpad on` when you want to launch several independent topic lanes from the chat root without leaving the workflow in launch mode forever. While armed, plain text or audio messages in the root chat create a new detached git worktree-backed topic/session pair, name the topic from the root chat title plus a lane number, and seed the new session, and each `/launch` command still creates a new detached git worktree-backed topic/session pair. The armed state expires after 10 minutes of inactivity.
+
+If `/topic new` fails, confirm the chat is a forum-enabled supergroup and the bot has the required topic-management rights. If `/launch` fails, confirm launchpad is armed and the chat root has the same rights.
 
 ## Shutdown And Restart
 

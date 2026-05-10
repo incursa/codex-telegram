@@ -137,7 +137,8 @@ internal sealed class CodexRuntimeState
                 _capabilities?.SupportsCompactThread == true,
                 _capabilities?.SupportsArchiveThread == true,
                 _capabilities?.SupportsUnarchiveThread == true,
-                _capabilities?.SupportsListModels == true);
+                _capabilities?.SupportsListModels == true,
+                _capabilities?.SupportsThreadGoals == true);
         }
     }
 
@@ -171,6 +172,11 @@ internal sealed class CodexRuntimeState
         if (!capabilities.SupportsListModels)
         {
             warnings.Add("Model discovery is unavailable.");
+        }
+
+        if (!capabilities.SupportsThreadGoals)
+        {
+            warnings.Add("Thread goals are unavailable.");
         }
     }
 

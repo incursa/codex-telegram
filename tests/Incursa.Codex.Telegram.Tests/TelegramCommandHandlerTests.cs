@@ -422,15 +422,15 @@ public sealed class TelegramCommandHandlerTests
             harness.Sender,
             CancellationToken.None);
 
-        SentTelegramMessage sent = Assert.Single(harness.Sender.Sent);
-        Assert.Contains("/projects", sent.Text);
-        Assert.Contains("/sessions", sent.Text);
-        Assert.Contains("/model", sent.Text);
-        Assert.Contains("/version", sent.Text);
-        Assert.Contains("/queue", sent.Text);
-        Assert.Contains("/outbound", sent.Text);
-        Assert.Contains("configured OpenAI transcription model", sent.Text);
-        Assert.Equal(["Sessions", "Projects", "Help"], FlattenButtonLabels(sent));
+        string text = string.Join(Environment.NewLine, harness.Sender.Sent.Select(sent => sent.Text));
+        Assert.Contains("/projects", text);
+        Assert.Contains("/sessions", text);
+        Assert.Contains("/model", text);
+        Assert.Contains("/version", text);
+        Assert.Contains("/queue", text);
+        Assert.Contains("/outbound", text);
+        Assert.Contains("configured OpenAI transcription model", text);
+        Assert.Equal(["Sessions", "Projects", "Help"], FlattenButtonLabels(harness.Sender.Sent.Last()));
     }
 
     [Fact]
@@ -703,6 +703,188 @@ public sealed class TelegramCommandHandlerTests
     }
 
     [Fact]
+    public async Task HandleMessageAsync_LaunchpadArmsRootAndLaunchCreatesForumTopicSession()
+    {
+        using CommandHandlerHarness harness = CommandHandlerHarness.Create(new TelegramBotOptions
+        {
+            AllowedUserIds = [1234],
+            AllowedChatIds = [-1005555],
+        });
+        string projectPath = harness.Temp.CreateDirectory("repo");
+        string worktreePath = Path.Combine(harness.Temp.Path, "worktrees", "release-readiness");
+        harness.WorktreeProvisioner.Result = new GitWorktreeProvisioningResult(projectPath, worktreePath, worktreePath);
+        TelegramConversationScope rootConversation = new(-1005555, null);
+        string chatTitle = "Launch Pad Group";
+        harness.ProjectCatalog.Projects.Add(new CodexProjectCatalogRecord
+        {
+            WorkingDirectory = projectPath,
+            AddedAt = DateTimeOffset.Parse("2026-05-04T00:00:00Z", CultureInfo.InvariantCulture),
+        });
+        harness.SessionManager.Sessions.Add(CreateSession("thread-template", "Template session", projectPath));
+        await harness.StateStore.SetActiveProjectWorkingDirectoryAsync(rootConversation, projectPath, CancellationToken.None);
+        await harness.StateStore.SetActiveSessionIdAsync(rootConversation, "thread-template", CancellationToken.None);
+
+        await harness.Handler.HandleMessageAsync(
+            new TelegramInboundMessage(1234, rootConversation.ChatId, "supergroup", "/launchpad on", ChatTitle: chatTitle),
+            harness.Sender,
+            CancellationToken.None);
+        await harness.Handler.HandleMessageAsync(
+            new TelegramInboundMessage(1234, rootConversation.ChatId, "supergroup", "/launch Release readiness | " + projectPath, ChatTitle: chatTitle),
+            harness.Sender,
+            CancellationToken.None);
+
+        TelegramLaunchpadState? launchpad = await harness.StateStore.GetLaunchpadStateAsync(rootConversation, CancellationToken.None);
+        Assert.NotNull(launchpad);
+        Assert.Single(harness.TopicService.CreateRequests);
+        Assert.Equal((rootConversation.ChatId, "Release readiness"), harness.TopicService.CreateRequests[0]);
+
+        CreateCodexSessionRequest createRequest = Assert.Single(harness.SessionManager.CreateRequests);
+        Assert.Equal("Release readiness", createRequest.Name);
+        Assert.Equal(worktreePath, createRequest.WorkingDirectory);
+        Assert.Equal(["Release readiness"], harness.SessionManager.SendRequests);
+        Assert.Single(harness.WorktreeProvisioner.Requests);
+        Assert.Equal((projectPath, harness.Temp.Path, "Release readiness"), harness.WorktreeProvisioner.Requests[0]);
+        Assert.Contains(harness.ProjectCatalog.Projects, project => string.Equals(project.WorkingDirectory, worktreePath, StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(
+            harness.SessionManager.UpdateRequests,
+            update => update.SessionId == "thread-1"
+                && update.Model == "gpt-5.4-mini"
+                && update.ReasoningEffort == "high");
+
+        TelegramConversationScope topicConversation = new(rootConversation.ChatId, 123);
+        Assert.Equal("thread-1", await harness.StateStore.GetActiveSessionIdAsync(topicConversation, CancellationToken.None));
+        Assert.Equal(worktreePath, await harness.StateStore.GetActiveProjectWorkingDirectoryAsync(topicConversation, CancellationToken.None));
+        Assert.Equal(4, harness.Sender.Sent.Count);
+        Assert.Contains("Launchpad is armed", harness.Sender.Sent[0].Text);
+        Assert.Contains("Launched topic Release readiness and session Release readiness", harness.Sender.Sent[1].Text);
+        Assert.Contains("Launched and selected Release readiness.", harness.Sender.Sent[2].Text);
+        Assert.Contains("Sent to Release readiness", harness.Sender.Sent[3].Text);
+    }
+
+    [Fact]
+    public async Task HandleMessageAsync_LaunchpadArmsRootPlainTextLaunchSeedsForumTopicSession()
+    {
+        using CommandHandlerHarness harness = CommandHandlerHarness.Create(new TelegramBotOptions
+        {
+            AllowedUserIds = [1234],
+            AllowedChatIds = [-1005555],
+        });
+        string projectPath = harness.Temp.CreateDirectory("repo");
+        string worktreePath = Path.Combine(harness.Temp.Path, "worktrees", "release-readiness-text");
+        harness.WorktreeProvisioner.Result = new GitWorktreeProvisioningResult(projectPath, worktreePath, worktreePath);
+        TelegramConversationScope rootConversation = new(-1005555, null);
+        string chatTitle = "Launch Pad Group";
+        harness.ProjectCatalog.Projects.Add(new CodexProjectCatalogRecord
+        {
+            WorkingDirectory = projectPath,
+            AddedAt = DateTimeOffset.Parse("2026-05-04T00:00:00Z", CultureInfo.InvariantCulture),
+        });
+        harness.SessionManager.Sessions.Add(CreateSession("thread-template", "Template session", projectPath));
+        await harness.StateStore.SetActiveProjectWorkingDirectoryAsync(rootConversation, projectPath, CancellationToken.None);
+        await harness.StateStore.SetActiveSessionIdAsync(rootConversation, "thread-template", CancellationToken.None);
+
+        await harness.Handler.HandleMessageAsync(
+            new TelegramInboundMessage(1234, rootConversation.ChatId, "supergroup", "/launchpad on", ChatTitle: chatTitle),
+            harness.Sender,
+            CancellationToken.None);
+        await harness.Handler.HandleMessageAsync(
+            new TelegramInboundMessage(1234, rootConversation.ChatId, "supergroup", "Release readiness | " + projectPath, ChatTitle: chatTitle),
+            harness.Sender,
+            CancellationToken.None);
+
+        TelegramLaunchpadState? launchpad = await harness.StateStore.GetLaunchpadStateAsync(rootConversation, CancellationToken.None);
+        Assert.NotNull(launchpad);
+        Assert.Single(harness.TopicService.CreateRequests);
+        Assert.Equal((rootConversation.ChatId, "Launch Pad Group lane 1"), harness.TopicService.CreateRequests[0]);
+
+        CreateCodexSessionRequest createRequest = Assert.Single(harness.SessionManager.CreateRequests);
+        Assert.Equal("Launch Pad Group lane 1", createRequest.Name);
+        Assert.Equal(worktreePath, createRequest.WorkingDirectory);
+        Assert.Equal(["Release readiness"], harness.SessionManager.SendRequests);
+        Assert.Single(harness.WorktreeProvisioner.Requests);
+        Assert.Equal((projectPath, harness.Temp.Path, "Launch Pad Group lane 1"), harness.WorktreeProvisioner.Requests[0]);
+        Assert.Contains(harness.ProjectCatalog.Projects, project => string.Equals(project.WorkingDirectory, worktreePath, StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(
+            harness.SessionManager.UpdateRequests,
+            update => update.SessionId == "thread-1"
+                && update.Model == "gpt-5.4-mini"
+                && update.ReasoningEffort == "high");
+
+        TelegramConversationScope topicConversation = new(rootConversation.ChatId, 123);
+        Assert.Equal("thread-1", await harness.StateStore.GetActiveSessionIdAsync(topicConversation, CancellationToken.None));
+        Assert.Equal(worktreePath, await harness.StateStore.GetActiveProjectWorkingDirectoryAsync(topicConversation, CancellationToken.None));
+        Assert.Equal(4, harness.Sender.Sent.Count);
+        Assert.Contains("Launchpad is armed", harness.Sender.Sent[0].Text);
+        Assert.Contains("Launched topic Launch Pad Group lane 1 and session Launch Pad Group lane 1", harness.Sender.Sent[1].Text);
+        Assert.Contains("Launched and selected Launch Pad Group lane 1.", harness.Sender.Sent[2].Text);
+        Assert.Contains("Sent to Launch Pad Group lane 1", harness.Sender.Sent[3].Text);
+    }
+
+    [Fact]
+    public async Task HandleMessageAsync_LaunchpadArmsRootAudioLaunchSeedsForumTopicSession()
+    {
+        using CommandHandlerHarness harness = CommandHandlerHarness.Create(new TelegramBotOptions
+        {
+            AllowedUserIds = [1234],
+            AllowedChatIds = [-1005555],
+        });
+        string projectPath = harness.Temp.CreateDirectory("repo");
+        string worktreePath = Path.Combine(harness.Temp.Path, "worktrees", "release-readiness-audio");
+        harness.WorktreeProvisioner.Result = new GitWorktreeProvisioningResult(projectPath, worktreePath, worktreePath);
+        harness.AudioTranscription.Transcript = "Release readiness";
+        TelegramConversationScope rootConversation = new(-1005555, null);
+        string chatTitle = "Launch Pad Group";
+        harness.ProjectCatalog.Projects.Add(new CodexProjectCatalogRecord
+        {
+            WorkingDirectory = projectPath,
+            AddedAt = DateTimeOffset.Parse("2026-05-04T00:00:00Z", CultureInfo.InvariantCulture),
+        });
+        harness.SessionManager.Sessions.Add(CreateSession("thread-template", "Template session", projectPath));
+        await harness.StateStore.SetActiveProjectWorkingDirectoryAsync(rootConversation, projectPath, CancellationToken.None);
+        await harness.StateStore.SetActiveSessionIdAsync(rootConversation, "thread-template", CancellationToken.None);
+
+        await harness.Handler.HandleMessageAsync(
+            new TelegramInboundMessage(1234, rootConversation.ChatId, "supergroup", "/launchpad on", ChatTitle: chatTitle),
+            harness.Sender,
+            CancellationToken.None);
+        await harness.Handler.HandleMessageAsync(
+            new TelegramInboundMessage(1234, rootConversation.ChatId, "supergroup", null, AudioFilePath: "launch.ogg", ChatTitle: chatTitle),
+            harness.Sender,
+            CancellationToken.None);
+
+        Assert.Single(harness.WorktreeProvisioner.Requests);
+        Assert.Equal((projectPath, harness.Temp.Path, "Launch Pad Group lane 1"), harness.WorktreeProvisioner.Requests[0]);
+        Assert.Equal(["Release readiness"], harness.SessionManager.SendRequests);
+        Assert.Equal(worktreePath, Assert.Single(harness.SessionManager.CreateRequests).WorkingDirectory);
+        Assert.Equal(worktreePath, await harness.StateStore.GetActiveProjectWorkingDirectoryAsync(new TelegramConversationScope(rootConversation.ChatId, 123), CancellationToken.None));
+        Assert.Equal(5, harness.Sender.Sent.Count);
+        Assert.Contains("Here's what I transcribed:", harness.Sender.Sent[1].Text);
+        Assert.Contains("Launchpad is armed", harness.Sender.Sent[0].Text);
+        Assert.Contains("Launched topic Launch Pad Group lane 1 and session Launch Pad Group lane 1", harness.Sender.Sent[2].Text);
+        Assert.Contains("Launched and selected Launch Pad Group lane 1.", harness.Sender.Sent[3].Text);
+        Assert.Contains("Sent to Launch Pad Group lane 1", harness.Sender.Sent[4].Text);
+    }
+
+    [Fact]
+    public async Task HandleMessageAsync_LaunchRequiresArmedLaunchpad()
+    {
+        using CommandHandlerHarness harness = CommandHandlerHarness.Create(new TelegramBotOptions
+        {
+            AllowedUserIds = [1234],
+            AllowedChatIds = [-1005555],
+        });
+
+        await harness.Handler.HandleMessageAsync(
+            new TelegramInboundMessage(1234, -1005555, "supergroup", "/launch Release readiness"),
+            harness.Sender,
+            CancellationToken.None);
+
+        string text = Assert.Single(harness.Sender.Sent).Text;
+        Assert.Contains("Launchpad is not armed", text);
+        Assert.Empty(harness.TopicService.CreateRequests);
+    }
+
+    [Fact]
     public async Task HandleMessageAsync_TopicAttachAndCurrentUseTopicScopedSession()
     {
         using CommandHandlerHarness harness = CommandHandlerHarness.Create(new TelegramBotOptions
@@ -872,6 +1054,71 @@ public sealed class TelegramCommandHandlerTests
 
         Assert.Equal(("thread-1", (string?)null, (string?)"xhigh"), Assert.Single(updateHarness.SessionManager.UpdateRequests));
         Assert.Contains("Updated model settings:", Assert.Single(updateHarness.Sender.Sent).Text);
+    }
+
+    [Fact]
+    public async Task HandleMessageAsync_GoalShowsAndSetsActiveSessionGoal()
+    {
+        using CommandHandlerHarness harness = CommandHandlerHarness.Create();
+        TelegramConversationScope conversation = new(5555, null);
+        harness.SessionManager.Sessions.Add(CreateSession("thread-1", "Demo session", harness.Temp.Path));
+        await harness.StateStore.SetActiveSessionIdAsync(conversation, "thread-1", CancellationToken.None);
+
+        await harness.Handler.HandleMessageAsync(
+            new TelegramInboundMessage(1234, conversation.ChatId, "private", "/goal"),
+            harness.Sender,
+            CancellationToken.None);
+
+        Assert.Contains("No goal is set for Demo session.", Assert.Single(harness.Sender.Sent).Text);
+
+        harness.Sender.Sent.Clear();
+        await harness.Handler.HandleMessageAsync(
+            new TelegramInboundMessage(1234, conversation.ChatId, "private", "/goal Ship the Telegram goal command"),
+            harness.Sender,
+            CancellationToken.None);
+
+        Assert.Equal(("thread-1", "Ship the Telegram goal command", (long?)null), Assert.Single(harness.SessionManager.SetGoalRequests));
+        string setText = Assert.Single(harness.Sender.Sent).Text;
+        Assert.Contains("Goal set.", setText);
+        Assert.Contains("Objective: Ship the Telegram goal command", setText);
+
+        harness.Sender.Sent.Clear();
+        await harness.Handler.HandleMessageAsync(
+            new TelegramInboundMessage(1234, conversation.ChatId, "private", "/goal"),
+            harness.Sender,
+            CancellationToken.None);
+
+        string showText = Assert.Single(harness.Sender.Sent).Text;
+        Assert.Contains("Goal for Demo session", showText);
+        Assert.Contains("Status: active", showText);
+        Assert.Contains("Objective: Ship the Telegram goal command", showText);
+    }
+
+    [Fact]
+    public async Task HandleMessageAsync_GoalControlCommandsUseActiveSession()
+    {
+        using CommandHandlerHarness harness = CommandHandlerHarness.Create();
+        TelegramConversationScope conversation = new(5555, null);
+        harness.SessionManager.Sessions.Add(CreateSession("thread-1", "Demo session", harness.Temp.Path));
+        harness.SessionManager.Goals["thread-1"] = CreateGoal("thread-1", "Finish the release", CodexThreadGoalStatus.Active);
+        await harness.StateStore.SetActiveSessionIdAsync(conversation, "thread-1", CancellationToken.None);
+
+        await harness.Handler.HandleMessageAsync(
+            new TelegramInboundMessage(1234, conversation.ChatId, "private", "/goal pause"),
+            harness.Sender,
+            CancellationToken.None);
+
+        Assert.Equal(("thread-1", CodexThreadGoalStatus.Paused), Assert.Single(harness.SessionManager.SetGoalStatusRequests));
+        Assert.Contains("Goal paused.", Assert.Single(harness.Sender.Sent).Text);
+
+        harness.Sender.Sent.Clear();
+        await harness.Handler.HandleMessageAsync(
+            new TelegramInboundMessage(1234, conversation.ChatId, "private", "/goal clear"),
+            harness.Sender,
+            CancellationToken.None);
+
+        Assert.Equal("thread-1", Assert.Single(harness.SessionManager.ClearGoalRequests));
+        Assert.Contains("Goal cleared for Demo session.", Assert.Single(harness.Sender.Sent).Text);
     }
 
     [Fact]
@@ -1317,11 +1564,10 @@ public sealed class TelegramCommandHandlerTests
             CancellationToken.None);
 
         Assert.Equal(["Opening menu.", "Opening menu.", "Opening menu."], harness.Sender.CallbackAnswers.Select(answer => answer.Text));
-        Assert.Collection(
-            harness.Sender.Sent,
-            sent => Assert.Contains("Demo session", sent.Text),
-            sent => Assert.Contains("Commands:", sent.Text),
-            sent => Assert.Equal("Unsupported navigation action.", sent.Text));
+        Assert.Contains(harness.Sender.Sent, sent => sent.Text.Contains("Demo session"));
+        Assert.Contains(harness.Sender.Sent, sent => sent.Text.Contains("Commands:"));
+        Assert.Contains(harness.Sender.Sent, sent => sent.Text.Contains("configured OpenAI transcription model"));
+        Assert.Equal("Unsupported navigation action.", harness.Sender.Sent.Last().Text);
     }
 
     [Fact]
@@ -1537,6 +1783,21 @@ public sealed class TelegramCommandHandlerTests
             null,
             null);
 
+    private static CodexThreadGoalVm CreateGoal(
+        string threadId,
+        string objective,
+        CodexThreadGoalStatus status,
+        long? tokenBudget = null)
+        => new(
+            threadId,
+            objective,
+            status,
+            tokenBudget,
+            42,
+            120,
+            DateTimeOffset.Parse("2026-05-09T12:00:00Z", CultureInfo.InvariantCulture),
+            DateTimeOffset.Parse("2026-05-09T12:02:00Z", CultureInfo.InvariantCulture));
+
     private static TelegramQueuedPrompt CreateQueuedPrompt(
         string id,
         long userId,
@@ -1626,14 +1887,15 @@ public sealed class TelegramCommandHandlerTests
         private CommandHandlerHarness(
             TemporaryDirectory temp,
             FakeCodexSessionManager sessionManager,
-            FakeCodexAccountUsageService accountUsage,
-            FakeProjectCatalogStore projectCatalog,
-            TelegramBotStateStore stateStore,
-            FakeOutboundTelegramQueue outboundQueue,
-            FakeTelegramForumTopicService topicService,
-            FakeAudioTranscriptionService audioTranscription,
-            TestTelegramBotMessageSender sender,
-            TelegramCodexBotCommandHandler handler)
+        FakeCodexAccountUsageService accountUsage,
+        FakeProjectCatalogStore projectCatalog,
+        TelegramBotStateStore stateStore,
+        FakeOutboundTelegramQueue outboundQueue,
+        FakeGitWorktreeProvisioner worktreeProvisioner,
+        FakeTelegramForumTopicService topicService,
+        FakeAudioTranscriptionService audioTranscription,
+        TestTelegramBotMessageSender sender,
+        TelegramCodexBotCommandHandler handler)
         {
             Temp = temp;
             SessionManager = sessionManager;
@@ -1641,6 +1903,7 @@ public sealed class TelegramCommandHandlerTests
             ProjectCatalog = projectCatalog;
             StateStore = stateStore;
             OutboundQueue = outboundQueue;
+            WorktreeProvisioner = worktreeProvisioner;
             TopicService = topicService;
             AudioTranscription = audioTranscription;
             Sender = sender;
@@ -1658,6 +1921,8 @@ public sealed class TelegramCommandHandlerTests
         public TelegramBotStateStore StateStore { get; }
 
         public FakeOutboundTelegramQueue OutboundQueue { get; }
+
+        public FakeGitWorktreeProvisioner WorktreeProvisioner { get; }
 
         public FakeTelegramForumTopicService TopicService { get; }
 
@@ -1684,6 +1949,7 @@ public sealed class TelegramCommandHandlerTests
             FakeProjectCatalogStore projectCatalog = new();
             TelegramBotStateStore stateStore = new(codexOptions);
             FakeOutboundTelegramQueue outboundQueue = new();
+            FakeGitWorktreeProvisioner worktreeProvisioner = new(temp.Path);
             FakeTelegramForumTopicService topicService = new();
             FakeAudioTranscriptionService audioTranscription = new();
             TestTelegramBotMessageSender sender = new();
@@ -1700,13 +1966,14 @@ public sealed class TelegramCommandHandlerTests
                 topicService,
                 audioTranscription,
                 outboundQueue,
+                worktreeProvisioner,
                 Microsoft.Extensions.Options.Options.Create(botOptions ?? new TelegramBotOptions
                 {
                     AllowedUserIds = [1234],
                 }),
                 NullLogger<TelegramCodexBotCommandHandler>.Instance);
 
-            return new CommandHandlerHarness(temp, sessionManager, accountUsage, projectCatalog, stateStore, outboundQueue, topicService, audioTranscription, sender, handler);
+            return new CommandHandlerHarness(temp, sessionManager, accountUsage, projectCatalog, stateStore, outboundQueue, worktreeProvisioner, topicService, audioTranscription, sender, handler);
         }
 
         public void Dispose()
@@ -1726,6 +1993,14 @@ public sealed class TelegramCommandHandlerTests
         public Queue<Exception> SendExceptions { get; } = [];
 
         public List<(string SessionId, string? Model, string? ReasoningEffort)> UpdateRequests { get; } = [];
+
+        public Dictionary<string, CodexThreadGoalVm> Goals { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+        public List<(string SessionId, string Objective, long? TokenBudget)> SetGoalRequests { get; } = [];
+
+        public List<(string SessionId, CodexThreadGoalStatus Status)> SetGoalStatusRequests { get; } = [];
+
+        public List<string> ClearGoalRequests { get; } = [];
 
         public List<(string SessionId, int LineCount)> TailRequests { get; } = [];
 
@@ -1820,6 +2095,39 @@ public sealed class TelegramCommandHandlerTests
                 Sessions.FirstOrDefault(session => string.Equals(session.Id, sessionId, StringComparison.OrdinalIgnoreCase))?.Name ?? sessionId,
                 model ?? "gpt-5.4-mini",
                 reasoningEffort ?? "high"));
+        }
+
+        public Task<CodexThreadGoalVm?> GetGoalAsync(string sessionId, CancellationToken cancellationToken)
+            => Task.FromResult(Goals.GetValueOrDefault(sessionId));
+
+        public Task<CodexThreadGoalVm> SetGoalAsync(
+            string sessionId,
+            string objective,
+            long? tokenBudget,
+            CancellationToken cancellationToken)
+        {
+            SetGoalRequests.Add((sessionId, objective, tokenBudget));
+            CodexThreadGoalVm goal = CreateGoal(sessionId, objective, CodexThreadGoalStatus.Active, tokenBudget);
+            Goals[sessionId] = goal;
+            return Task.FromResult(goal);
+        }
+
+        public Task<CodexThreadGoalVm> SetGoalStatusAsync(
+            string sessionId,
+            CodexThreadGoalStatus status,
+            CancellationToken cancellationToken)
+        {
+            SetGoalStatusRequests.Add((sessionId, status));
+            CodexThreadGoalVm current = Goals.GetValueOrDefault(sessionId) ?? CreateGoal(sessionId, "Existing goal", CodexThreadGoalStatus.Active);
+            CodexThreadGoalVm updated = current with { Status = status, UpdatedAt = DateTimeOffset.UtcNow };
+            Goals[sessionId] = updated;
+            return Task.FromResult(updated);
+        }
+
+        public Task<bool> ClearGoalAsync(string sessionId, CancellationToken cancellationToken)
+        {
+            ClearGoalRequests.Add(sessionId);
+            return Task.FromResult(Goals.Remove(sessionId));
         }
 
         public Task<string> TailAsync(string sessionId, int lineCount, CancellationToken cancellationToken)
@@ -1925,6 +2233,31 @@ public sealed class TelegramCommandHandlerTests
         {
             CreateRequests.Add((chatId, name));
             return Task.FromResult(new TelegramForumTopicCreationResult(123, name));
+        }
+    }
+
+    private sealed class FakeGitWorktreeProvisioner : IGitWorktreeProvisioner
+    {
+        public FakeGitWorktreeProvisioner(string tempPath)
+        {
+            Result = new GitWorktreeProvisioningResult(
+                Path.Combine(tempPath, "repo-root"),
+                Path.Combine(tempPath, "worktree-root"),
+                Path.Combine(tempPath, "worktree-root"));
+        }
+
+        public List<(string SourceWorkingDirectory, string AllowlistedRoot, string LaunchName)> Requests { get; } = [];
+
+        public GitWorktreeProvisioningResult Result { get; set; }
+
+        public Task<GitWorktreeProvisioningResult> CreateLaunchWorktreeAsync(
+            string sourceWorkingDirectory,
+            string allowlistedRoot,
+            string launchName,
+            CancellationToken cancellationToken)
+        {
+            Requests.Add((sourceWorkingDirectory, allowlistedRoot, launchName));
+            return Task.FromResult(Result);
         }
     }
 

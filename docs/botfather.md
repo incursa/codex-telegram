@@ -40,9 +40,11 @@ The username must be unique and must end in `bot`.
 
 After BotFather returns the token, store it in the app setup menu, `appsettings.Local.json`, user secrets, or environment variables. Do not paste the token into public issues, screenshots, docs, commits, or demo videos.
 
+The app now syncs its command list, description, short description, and conservative group-admin defaults automatically on startup, so the manual BotFather commands below are only needed if you want to override the defaults yourself.
+
 ## Set Description
 
-The description appears when a user first opens the bot conversation.
+The app now writes the description automatically on startup. Use this BotFather command only if you want to override the default text manually.
 
 Send this to BotFather:
 
@@ -53,12 +55,12 @@ Send this to BotFather:
 Choose your bot, then paste:
 
 ```text
-Talk to a local Codex CLI session from Telegram. This bot runs on the operator's machine, uses an explicit allowlist, and only works after local setup.
+Talk to a local Codex installation from Telegram and route prompts to sessions.
 ```
 
 ## Set About Text
 
-The about text is a shorter profile summary.
+The app now writes the short profile summary automatically on startup. Use this BotFather command only if you want to override the default text manually.
 
 Send this to BotFather:
 
@@ -69,12 +71,12 @@ Send this to BotFather:
 Choose your bot, then paste:
 
 ```text
-Private Telegram control surface for a local Codex CLI session.
+Control local Codex sessions from Telegram.
 ```
 
 ## Set Commands
 
-The command list appears in Telegram's command picker when users type `/`.
+The app now writes the command picker list automatically on startup. Use this BotFather command only if you want to override the default list manually.
 
 Send this to BotFather:
 
@@ -85,29 +87,32 @@ Send this to BotFather:
 Choose your bot, then paste:
 
 ```text
-help - Show supported commands
-whoami - Show Telegram user, chat, and topic IDs
-version - Show the running app version
-trust - Trust the current group or forum chat
-doctor - Diagnose authorization, routing, project, session, and queue state
-projects - List known local projects
-project - Select, add, or show the current project
-new - Create and select a Codex session
-sessions - List active and managed sessions
-use - Select an existing session
-send - Send text to the active session
-steer - Steer the active turn
-queue - View, edit, send, or delete queued prompts
-model - Show or change model settings
-thinking - Show or change thinking effort
-tail - Show recent session output
-status - Show session status and compact usage
-usage - Show five-hour and weekly Codex usage
-outbound - Show outbound Telegram queue status
-stop - Stop the active or selected session
-topic - Manage forum-topic sessions
-topics - List topic/session bindings
-restart - Show restart guidance
+help - show this help
+whoami - show Telegram user, chat, and topic thread IDs
+version - show the running Codex Telegram app version
+trust - trust the current group or forum chat for allowlisted users
+projects - list known project directories
+project - add or select a project
+topics - list Telegram topics/sessions in this chat
+topic - manage forum-topic sessions
+launchpad - arm or disarm root-chat launch mode for plain-text and audio launches
+launch - create a detached git worktree-backed forum topic and session while launchpad is armed
+sessions - show active and Telegram-managed sessions
+new - create and select a Codex session in the active project
+use - select the active session for this conversation
+send - send text to the active session
+steer - steer the active turn in the selected session
+queue - view, edit, delete, or send queued prompts now
+model - show or change the selected session model
+thinking - change the selected session thinking effort
+goal - show or change the selected session goal
+tail - show recent output and keep following the session live
+status - show session status
+usage - show Codex account usage remaining and reset times
+doctor - explain authorization, routing, active project/session, workspace roots, and queue state
+outbound - show outbound Telegram queue status
+stop - gracefully stop a session
+restart - show restart guidance
 ```
 
 Command behavior:
@@ -115,7 +120,8 @@ Command behavior:
 1. Keep the command descriptions short; Telegram rejects invalid command definitions.
 2. BotFather may take a few minutes to reflect command-list changes in every client.
 3. Telegram's command picker lists top-level commands only, so `/queue edit`, `/queue delete`, and `/queue send` stay under the `/queue` entry.
-4. `/kill`, `/rename`, and `/forget` are supported but intentionally omitted from the public command picker to keep the common menu simple. They remain documented in [command-reference.md](command-reference.md).
+4. `/launchpad` and `/launch` are supported so the bot can spawn repeated forum-topic lanes from the group root without keeping launch mode on forever, and launchpad mode can also turn plain text or audio into a seeded launch while it is armed. Each launch provisions a detached git worktree-backed session lane.
+5. `/kill`, `/rename`, and `/forget` are supported but intentionally omitted from the public command picker to keep the common menu simple. They remain documented in [command-reference.md](command-reference.md).
 
 ## Group Join Setting
 

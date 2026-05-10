@@ -209,6 +209,8 @@ Common commands:
 
 ```text
 /topic new docs polish
+/launchpad on
+/launch docs polish
 /topic current
 /topic attach <sessionId>
 /topics

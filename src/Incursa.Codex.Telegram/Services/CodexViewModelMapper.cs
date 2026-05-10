@@ -161,6 +161,17 @@ internal static class CodexViewModelMapper
             usage.Total.TotalTokens,
             usage.ModelContextWindow);
 
+    public static CodexThreadGoalVm ToThreadGoalVm(CodexThreadGoal goal)
+        => new(
+            goal.ThreadId,
+            RepairText(goal.Objective),
+            goal.Status,
+            goal.TokenBudget,
+            goal.TokensUsed,
+            goal.TimeUsedSeconds,
+            goal.CreatedAt,
+            goal.UpdatedAt);
+
     public static CodexRuntimeStateVm ToRuntimeVm(CodexRuntimeState runtimeState)
         => runtimeState.ToViewModel();
 

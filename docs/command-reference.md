@@ -636,6 +636,67 @@ Expected behavior:
 2. Leaves the model unchanged.
 3. Returns the updated model settings.
 
+### `/goal`
+
+Shows the current Codex goal for the active session.
+
+Syntax:
+
+```text
+/goal
+```
+
+Expected behavior:
+
+1. Defaults to the active session.
+2. Shows goal status, objective, token use when Codex reports it, elapsed goal time when Codex reports it, and last update age.
+3. Explains how to set a goal when none is present.
+4. Fails with clear setup text if the configured Codex backend or installed app-server does not expose thread goals.
+
+### `/goal [objective]`
+
+Sets a new active goal objective for the active session.
+
+Syntax:
+
+```text
+/goal <objective>
+/goal set <objective>
+```
+
+Examples:
+
+```text
+/goal finish the release checklist and stop at the first real blocker
+/goal set get /goal working in the Telegram app
+```
+
+Expected behavior:
+
+1. Sets the objective on the active Codex thread.
+2. Marks the goal active.
+3. Shows the updated goal.
+
+### `/goal clear|pause|resume|complete`
+
+Changes or clears the goal for the active session.
+
+Syntax:
+
+```text
+/goal clear
+/goal pause
+/goal resume
+/goal complete
+```
+
+Expected behavior:
+
+1. `/goal clear` removes the current goal.
+2. `/goal pause` marks the current goal paused.
+3. `/goal resume` marks the current goal active.
+4. `/goal complete` marks the current goal complete.
+
 ### Inline Model Control Phrase
 
 Sets model/thinking and sends a prompt in one message.
@@ -799,6 +860,48 @@ Expected behavior:
 1. Shows topic thread ID.
 2. Shows active session status.
 3. Shows active project status when present.
+
+### `/launchpad on|off|status`
+
+Arms or disarms the root chat for repeated launch commands and plain-text or audio launch messages.
+
+Syntax:
+
+```text
+/launchpad on
+/launchpad off
+/launchpad status
+```
+
+Expected behavior:
+
+1. Works only from the root of a forum-enabled supergroup.
+2. `/launchpad on` arms the root chat for 10 minutes of inactivity.
+3. `/launchpad status` shows whether the root chat is armed, the remaining time, the active project, and the launch template session if one is selected.
+4. `/launchpad off` clears the armed state immediately.
+5. The bot auto-clears expired launchpad state and notifies the root chat when the timeout elapses.
+6. While launchpad is armed, plain text or audio messages in the root chat create a new topic/session pair with a deterministic topic title based on the root chat name and a per-chat lane number, then seed the new session with that message text.
+7. Launches provision detached git worktrees under the allowed workspace root so each lane has isolated on-disk work.
+
+### `/launch <name> [| <path>]`
+
+Creates a new forum topic and matching Codex session while launchpad is armed, using a detached git worktree.
+
+Syntax:
+
+```text
+/launch <name>
+/launch <name> | <absolute directory path>
+```
+
+Expected behavior:
+
+1. Works only in the root of a forum-enabled supergroup while launchpad is armed.
+2. Uses the supplied path when provided and allowed.
+3. Provisions a detached git worktree under the allowed workspace root and seeds the new session with the launch name, with the forum topic title capped so long prompts do not become the topic name.
+3. Otherwise uses the active project for the current conversation.
+4. Creates a Telegram topic and Codex session, then binds them together.
+5. Copies the current root session's model and thinking settings onto the launched session when a root session is selected; otherwise the launched session uses the normal Codex defaults.
 
 ### `/topic new <name> [| <path>]`
 

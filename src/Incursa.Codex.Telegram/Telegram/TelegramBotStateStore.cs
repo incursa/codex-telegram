@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Incursa.Codex.Telegram.Options;
@@ -53,6 +54,14 @@ internal interface ITelegramBotStateStore
 
     Task<IReadOnlyCollection<TelegramConversationState>> ListConversationStatesForChatAsync(long chatId, CancellationToken cancellationToken);
 
+    Task<TelegramLaunchpadState?> GetLaunchpadStateAsync(TelegramConversationScope conversation, CancellationToken cancellationToken);
+
+    Task SetLaunchpadStateAsync(TelegramConversationScope conversation, DateTimeOffset lastTouchedUtc, CancellationToken cancellationToken);
+
+    Task<bool> ClearLaunchpadStateAsync(TelegramConversationScope conversation, CancellationToken cancellationToken);
+
+    Task<int> ReserveLaunchpadTopicSequenceAsync(long chatId, CancellationToken cancellationToken);
+
     Task ClearActiveSessionForSessionAsync(string sessionId, CancellationToken cancellationToken);
 
     Task TrackSessionAsync(string sessionId, CancellationToken cancellationToken);
@@ -95,7 +104,10 @@ internal sealed record TelegramConversationState(
     string? ActiveSessionId,
     string? ActiveProjectWorkingDirectory,
     int QueuedPromptCount,
-    DateTimeOffset? OldestQueuedPromptAt);
+    DateTimeOffset? OldestQueuedPromptAt,
+    DateTimeOffset? LaunchpadLastTouchedUtc);
+
+internal sealed record TelegramLaunchpadState(DateTimeOffset LastTouchedUtc);
 
 internal sealed class TelegramBotStateStore : ITelegramBotStateStore
 {
@@ -210,6 +222,61 @@ internal sealed class TelegramBotStateStore : ITelegramBotStateStore
     {
         TelegramBotState state = await LoadStateAsync(cancellationToken).ConfigureAwait(false);
         return BuildConversationStates(state, chatId);
+    }
+
+    public async Task<TelegramLaunchpadState?> GetLaunchpadStateAsync(TelegramConversationScope conversation, CancellationToken cancellationToken)
+    {
+        TelegramBotState state = await LoadStateAsync(cancellationToken).ConfigureAwait(false);
+        return state.LaunchpadStatesByScope.TryGetValue(conversation.ToStorageKey(), out TelegramLaunchpadState? launchpadState)
+            ? launchpadState
+            : null;
+    }
+
+    public Task SetLaunchpadStateAsync(TelegramConversationScope conversation, DateTimeOffset lastTouchedUtc, CancellationToken cancellationToken)
+        => MutateAsync(state =>
+        {
+            state.LaunchpadStatesByScope[conversation.ToStorageKey()] = new TelegramLaunchpadState(lastTouchedUtc.ToUniversalTime());
+            return state;
+        }, cancellationToken);
+
+    public async Task<int> ReserveLaunchpadTopicSequenceAsync(long chatId, CancellationToken cancellationToken)
+    {
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            TelegramBotState state = await LoadStateCoreAsync(cancellationToken).ConfigureAwait(false);
+            string key = chatId.ToString(CultureInfo.InvariantCulture);
+            int sequence = state.LaunchpadTopicSequencesByChatId.TryGetValue(key, out int current)
+                ? current + 1
+                : 1;
+            state.LaunchpadTopicSequencesByChatId[key] = sequence;
+            await SaveStateCoreAsync(state, cancellationToken).ConfigureAwait(false);
+            return sequence;
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    public async Task<bool> ClearLaunchpadStateAsync(TelegramConversationScope conversation, CancellationToken cancellationToken)
+    {
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            TelegramBotState state = await LoadStateCoreAsync(cancellationToken).ConfigureAwait(false);
+            bool removed = state.LaunchpadStatesByScope.Remove(conversation.ToStorageKey());
+            if (removed)
+            {
+                await SaveStateCoreAsync(state, cancellationToken).ConfigureAwait(false);
+            }
+
+            return removed;
+        }
+        finally
+        {
+            _gate.Release();
+        }
     }
 
     public Task ClearActiveSessionForSessionAsync(string sessionId, CancellationToken cancellationToken)
@@ -471,6 +538,14 @@ internal sealed class TelegramBotStateStore : ITelegramBotStateStore
             }
         }
 
+        foreach (KeyValuePair<string, TelegramLaunchpadState> pair in state.LaunchpadStatesByScope)
+        {
+            if (TryParseScopeForChat(pair.Key, chatId, out TelegramConversationScope scope))
+            {
+                GetBuilder(scope).LaunchpadLastTouchedUtc = pair.Value.LastTouchedUtc;
+            }
+        }
+
         IEnumerable<TelegramQueuedPrompt> queuedPrompts = chatId.HasValue
             ? state.QueuedPrompts.Where(prompt => prompt.ChatId == chatId.Value)
             : state.QueuedPrompts;
@@ -553,8 +628,10 @@ internal sealed class TelegramBotStateStore : ITelegramBotStateStore
 
         public DateTimeOffset? OldestQueuedPromptAt { get; set; }
 
+        public DateTimeOffset? LaunchpadLastTouchedUtc { get; set; }
+
         public TelegramConversationState ToState()
-            => new(Scope, ActiveSessionId, ActiveProjectWorkingDirectory, QueuedPromptCount, OldestQueuedPromptAt);
+            => new(Scope, ActiveSessionId, ActiveProjectWorkingDirectory, QueuedPromptCount, OldestQueuedPromptAt, LaunchpadLastTouchedUtc);
     }
 
     private sealed class TelegramBotState
@@ -572,5 +649,9 @@ internal sealed class TelegramBotStateStore : ITelegramBotStateStore
         public List<long> TrustedChatIds { get; set; } = [];
 
         public List<TelegramQueuedPrompt> QueuedPrompts { get; set; } = [];
+
+        public Dictionary<string, TelegramLaunchpadState> LaunchpadStatesByScope { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
+        public Dictionary<string, int> LaunchpadTopicSequencesByChatId { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     }
 }

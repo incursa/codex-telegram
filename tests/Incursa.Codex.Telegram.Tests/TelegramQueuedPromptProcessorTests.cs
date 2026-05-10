@@ -441,6 +441,18 @@ public sealed class TelegramQueuedPromptProcessorTests
         public Task<CodexSessionModelSettings> UpdateModelSettingsAsync(string sessionId, string? model, string? reasoningEffort, CancellationToken cancellationToken)
             => throw new NotSupportedException();
 
+        public Task<CodexThreadGoalVm?> GetGoalAsync(string sessionId, CancellationToken cancellationToken)
+            => throw new NotSupportedException();
+
+        public Task<CodexThreadGoalVm> SetGoalAsync(string sessionId, string objective, long? tokenBudget, CancellationToken cancellationToken)
+            => throw new NotSupportedException();
+
+        public Task<CodexThreadGoalVm> SetGoalStatusAsync(string sessionId, CodexThreadGoalStatus status, CancellationToken cancellationToken)
+            => throw new NotSupportedException();
+
+        public Task<bool> ClearGoalAsync(string sessionId, CancellationToken cancellationToken)
+            => throw new NotSupportedException();
+
         public Task<string> TailAsync(string sessionId, int lineCount, CancellationToken cancellationToken)
             => throw new NotSupportedException();
 

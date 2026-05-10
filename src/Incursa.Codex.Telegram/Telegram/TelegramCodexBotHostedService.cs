@@ -244,7 +244,8 @@ internal sealed class TelegramCodexBotHostedService : BackgroundService
                 message.Chat.Id,
                 message.Chat.Type.ToString(),
                 text,
-                message.MessageThreadId);
+                message.MessageThreadId,
+                ChatTitle: message.Chat.Title);
 
             if (attachments is { Count: > 0 })
             {
@@ -313,7 +314,8 @@ internal sealed class TelegramCodexBotHostedService : BackgroundService
                 message.Chat.Type.ToString(),
                 null,
                 message.MessageThreadId,
-                tempAudioPath);
+                tempAudioPath,
+                ChatTitle: message.Chat.Title);
 
             await _handler.HandleMessageAsync(inbound, sender, cancellationToken).ConfigureAwait(false);
         }

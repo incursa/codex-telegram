@@ -67,13 +67,12 @@ Follow this sequence:
 5. Copy the token BotFather gives you.
 6. Keep that token private. Anyone with the token can control the bot.
 
-Optional BotFather steps that are worth doing:
+The app now syncs its command list, description, about text, and conservative group-admin defaults automatically on startup, so you usually do not need to set those by hand.
 
-1. `/setdescription` to add a short explanation of what the bot does.
-2. `/setabouttext` to add a slightly longer summary.
-3. `/setuserpic` to give the bot a recognizable avatar.
-4. `/setcommands` if you want Telegram's UI to show a command list.
-5. `/revoke` if you ever leak the token and need to rotate it.
+Optional BotFather steps that are still worth doing:
+
+1. `/setuserpic` to give the bot a recognizable avatar.
+2. `/revoke` if you ever leak the token and need to rotate it.
 
 Copy-paste BotFather text, command lists, and recommended first-release settings are in [botfather.md](botfather.md).
 
@@ -422,6 +421,7 @@ The supported flow is:
 4. Optionally use `/topic new <name> | <absolute directory path>` to start the topic in a specific project.
 5. Use `/topic attach [sessionId]` to bind the current topic to an existing session.
 6. Use `/topic current` to see the active binding.
+7. Use `/launchpad on` in the group root when you want to spawn several independent topics quickly; then send a plain-text or voice launch message, or use `/launch <name>`, for each new detached worktree-backed lane. Launchpad titles the new topic from the group name plus a lane number so long prompts do not become the topic name.
 
 Behavior to remember:
 
@@ -430,6 +430,7 @@ Behavior to remember:
 3. If ordinary text appears to do nothing in a topic, use `/send <text>` or revisit privacy settings.
 4. If Telegram rejects a reply to a stale, closed, or deleted topic, the bot does not retry the message in the group root.
 5. The topic thread ID is useful when you want to debug or trace where messages are going.
+6. Launchpad mode automatically turns off after 10 minutes of inactivity.
 
 ## Voice Notes, Audio, And Attachments
 
@@ -467,6 +468,8 @@ For a complete parameter-by-parameter reference, see [command-reference.md](comm
 | `/project current` | Shows the current project binding. | Use to confirm what the conversation is anchored to. |
 | `/topics` | Lists Telegram topics and chat sessions in the conversation. | Use in chats with multiple topic threads. |
 | `/topic list` | Same as `/topics`. | Use whichever form is easiest to remember. |
+| `/launchpad on` | Arms the group root for repeated plain-text or audio launches and `/launch` commands. | Use when you want to fan out multiple detached worktree-backed topic/session lanes quickly. |
+| `/launch <name> \| <path>` | Creates a new topic, session, and detached git worktree while launchpad is armed. | Use with or without an explicit project path. |
 | `/topic new <name>` | Creates a new forum topic and a new Codex session. | Use in a forum-enabled supergroup. |
 | `/topic new <name> | <path>` | Creates a new topic and session in a specific project directory. | Use when you want the topic tied to a particular repo. |
 | `/topic attach [sessionId]` | Binds the current forum topic to an existing Codex session. | Use when you want a topic to resume work instead of creating a new session. |
@@ -480,6 +483,7 @@ For a complete parameter-by-parameter reference, see [command-reference.md](comm
 | `/queue` | Shows queued prompts with Send now, Edit, and Delete buttons. | Use when you want to inspect or change prompts waiting behind an active turn. |
 | `/model [model] [thinking <effort>]` | Shows or changes the selected session model. | Use when you need to switch the active model. |
 | `/thinking <minimal|low|medium|high|xhigh>` | Changes the reasoning effort for the selected session. | Use when you want more or less reasoning budget. |
+| `/goal [objective|clear|pause|resume|complete]` | Shows or changes the selected session goal. | Use when you want Codex to keep a thread-level objective. |
 | `/tail [count]` | Shows recent output and keeps following the session. | Use while waiting on a live turn. |
 | `/status [sessionId]` | Shows session status and compact Codex usage when available. | Use when you want a quick health check. |
 | `/usage` | Shows five-hour and weekly Codex usage and reset times. | Use when planning around Codex usage blocks. |
