@@ -339,6 +339,7 @@ After a successful test, you should see the transcription in Telegram before the
 | `/queue` | View queued prompts for the conversation, then edit, delete, or send one now. |
 | `/model` | Show or change the active session model. |
 | `/thinking` | Show or change reasoning effort. |
+| `/goal` | Show or change the active session goal. |
 | `/status` | Show active session status, including compact Codex usage when available. |
 | `/usage` | Show five-hour and weekly Codex usage, with reset times. |
 | `/tail [lines]` | Show recent output and keep following the session; defaults to 40 lines. |

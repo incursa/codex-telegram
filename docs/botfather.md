@@ -100,6 +100,7 @@ steer - Steer the active turn
 queue - View, edit, send, or delete queued prompts
 model - Show or change model settings
 thinking - Show or change thinking effort
+goal - Show or change the session goal
 tail - Show recent session output
 status - Show session status and compact usage
 usage - Show five-hour and weekly Codex usage

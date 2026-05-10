@@ -875,6 +875,81 @@ public sealed class TelegramCommandHandlerTests
     }
 
     [Fact]
+    public async Task HandleMessageAsync_GoalShowsAndSetsActiveSessionGoal()
+    {
+        using CommandHandlerHarness showHarness = CommandHandlerHarness.Create();
+        TelegramConversationScope conversation = new(5555, null);
+        showHarness.SessionManager.Sessions.Add(CreateSession("thread-1", "Demo session", showHarness.Temp.Path));
+        showHarness.SessionManager.Goals["thread-1"] = CreateGoal("thread-1", "Ship the Telegram goal command");
+        await showHarness.StateStore.SetActiveSessionIdAsync(conversation, "thread-1", CancellationToken.None);
+
+        await showHarness.Handler.HandleMessageAsync(
+            new TelegramInboundMessage(1234, conversation.ChatId, "private", "/goal"),
+            showHarness.Sender,
+            CancellationToken.None);
+
+        string showText = Assert.Single(showHarness.Sender.Sent).Text;
+        Assert.Contains("Session goal:", showText);
+        Assert.Contains("Ship the Telegram goal command", showText);
+        Assert.Contains("Status: active", showText);
+
+        using CommandHandlerHarness setHarness = CommandHandlerHarness.Create();
+        setHarness.SessionManager.Sessions.Add(CreateSession("thread-1", "Demo session", setHarness.Temp.Path));
+        await setHarness.StateStore.SetActiveSessionIdAsync(conversation, "thread-1", CancellationToken.None);
+
+        await setHarness.Handler.HandleMessageAsync(
+            new TelegramInboundMessage(1234, conversation.ChatId, "private", "/goal set Get /goal working --budget 12000"),
+            setHarness.Sender,
+            CancellationToken.None);
+
+        Assert.Equal(("thread-1", "Get /goal working", (long?)12000), Assert.Single(setHarness.SessionManager.SetGoalRequests));
+        string setText = Assert.Single(setHarness.Sender.Sent).Text;
+        Assert.Contains("Updated session goal:", setText);
+        Assert.Contains("Get /goal working", setText);
+        Assert.Contains("12,000", setText);
+    }
+
+    [Fact]
+    public async Task HandleMessageAsync_GoalControlCommandsUseActiveSession()
+    {
+        using CommandHandlerHarness harness = CommandHandlerHarness.Create();
+        TelegramConversationScope conversation = new(5555, null);
+        harness.SessionManager.Sessions.Add(CreateSession("thread-1", "Demo session", harness.Temp.Path));
+        harness.SessionManager.Goals["thread-1"] = CreateGoal("thread-1", "Keep working");
+        await harness.StateStore.SetActiveSessionIdAsync(conversation, "thread-1", CancellationToken.None);
+
+        await harness.Handler.HandleMessageAsync(
+            new TelegramInboundMessage(1234, conversation.ChatId, "private", "/goal pause"),
+            harness.Sender,
+            CancellationToken.None);
+        await harness.Handler.HandleMessageAsync(
+            new TelegramInboundMessage(1234, conversation.ChatId, "private", "/goal resume"),
+            harness.Sender,
+            CancellationToken.None);
+        await harness.Handler.HandleMessageAsync(
+            new TelegramInboundMessage(1234, conversation.ChatId, "private", "/goal complete"),
+            harness.Sender,
+            CancellationToken.None);
+        await harness.Handler.HandleMessageAsync(
+            new TelegramInboundMessage(1234, conversation.ChatId, "private", "/goal clear"),
+            harness.Sender,
+            CancellationToken.None);
+
+        Assert.Equal(
+            [
+                ("thread-1", CodexThreadGoalStatus.Paused),
+                ("thread-1", CodexThreadGoalStatus.Active),
+                ("thread-1", CodexThreadGoalStatus.Complete),
+            ],
+            harness.SessionManager.SetGoalStatusRequests);
+        Assert.Equal(["thread-1"], harness.SessionManager.ClearGoalRequests);
+        Assert.Contains("Paused session goal:", harness.Sender.Sent[0].Text);
+        Assert.Contains("Resumed session goal:", harness.Sender.Sent[1].Text);
+        Assert.Contains("Completed session goal:", harness.Sender.Sent[2].Text);
+        Assert.Equal("Cleared the session goal.", harness.Sender.Sent[3].Text);
+    }
+
+    [Fact]
     public async Task HandleMessageAsync_StatusAndTailUseActiveSession()
     {
         using CommandHandlerHarness statusHarness = CommandHandlerHarness.Create();
@@ -1574,6 +1649,21 @@ public sealed class TelegramCommandHandlerTests
             ],
             [CodexReasoningEffort.Low, CodexReasoningEffort.Medium, CodexReasoningEffort.High, CodexReasoningEffort.XHigh]);
 
+    private static CodexThreadGoalVm CreateGoal(
+        string threadId,
+        string objective,
+        CodexThreadGoalStatus status = CodexThreadGoalStatus.Active,
+        long? tokenBudget = null)
+        => new(
+            threadId,
+            objective,
+            status,
+            tokenBudget,
+            tokenBudget.HasValue ? 1000 : 0,
+            95,
+            DateTimeOffset.Parse("2026-05-06T12:00:00Z", CultureInfo.InvariantCulture),
+            DateTimeOffset.Parse("2026-05-06T12:05:00Z", CultureInfo.InvariantCulture));
+
     private static void SetUsageWindows(CommandHandlerHarness harness)
         => harness.AccountUsage.Usage = new CodexAccountUsageVm(
             DateTimeOffset.Parse("2026-05-06T12:00:00Z", CultureInfo.InvariantCulture),
@@ -1727,6 +1817,14 @@ public sealed class TelegramCommandHandlerTests
 
         public List<(string SessionId, string? Model, string? ReasoningEffort)> UpdateRequests { get; } = [];
 
+        public Dictionary<string, CodexThreadGoalVm> Goals { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+        public List<(string SessionId, string Objective, long? TokenBudget)> SetGoalRequests { get; } = [];
+
+        public List<(string SessionId, CodexThreadGoalStatus Status)> SetGoalStatusRequests { get; } = [];
+
+        public List<string> ClearGoalRequests { get; } = [];
+
         public List<(string SessionId, int LineCount)> TailRequests { get; } = [];
 
         public List<string> StopRequests { get; } = [];
@@ -1820,6 +1918,39 @@ public sealed class TelegramCommandHandlerTests
                 Sessions.FirstOrDefault(session => string.Equals(session.Id, sessionId, StringComparison.OrdinalIgnoreCase))?.Name ?? sessionId,
                 model ?? "gpt-5.4-mini",
                 reasoningEffort ?? "high"));
+        }
+
+        public Task<CodexThreadGoalVm?> GetGoalAsync(string sessionId, CancellationToken cancellationToken)
+            => Task.FromResult(Goals.GetValueOrDefault(sessionId));
+
+        public Task<CodexThreadGoalVm> SetGoalAsync(
+            string sessionId,
+            string objective,
+            long? tokenBudget,
+            CancellationToken cancellationToken)
+        {
+            SetGoalRequests.Add((sessionId, objective, tokenBudget));
+            CodexThreadGoalVm goal = CreateGoal(sessionId, objective, CodexThreadGoalStatus.Active, tokenBudget);
+            Goals[sessionId] = goal;
+            return Task.FromResult(goal);
+        }
+
+        public Task<CodexThreadGoalVm> SetGoalStatusAsync(
+            string sessionId,
+            CodexThreadGoalStatus status,
+            CancellationToken cancellationToken)
+        {
+            SetGoalStatusRequests.Add((sessionId, status));
+            CodexThreadGoalVm goal = Goals.GetValueOrDefault(sessionId) ?? CreateGoal(sessionId, "Existing goal");
+            goal = goal with { Status = status };
+            Goals[sessionId] = goal;
+            return Task.FromResult(goal);
+        }
+
+        public Task<bool> ClearGoalAsync(string sessionId, CancellationToken cancellationToken)
+        {
+            ClearGoalRequests.Add(sessionId);
+            return Task.FromResult(Goals.Remove(sessionId));
         }
 
         public Task<string> TailAsync(string sessionId, int lineCount, CancellationToken cancellationToken)

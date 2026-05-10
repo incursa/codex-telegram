@@ -26,7 +26,7 @@ Record the date, operator, OS, published asset or commit SHA, Codex CLI version,
 9. Send `/doctor` and confirm it explains access, routing, active project/session state, workspace roots, queue state, and a plausible next action.
 10. Send `/new` and confirm the reply uses an auto-generated project-based session name without noisy status/model/thinking buttons; if Codex rate limits are available, confirm it includes a compact `Rate limits` line.
 11. Send a normal text prompt and confirm live output returns to the private chat.
-12. Send `/tail`, `/status`, `/usage`, `/model`, and `/thinking` and confirm each command is understandable without stale or truncated buttons; `/status`, `/model`, and `/thinking` should include compact rate limits when available.
+12. Send `/tail`, `/status`, `/usage`, `/model`, `/thinking`, and `/goal` and confirm each command is understandable without stale or truncated buttons; `/status`, `/model`, and `/thinking` should include compact rate limits when available.
 13. Send `/stop` and confirm pending queued messages for the session are cleared.
 
 ## Authorization
