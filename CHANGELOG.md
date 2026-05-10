@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 1.0.15 - 2026-05-10
+
+- Added `/goal` controls for active Telegram Codex sessions, including show, set, token budget, pause, resume, complete, and clear actions.
+- Updated `Incursa.OpenAI.Codex` to 1.2.1 so the Telegram app can use Codex thread-goal APIs.
+- Documented `/goal` in the usage guide, command reference, setup guide, BotFather command list, and manual test plan.
+- Added regression coverage for `/goal` command parsing, gateway/session-manager wiring, goal status formatting, and queued-prompt test doubles.
+
 ## 1.0.14 - 2026-05-06
 
 - Fixed published `--run` launches that missed `appsettings.Local.json` when the settings file existed in the launch directory but not beside the binary.
