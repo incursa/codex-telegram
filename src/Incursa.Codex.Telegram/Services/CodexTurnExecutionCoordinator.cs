@@ -276,7 +276,7 @@ internal sealed class CodexTurnExecutionCoordinator
 
         public string ThreadId { get; }
 
-        public string TurnId { get; }
+        public string TurnId { get; private set; }
 
         public CodexTurn? Turn { get; }
 
@@ -288,6 +288,11 @@ internal sealed class CodexTurnExecutionCoordinator
 
         public void Update(CodexTimelineEntryVm? entry)
         {
+            if (!string.IsNullOrWhiteSpace(entry?.TurnId))
+            {
+                TurnId = entry.TurnId;
+            }
+
             LastEvent = entry;
             UpdatedAt = entry?.Timestamp ?? DateTimeOffset.UtcNow;
         }
