@@ -1,3 +1,4 @@
+using System.Globalization;
 using Incursa.Codex.Telegram.Options;
 using Incursa.Codex.Telegram.Telegram;
 using Microsoft.Extensions.Options;
@@ -45,6 +46,44 @@ public sealed class TelegramBotStateStoreTests
         Assert.Contains(states, state =>
             state.Scope == topicConversation
             && state.ActiveSessionId == "thread-topic");
+    }
+
+    [Fact]
+    public async Task LaunchpadStatePersistsAndCanBeCleared()
+    {
+        using TemporaryDirectory temp = TemporaryDirectory.Create();
+        TelegramConversationScope conversation = new(1234, null);
+        TelegramBotStateStore store = CreateStore(temp.Path);
+        DateTimeOffset lastTouched = DateTimeOffset.Parse("2026-05-06T12:34:56Z", CultureInfo.InvariantCulture);
+
+        await store.SetLaunchpadStateAsync(conversation, lastTouched, CancellationToken.None);
+
+        TelegramBotStateStore reloaded = CreateStore(temp.Path);
+        TelegramLaunchpadState? launchpad = await reloaded.GetLaunchpadStateAsync(conversation, CancellationToken.None);
+        Assert.NotNull(launchpad);
+        Assert.Equal(lastTouched, launchpad!.LastTouchedUtc);
+
+        TelegramConversationState conversationState = Assert.Single(await reloaded.ListConversationStatesAsync(CancellationToken.None));
+        Assert.Equal(lastTouched, conversationState.LaunchpadLastTouchedUtc);
+
+        Assert.True(await reloaded.ClearLaunchpadStateAsync(conversation, CancellationToken.None));
+        Assert.Null(await reloaded.GetLaunchpadStateAsync(conversation, CancellationToken.None));
+        Assert.False(await reloaded.ClearLaunchpadStateAsync(conversation, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task LaunchpadTopicSequencesPersistAndArePerChat()
+    {
+        using TemporaryDirectory temp = TemporaryDirectory.Create();
+        TelegramBotStateStore store = CreateStore(temp.Path);
+
+        Assert.Equal(1, await store.ReserveLaunchpadTopicSequenceAsync(-1001, CancellationToken.None));
+        Assert.Equal(2, await store.ReserveLaunchpadTopicSequenceAsync(-1001, CancellationToken.None));
+        Assert.Equal(1, await store.ReserveLaunchpadTopicSequenceAsync(-2002, CancellationToken.None));
+
+        TelegramBotStateStore reloaded = CreateStore(temp.Path);
+        Assert.Equal(3, await reloaded.ReserveLaunchpadTopicSequenceAsync(-1001, CancellationToken.None));
+        Assert.Equal(2, await reloaded.ReserveLaunchpadTopicSequenceAsync(-2002, CancellationToken.None));
     }
 
     [Fact]

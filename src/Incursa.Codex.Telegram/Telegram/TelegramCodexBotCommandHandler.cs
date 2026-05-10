@@ -49,7 +49,8 @@ internal sealed record TelegramInboundMessage(
     int? MessageThreadId = null,
     string? AudioFilePath = null,
     IReadOnlyList<TelegramAttachmentDescriptor>? Attachments = null,
-    int? SourceMessageId = null)
+    int? SourceMessageId = null,
+    string? ChatTitle = null)
 {
     public TelegramConversationScope ConversationScope => new(ChatId, MessageThreadId);
 }
@@ -98,6 +99,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
     private readonly ITelegramForumTopicService _topicService;
     private readonly IAudioTranscriptionService _audioTranscriptionService;
     private readonly IOutboundTelegramQueue _outboundQueue;
+    private readonly IGitWorktreeProvisioner _worktreeProvisioner;
     private readonly TelegramBotOptions _options;
     private readonly ILogger<TelegramCodexBotCommandHandler> _logger;
     private readonly SemaphoreSlim _usageSummaryLock = new(1, 1);
@@ -118,6 +120,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         ITelegramForumTopicService topicService,
         IAudioTranscriptionService audioTranscriptionService,
         IOutboundTelegramQueue outboundQueue,
+        IGitWorktreeProvisioner worktreeProvisioner,
         IOptions<TelegramBotOptions> options,
         ILogger<TelegramCodexBotCommandHandler> logger)
     {
@@ -133,6 +136,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         _topicService = topicService;
         _audioTranscriptionService = audioTranscriptionService;
         _outboundQueue = outboundQueue;
+        _worktreeProvisioner = worktreeProvisioner;
         _options = options.Value;
         _logger = logger;
     }
@@ -191,6 +195,11 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
 
             if (!command.IsCommand)
             {
+                if (await TryHandleLaunchpadMessageAsync(message, command.Text, sender, cancellationToken).ConfigureAwait(false))
+                {
+                    return;
+                }
+
                 _logger.LogDebug(
                     "Routing plain Telegram message for chat {ChatId} topic {MessageThreadId}; text length {TextLength}; attachments {AttachmentCount}.",
                     message.ChatId,
@@ -233,6 +242,12 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
                 case "threads":
                     await HandleTopicListAsync(message, sender, cancellationToken).ConfigureAwait(false);
                     break;
+                case "launchpad":
+                    await HandleLaunchpadAsync(message, command.Arguments, sender, cancellationToken).ConfigureAwait(false);
+                    break;
+                case "launch":
+                    await HandleLaunchAsync(message, command.Arguments, sender, cancellationToken).ConfigureAwait(false);
+                    break;
                 case "sessions":
                     await HandleSessionsAsync(message, sender, cancellationToken).ConfigureAwait(false);
                     break;
@@ -257,6 +272,9 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
                     break;
                 case "thinking":
                     await HandleThinkingAsync(message, command.Arguments, sender, cancellationToken).ConfigureAwait(false);
+                    break;
+                case "goal":
+                    await HandleGoalAsync(message, command.Arguments, sender, cancellationToken).ConfigureAwait(false);
                     break;
                 case "tail":
                     await HandleTailAsync(message, command.Arguments, sender, cancellationToken).ConfigureAwait(false);
@@ -664,9 +682,183 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         await CreateTopicAndSessionAsync(
             message,
             request.Name,
+            null,
             workingDirectory,
             sender,
             cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task HandleLaunchpadAsync(TelegramInboundMessage message, string arguments, ITelegramBotMessageSender sender, CancellationToken cancellationToken)
+    {
+        if (!IsLaunchpadRootChat(message))
+        {
+            await ReplyAsync(sender, message, BuildLaunchpadUnsupportedMessage(message), null, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        string[] parts = SplitArguments(arguments, 2);
+        string action = parts.Length == 0 ? "status" : parts[0];
+        switch (action)
+        {
+            case "":
+            case "status":
+                await HandleLaunchpadStatusAsync(message, sender, cancellationToken).ConfigureAwait(false);
+                break;
+            case "on":
+            case "arm":
+            case "enable":
+                await HandleLaunchpadOnAsync(message, sender, cancellationToken).ConfigureAwait(false);
+                break;
+            case "off":
+            case "disarm":
+            case "disable":
+                await HandleLaunchpadOffAsync(message, sender, cancellationToken).ConfigureAwait(false);
+                break;
+            default:
+                await ReplyAsync(
+                    sender,
+                    message,
+                    "Usage: /launchpad on | off | status",
+                    null,
+                    cancellationToken).ConfigureAwait(false);
+                break;
+        }
+    }
+
+    private async Task HandleLaunchAsync(TelegramInboundMessage message, string arguments, ITelegramBotMessageSender sender, CancellationToken cancellationToken)
+    {
+        if (!IsLaunchpadRootChat(message))
+        {
+            await ReplyAsync(sender, message, BuildLaunchpadUnsupportedMessage(message), null, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        (TelegramLaunchpadState? launchpadState, bool expired) = await ResolveLaunchpadStateAsync(message.ConversationScope, clearExpired: true, cancellationToken).ConfigureAwait(false);
+        if (launchpadState is null)
+        {
+            await ReplyAsync(
+                sender,
+                message,
+                expired
+                    ? $"Launchpad expired after {TelegramLaunchpadPolicy.InactivityTimeout.TotalMinutes.ToString(CultureInfo.InvariantCulture)} minutes of inactivity. Use /launchpad on to arm it again."
+                    : "Launchpad is not armed yet. Use /launchpad on before /launch.",
+                null,
+                cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        await LaunchTopicAsync(message, arguments, sender, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<bool> TryHandleLaunchpadMessageAsync(
+        TelegramInboundMessage message,
+        string text,
+        ITelegramBotMessageSender sender,
+        CancellationToken cancellationToken)
+    {
+        if (!IsLaunchpadRootChat(message) || string.IsNullOrWhiteSpace(text))
+        {
+            return false;
+        }
+
+        (TelegramLaunchpadState? launchpadState, _) = await ResolveLaunchpadStateAsync(message.ConversationScope, clearExpired: true, cancellationToken).ConfigureAwait(false);
+        if (launchpadState is null)
+        {
+            return false;
+        }
+
+        await LaunchTopicAsync(message, text, sender, cancellationToken, useLaunchpadTopicNaming: true).ConfigureAwait(false);
+        return true;
+    }
+
+    private async Task LaunchTopicAsync(
+        TelegramInboundMessage message,
+        string arguments,
+        ITelegramBotMessageSender sender,
+        CancellationToken cancellationToken,
+        bool useLaunchpadTopicNaming = false)
+    {
+        TopicCreationRequest request = ParseTopicCreationRequest(arguments);
+        if (!request.IsValid)
+        {
+            await ReplyAsync(sender, message, "Usage: /launch <name> [| <absolute directory path>]", null, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        string sourceWorkingDirectory;
+        string allowlistedRoot;
+        if (!string.IsNullOrWhiteSpace(request.WorkingDirectory))
+        {
+            CodexWorkspaceValidationVm validation = _workspaceBrowser.ValidateWorkingDirectory(request.WorkingDirectory);
+            if (!validation.IsValid || string.IsNullOrWhiteSpace(validation.NormalizedPath))
+            {
+                await ReplyAsync(sender, message, $"Project path rejected: {validation.Message}", null, cancellationToken).ConfigureAwait(false);
+                return;
+            }
+
+            sourceWorkingDirectory = validation.NormalizedPath;
+            allowlistedRoot = validation.AllowlistedRoot ?? validation.NormalizedPath;
+        }
+        else
+        {
+            ResolvedProject resolvedProject = await ResolveActiveProjectAsync(message.ConversationScope, cancellationToken).ConfigureAwait(false);
+            if (resolvedProject.Project is null)
+            {
+                await ReplyAsync(sender, message, resolvedProject.Message, null, cancellationToken).ConfigureAwait(false);
+                return;
+            }
+
+            CodexWorkspaceValidationVm validation = _workspaceBrowser.ValidateWorkingDirectory(resolvedProject.Project.WorkingDirectory);
+            if (!validation.IsValid || string.IsNullOrWhiteSpace(validation.NormalizedPath))
+            {
+                await ReplyAsync(sender, message, $"Project path rejected: {validation.Message}", null, cancellationToken).ConfigureAwait(false);
+                return;
+            }
+
+            sourceWorkingDirectory = validation.NormalizedPath;
+            allowlistedRoot = validation.AllowlistedRoot ?? validation.NormalizedPath;
+        }
+
+        string launchPromptText = request.Name.Trim();
+        string topicName;
+        string sessionName;
+        if (useLaunchpadTopicNaming)
+        {
+            int launchSequence = await _stateStore.ReserveLaunchpadTopicSequenceAsync(message.ChatId, cancellationToken).ConfigureAwait(false);
+            topicName = BuildLaunchpadTopicName(message.ChatTitle, launchSequence);
+            sessionName = topicName;
+        }
+        else
+        {
+            topicName = BuildLaunchNameFromText(launchPromptText);
+            sessionName = topicName;
+        }
+
+        GitWorktreeProvisioningResult worktree;
+        try
+        {
+            worktree = await _worktreeProvisioner.CreateLaunchWorktreeAsync(sourceWorkingDirectory, allowlistedRoot, topicName, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            _logger.LogWarning(exception, "Launchpad worktree provisioning failed for source directory {SourceWorkingDirectory}.", sourceWorkingDirectory);
+            await ReplyAsync(sender, message, $"Worktree provisioning failed: {exception.Message}", null, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        await _projectCatalogStore.AddAsync(worktree.WorkingDirectory, cancellationToken).ConfigureAwait(false);
+        await _stateStore.SetLaunchpadStateAsync(message.ConversationScope, DateTimeOffset.UtcNow, cancellationToken).ConfigureAwait(false);
+        await CreateTopicAndSessionAsync(
+            message,
+            topicName,
+            sessionName,
+            worktree.WorkingDirectory,
+            sender,
+            cancellationToken,
+            templateConversation: message.ConversationScope,
+            rootReplyVerb: "Launched",
+            topicReplyVerb: "Launched and selected",
+            seedPromptText: launchPromptText).ConfigureAwait(false);
     }
 
     private async Task HandleTopicCurrentAsync(TelegramInboundMessage message, ITelegramBotMessageSender sender, CancellationToken cancellationToken)
@@ -766,7 +958,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         }
 
         string topicName = BuildDefaultTopicName(resolvedProject.Project);
-        await CreateTopicAndSessionAsync(message, topicName, resolvedProject.Project.WorkingDirectory, sender, cancellationToken).ConfigureAwait(false);
+        await CreateTopicAndSessionAsync(message, topicName, null, resolvedProject.Project.WorkingDirectory, sender, cancellationToken).ConfigureAwait(false);
     }
 
     private async Task HandleNewAsync(TelegramInboundMessage message, string arguments, ITelegramBotMessageSender sender, CancellationToken cancellationToken)
@@ -789,6 +981,96 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         CodexSessionModelSettings settings = await _sessionManager.GetModelSettingsAsync(session.Id, cancellationToken).ConfigureAwait(false);
         string? usageSummary = await TryBuildAccountUsageSummaryAsync(cancellationToken).ConfigureAwait(false);
         await ReplyAsync(sender, message, BuildSelectedSessionReply("Created and selected", session, settings, usageSummary: usageSummary), BuildSessionButtons([session], includeUse: false), cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task HandleLaunchpadStatusAsync(TelegramInboundMessage message, ITelegramBotMessageSender sender, CancellationToken cancellationToken)
+    {
+        await ReplyAsync(sender, message, await BuildLaunchpadStatusTextAsync(message, cancellationToken).ConfigureAwait(false), null, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task HandleLaunchpadOnAsync(TelegramInboundMessage message, ITelegramBotMessageSender sender, CancellationToken cancellationToken)
+    {
+        await _stateStore.SetLaunchpadStateAsync(message.ConversationScope, DateTimeOffset.UtcNow, cancellationToken).ConfigureAwait(false);
+        await ReplyAsync(sender, message, await BuildLaunchpadStatusTextAsync(message, cancellationToken).ConfigureAwait(false), null, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task HandleLaunchpadOffAsync(TelegramInboundMessage message, ITelegramBotMessageSender sender, CancellationToken cancellationToken)
+    {
+        bool removed = await _stateStore.ClearLaunchpadStateAsync(message.ConversationScope, cancellationToken).ConfigureAwait(false);
+        await ReplyAsync(
+            sender,
+            message,
+            removed
+                ? $"Launchpad disarmed. Use /launchpad on to arm this root chat for {TelegramLaunchpadPolicy.InactivityTimeout.TotalMinutes.ToString(CultureInfo.InvariantCulture)} minutes."
+                : "Launchpad is already off. Use /launchpad on to arm this root chat.",
+            null,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<string> BuildLaunchpadStatusTextAsync(TelegramInboundMessage message, CancellationToken cancellationToken)
+    {
+        (TelegramLaunchpadState? state, bool expired) = await ResolveLaunchpadStateAsync(message.ConversationScope, clearExpired: true, cancellationToken).ConfigureAwait(false);
+        StringBuilder builder = new();
+        if (state is null)
+        {
+            builder.AppendLine(expired
+                ? $"Launchpad expired after {TelegramLaunchpadPolicy.InactivityTimeout.TotalMinutes.ToString(CultureInfo.InvariantCulture)} minutes of inactivity and is now off."
+                : "Launchpad is off.");
+            builder.AppendLine($"Use /launchpad on to arm this root chat for {TelegramLaunchpadPolicy.InactivityTimeout.TotalMinutes.ToString(CultureInfo.InvariantCulture)} minutes.");
+            return builder.ToString().TrimEnd();
+        }
+
+        builder.AppendLine("Launchpad is armed for this root chat.");
+        builder.AppendLine("Plain-text and audio messages will create detached git worktree-backed topic/session lanes named from the root chat title plus a lane number, then seed the new session.");
+        builder.AppendLine($"Expires in {FormatLaunchpadCountdown(state.LastTouchedUtc)} if unused.");
+        builder.AppendLine(await BuildLaunchpadTemplateTextAsync(message.ConversationScope, cancellationToken).ConfigureAwait(false));
+        ResolvedProject activeProject = await ResolveActiveProjectAsync(message.ConversationScope, cancellationToken).ConfigureAwait(false);
+        builder.AppendLine(activeProject.Project is null
+            ? "Active project: <none>"
+            : $"Active project: {activeProject.Project.Name} ({activeProject.Project.WorkingDirectory})");
+        if (activeProject.Project is null && !string.IsNullOrWhiteSpace(activeProject.Message))
+        {
+            builder.AppendLine(activeProject.Message);
+        }
+        builder.AppendLine("Use /launch <name> [| <absolute directory path>] to create a new forum topic and session.");
+        builder.AppendLine("Use /launchpad off to disarm.");
+        return builder.ToString().TrimEnd();
+    }
+
+    private async Task<string> BuildLaunchpadTemplateTextAsync(TelegramConversationScope conversation, CancellationToken cancellationToken)
+    {
+        ResolvedSession activeSession = await ResolveActiveSessionAsync(conversation, cancellationToken).ConfigureAwait(false);
+        if (activeSession.Session is null)
+        {
+            return "Launch template: Codex defaults.";
+        }
+
+        CodexSessionModelSettings settings = await _sessionManager.GetModelSettingsAsync(activeSession.Session.Id, cancellationToken).ConfigureAwait(false);
+        return $"Launch template: current root session {activeSession.Session.Name} ({FormatModelDisplay(settings)}, {FormatValue(settings.ReasoningEffort)}).";
+    }
+
+    private async Task<(TelegramLaunchpadState? State, bool Expired)> ResolveLaunchpadStateAsync(
+        TelegramConversationScope conversation,
+        bool clearExpired,
+        CancellationToken cancellationToken)
+    {
+        TelegramLaunchpadState? state = await _stateStore.GetLaunchpadStateAsync(conversation, cancellationToken).ConfigureAwait(false);
+        if (state is null)
+        {
+            return (null, false);
+        }
+
+        if (!TelegramLaunchpadPolicy.IsExpired(state.LastTouchedUtc, DateTimeOffset.UtcNow))
+        {
+            return (state, false);
+        }
+
+        if (clearExpired)
+        {
+            await _stateStore.ClearLaunchpadStateAsync(conversation, cancellationToken).ConfigureAwait(false);
+        }
+
+        return (null, true);
     }
 
     private async Task HandleUseAsync(TelegramInboundMessage message, string arguments, ITelegramBotMessageSender sender, CancellationToken cancellationToken)
@@ -898,6 +1180,11 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         }
 
         await ReplyAsync(sender, message, $"Here's what I transcribed:{Environment.NewLine}{Environment.NewLine}{transcript}", null, cancellationToken).ConfigureAwait(false);
+        if (await TryHandleLaunchpadMessageAsync(message, transcript, sender, cancellationToken).ConfigureAwait(false))
+        {
+            return;
+        }
+
         await SendToActiveSessionAsync(message with { Text = transcript, AudioFilePath = null, Attachments = null }, transcript, sender, cancellationToken).ConfigureAwait(false);
     }
 
@@ -1245,6 +1532,73 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         }
 
         await HandleModelAsync(message, "thinking " + arguments, sender, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task HandleGoalAsync(TelegramInboundMessage message, string arguments, ITelegramBotMessageSender sender, CancellationToken cancellationToken)
+    {
+        ResolvedSession resolved = await ResolveActiveSessionAsync(message.ConversationScope, cancellationToken).ConfigureAwait(false);
+        if (resolved.Session is null)
+        {
+            await ReplyAsync(sender, message, resolved.Message, null, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        GoalCommandRequest request = ParseGoalCommand(arguments);
+        if (request.Action is GoalCommandAction.Invalid)
+        {
+            await ReplyAsync(sender, message, "Usage: /goal [objective|set <objective>|clear|pause|resume|complete]", null, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        try
+        {
+            CodexThreadGoalVm? goal = request.Action switch
+            {
+                GoalCommandAction.Show => await _sessionManager.GetGoalAsync(resolved.Session.Id, cancellationToken).ConfigureAwait(false),
+                GoalCommandAction.Set => await _sessionManager.SetGoalAsync(resolved.Session.Id, request.Objective ?? string.Empty, request.TokenBudget, cancellationToken).ConfigureAwait(false),
+                GoalCommandAction.Pause => await _sessionManager.SetGoalStatusAsync(resolved.Session.Id, CodexThreadGoalStatus.Paused, cancellationToken).ConfigureAwait(false),
+                GoalCommandAction.Resume => await _sessionManager.SetGoalStatusAsync(resolved.Session.Id, CodexThreadGoalStatus.Active, cancellationToken).ConfigureAwait(false),
+                GoalCommandAction.Complete => await _sessionManager.SetGoalStatusAsync(resolved.Session.Id, CodexThreadGoalStatus.Complete, cancellationToken).ConfigureAwait(false),
+                GoalCommandAction.Clear => null,
+                _ => null,
+            };
+
+            if (request.Action is GoalCommandAction.Clear)
+            {
+                bool cleared = await _sessionManager.ClearGoalAsync(resolved.Session.Id, cancellationToken).ConfigureAwait(false);
+                await ReplyAsync(
+                    sender,
+                    message,
+                    cleared ? $"Goal cleared for {resolved.Session.Name}." : $"No goal was set for {resolved.Session.Name}.",
+                    null,
+                    cancellationToken).ConfigureAwait(false);
+                return;
+            }
+
+            string prefix = request.Action switch
+            {
+                GoalCommandAction.Set => "Goal set.",
+                GoalCommandAction.Pause => "Goal paused.",
+                GoalCommandAction.Resume => "Goal resumed.",
+                GoalCommandAction.Complete => "Goal marked complete.",
+                _ => string.Empty,
+            };
+            await ReplyAsync(sender, message, FormatGoal(resolved.Session, goal, prefix), null, cancellationToken).ConfigureAwait(false);
+        }
+        catch (CodexCapabilityNotSupportedException exception)
+        {
+            _logger.LogWarning(exception, "Codex goal command failed because the configured backend does not support thread goals.");
+            await ReplyAsync(sender, message, "Goals are unavailable: use the app-server backend with an up-to-date Codex CLI.", null, cancellationToken).ConfigureAwait(false);
+        }
+        catch (CodexMethodNotFoundException exception)
+        {
+            _logger.LogWarning(exception, "Codex goal command failed because the installed Codex app-server does not expose thread goals.");
+            await ReplyAsync(sender, message, "Goals are unavailable: the installed Codex app-server does not expose thread goal methods. Update Codex and try /goal again.", null, cancellationToken).ConfigureAwait(false);
+        }
+        catch (ArgumentException exception)
+        {
+            await ReplyAsync(sender, message, exception.Message, null, cancellationToken).ConfigureAwait(false);
+        }
     }
 
     private async Task HandleModelMenuAsync(
@@ -2097,10 +2451,20 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
     private static bool IsChatNotForumError(Exception exception)
         => exception.Message.Contains("chat is not a forum", StringComparison.OrdinalIgnoreCase);
 
+    private static bool IsLaunchpadRootChat(TelegramInboundMessage message)
+        => IsForumTopicChat(message) && message.MessageThreadId is null;
+
     private static string BuildTopicCreationUnsupportedMessage(TelegramInboundMessage message)
         => IsPrivateChat(message)
             ? "This is a private chat, so /topic new cannot create a Telegram forum topic here. Use /new [name] to create a Codex session in this chat, or run /topic new inside a forum-enabled supergroup."
             : $"This is a {message.ChatType} chat, so /topic new only works in a forum-enabled supergroup. Use /new [name] to create a Codex session here.";
+
+    private static string BuildLaunchpadUnsupportedMessage(TelegramInboundMessage message)
+        => IsPrivateChat(message)
+            ? "Launchpad mode only works in a forum-enabled supergroup root. Use /launchpad on in that chat root, then /launch <name> [| <absolute directory path>]."
+            : message.MessageThreadId is null
+                ? $"Launchpad mode only works from the root of a forum-enabled supergroup. This {message.ChatType} root is not a valid launchpad command."
+                : "Run /launchpad in the chat root, not inside a topic.";
 
     private static string FormatActionFailurePrefix(ParsedTelegramCommand command, TelegramInboundMessage message)
         => command.IsCommand
@@ -2140,45 +2504,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
     }
 
     private static string BuildHelpText()
-        => string.Join(Environment.NewLine, [
-            "Commands:",
-            "Use the buttons below for quick navigation between sessions, projects, and help.",
-            "/help - show this help",
-            "/whoami - show Telegram user, chat, and topic thread IDs",
-            "/version - show the running Codex Telegram app version",
-            "/trust - trust the current group or forum chat for allowlisted users",
-            "/projects - list known project directories",
-            "/project add <path> - add and select a project",
-            "/project <number|name|path> - select a project",
-            "/topics - list Telegram topics/sessions in this chat",
-            "/topic list - list Telegram topics/sessions in this chat",
-            "/topic new <name> [| <absolute directory path>] - create a new Telegram forum topic and session in a forum-enabled supergroup",
-            "/topic attach [sessionId] - bind the current Telegram forum topic to an existing Codex session",
-            "/topic current - show the active topic/session in this conversation",
-            "/sessions - show active and Telegram-managed sessions",
-            "/sessions all [count] - show recent Codex history",
-            "/new [name] - create and select a Codex session in the active project for this conversation",
-            "/use <sessionId> - select the active session for this conversation",
-            "/send <text> - send text to the active session",
-            "/steer <text> - steer the active turn in the selected session",
-            "/queue - view, edit, delete, or send queued prompts now",
-            "/model [model] [thinking <effort>] - show or change the selected session model",
-            "/thinking <minimal|low|medium|high|xhigh> - change the selected session thinking effort",
-            "/tail [count] - show recent output and keep following the session live",
-            "/status [sessionId] - show session status",
-            "/usage - show Codex account usage remaining and reset times",
-            "/doctor - explain authorization, routing, active project/session, workspace roots, and queue state",
-            "/outbound - show outbound Telegram queue status",
-            "/stop [sessionId] - gracefully stop a session",
-            "/restart confirm - explain how to restart this standalone process",
-            "/kill <sessionId> confirm - hard-stop a session",
-            "/rename <sessionId> <new name> - rename a session",
-            "/forget <sessionId> - hide a stopped/exited session without deleting logs",
-            "Plain text and audio in a private chat, trusted group, or topic stay on that conversation's session; if the conversation has none yet, the first message starts one and live output follows automatically.",
-            "In forum topics, if plain text gets no response, Telegram bot privacy is likely hiding non-command messages; use /send <text> or disable privacy for this bot.",
-            "Images, documents, and other attachments are forwarded to Codex; voice notes are transcribed with the configured OpenAI transcription model first.",
-            "Voice/text control phrase: Codex settings model gpt-5.4-mini thinking high: <prompt>"
-        ]);
+        => string.Join(Environment.NewLine, TelegramBotMetadata.BuildHelpLines());
 
     private static string BuildVersionText()
         => string.Join(Environment.NewLine, [
@@ -2324,11 +2650,14 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             string projectText = string.IsNullOrWhiteSpace(state.ActiveProjectWorkingDirectory)
                 ? string.Empty
                 : $" · project {CodexTextFormatting.ResolveProjectName(state.ActiveProjectWorkingDirectory)}";
+            string launchpadText = state.LaunchpadLastTouchedUtc is null
+                ? string.Empty
+                : $" · launchpad {FormatLaunchpadCountdown(state.LaunchpadLastTouchedUtc.Value)} left";
             string queueText = state.QueuedPromptCount > 0
                 ? $" · queued {state.QueuedPromptCount.ToString(CultureInfo.InvariantCulture)}"
                 : string.Empty;
 
-            builder.AppendLine($"{activeMarker} {index + 1}. {scopeLabel} · {sessionText}{projectText}{queueText}");
+            builder.AppendLine($"{activeMarker} {index + 1}. {scopeLabel} · {sessionText}{projectText}{launchpadText}{queueText}");
         }
 
         builder.AppendLine("Open a Telegram topic and send a message there to keep work isolated.");
@@ -2382,6 +2711,43 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             builder.AppendLine($"Last error: {session.LastError}");
         }
 
+        return builder.ToString().TrimEnd();
+    }
+
+    private static string FormatGoal(CodexSessionSummary session, CodexThreadGoalVm? goal, string? prefix = null)
+    {
+        StringBuilder builder = new();
+        if (!string.IsNullOrWhiteSpace(prefix))
+        {
+            builder.AppendLine(prefix);
+        }
+
+        if (goal is null)
+        {
+            builder.AppendLine($"No goal is set for {session.Name}.");
+            builder.AppendLine("Use /goal <objective> to set one.");
+            return builder.ToString().TrimEnd();
+        }
+
+        builder.AppendLine($"Goal for {session.Name}");
+        builder.AppendLine($"Status: {FormatGoalStatus(goal.Status)}");
+        builder.AppendLine($"Objective: {goal.Objective}");
+        if (goal.TokenBudget.HasValue)
+        {
+            builder.AppendLine($"Tokens: {goal.TokensUsed.ToString(CultureInfo.InvariantCulture)} / {goal.TokenBudget.Value.ToString(CultureInfo.InvariantCulture)}");
+        }
+        else if (goal.TokensUsed > 0)
+        {
+            builder.AppendLine($"Tokens used: {goal.TokensUsed.ToString(CultureInfo.InvariantCulture)}");
+        }
+
+        if (goal.TimeUsedSeconds > 0)
+        {
+            builder.AppendLine($"Time used: {FormatDuration(TimeSpan.FromSeconds(goal.TimeUsedSeconds))}");
+        }
+
+        builder.AppendLine($"Updated: {FormatRelativeAge(goal.UpdatedAt)}");
+        builder.AppendLine("Use /goal clear, /goal pause, /goal resume, or /goal complete to change status.");
         return builder.ToString().TrimEnd();
     }
 
@@ -2906,6 +3272,9 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             builder.AppendLine(activeSession is null
                 ? "- Active session: <none>"
                 : $"- Active session: {activeSession.Name} ({FormatStatusValue(activeSession.Status)}, {FormatRelativeAge(activeSession.LastActivityUtc)})");
+
+            TelegramLaunchpadState? launchpad = await _stateStore.GetLaunchpadStateAsync(message.ConversationScope, cancellationToken).ConfigureAwait(false);
+            builder.AppendLine(FormatLaunchpadStateLine(launchpad));
         }
         catch (Exception exception)
         {
@@ -3008,6 +3377,12 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             return "Next: use /projects and /sessions to refresh local state; check the terminal logs if either command fails.";
         }
 
+        TelegramLaunchpadState? launchpad = await _stateStore.GetLaunchpadStateAsync(message.ConversationScope, cancellationToken).ConfigureAwait(false);
+        if (launchpad is not null && !TelegramLaunchpadPolicy.IsExpired(launchpad.LastTouchedUtc, DateTimeOffset.UtcNow))
+        {
+            return "Next: use /launch <name> [| <absolute directory path>] to create a new forum topic and session, or /launchpad off to disarm.";
+        }
+
         return "Next: send a normal message to continue, or use /status, /tail, /usage, /model, /thinking, and /outbound if something seems off.";
     }
 
@@ -3077,6 +3452,33 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             _ => status.ToString().ToLowerInvariant(),
         };
 
+    private static string FormatGoalStatus(CodexThreadGoalStatus status)
+        => status switch
+        {
+            CodexThreadGoalStatus.BudgetLimited => "budget-limited",
+            _ => status.ToString().ToLowerInvariant(),
+        };
+
+    private static string FormatDuration(TimeSpan duration)
+    {
+        if (duration < TimeSpan.FromMinutes(1))
+        {
+            return $"{Math.Max(1, (int)Math.Ceiling(duration.TotalSeconds)).ToString(CultureInfo.InvariantCulture)}s";
+        }
+
+        if (duration < TimeSpan.FromHours(1))
+        {
+            return $"{(int)duration.TotalMinutes}m";
+        }
+
+        if (duration < TimeSpan.FromDays(1))
+        {
+            return $"{(int)duration.TotalHours}h {(duration.Minutes).ToString(CultureInfo.InvariantCulture)}m";
+        }
+
+        return $"{(int)duration.TotalDays}d {(duration.Hours).ToString(CultureInfo.InvariantCulture)}h";
+    }
+
     private static string FormatRelativeAge(DateTimeOffset value)
     {
         TimeSpan age = DateTimeOffset.UtcNow - value.ToUniversalTime();
@@ -3105,6 +3507,32 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
 
     private static string FormatNullableAge(DateTimeOffset? value)
         => value is null ? "<none>" : FormatRelativeAge(value.Value);
+
+    private static string FormatLaunchpadCountdown(DateTimeOffset lastTouchedUtc)
+    {
+        TimeSpan remaining = TelegramLaunchpadPolicy.GetRemaining(lastTouchedUtc, DateTimeOffset.UtcNow);
+        if (remaining <= TimeSpan.Zero)
+        {
+            return "expired";
+        }
+
+        return TelegramLaunchpadPolicy.FormatRemaining(remaining);
+    }
+
+    private static string FormatLaunchpadStateLine(TelegramLaunchpadState? launchpad)
+    {
+        if (launchpad is null)
+        {
+            return "- Launchpad: off";
+        }
+
+        if (TelegramLaunchpadPolicy.IsExpired(launchpad.LastTouchedUtc, DateTimeOffset.UtcNow))
+        {
+            return "- Launchpad: expired";
+        }
+
+        return $"- Launchpad: armed ({FormatLaunchpadCountdown(launchpad.LastTouchedUtc)} left)";
+    }
 
     private static string BuildSelectedSessionReply(
         string action,
@@ -3176,6 +3604,69 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         string topicName = $"{projectName} lane {DateTimeOffset.UtcNow:yyyyMMdd HHmm}";
         return topicName.Length <= 120 ? topicName : topicName[..120].TrimEnd();
     }
+
+    private static string BuildLaunchpadTopicName(string? chatTitle, int sequence)
+    {
+        string baseName = NormalizeTopicNameComponent(chatTitle);
+        if (string.IsNullOrWhiteSpace(baseName))
+        {
+            baseName = "Group Chat";
+        }
+
+        string suffix = $" lane {sequence.ToString(CultureInfo.InvariantCulture)}";
+        const int maxLength = 120;
+        int maxBaseLength = Math.Max(1, maxLength - suffix.Length);
+        if (baseName.Length > maxBaseLength)
+        {
+            baseName = baseName[..maxBaseLength].TrimEnd();
+        }
+
+        return $"{baseName}{suffix}";
+    }
+
+    private static string BuildLaunchNameFromText(string value)
+    {
+        string topicName = NormalizeTopicNameComponent(value);
+        if (string.IsNullOrWhiteSpace(topicName))
+        {
+            topicName = "Launch";
+        }
+
+        return TruncateTopicName(topicName);
+    }
+
+    private static string NormalizeTopicNameComponent(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return string.Empty;
+        }
+
+        string trimmed = value.Trim();
+        StringBuilder builder = new(trimmed.Length);
+        bool pendingSpace = false;
+        foreach (char ch in trimmed)
+        {
+            if (char.IsWhiteSpace(ch))
+            {
+                if (!pendingSpace)
+                {
+                    builder.Append(' ');
+                    pendingSpace = true;
+                }
+
+                continue;
+            }
+
+            builder.Append(ch);
+            pendingSpace = false;
+        }
+
+        return builder.ToString();
+    }
+
+    private static string TruncateTopicName(string topicName, int maxLength = 120)
+        => topicName.Length <= maxLength ? topicName : topicName[..maxLength].TrimEnd();
 
     private static string BuildDefaultSessionName(ProjectChoice project)
     {
@@ -3359,6 +3850,30 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         }
 
         return new SessionListRequest(includeAll, Math.Clamp(limit, 1, 20));
+    }
+
+    private static GoalCommandRequest ParseGoalCommand(string arguments)
+    {
+        string trimmed = arguments.Trim();
+        if (string.IsNullOrWhiteSpace(trimmed))
+        {
+            return new GoalCommandRequest(GoalCommandAction.Show, null, null);
+        }
+
+        string[] parts = SplitArguments(trimmed, 2);
+        string keyword = NormalizeToken(parts[0]);
+        return keyword switch
+        {
+            "show" or "status" or "current" => new GoalCommandRequest(GoalCommandAction.Show, null, null),
+            "clear" or "reset" or "remove" => new GoalCommandRequest(GoalCommandAction.Clear, null, null),
+            "pause" or "paused" => new GoalCommandRequest(GoalCommandAction.Pause, null, null),
+            "resume" or "active" or "start" => new GoalCommandRequest(GoalCommandAction.Resume, null, null),
+            "complete" or "done" => new GoalCommandRequest(GoalCommandAction.Complete, null, null),
+            "set" => parts.Length < 2 || string.IsNullOrWhiteSpace(parts[1])
+                ? new GoalCommandRequest(GoalCommandAction.Invalid, null, null)
+                : new GoalCommandRequest(GoalCommandAction.Set, parts[1].Trim(), null),
+            _ => new GoalCommandRequest(GoalCommandAction.Set, trimmed, null),
+        };
     }
 
     private static string GetShortSessionId(string sessionId)
@@ -3560,9 +4075,14 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
     private async Task CreateTopicAndSessionAsync(
         TelegramInboundMessage message,
         string topicName,
+        string? sessionName,
         string? workingDirectory,
         ITelegramBotMessageSender sender,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        TelegramConversationScope? templateConversation = null,
+        string rootReplyVerb = "Created",
+        string topicReplyVerb = "Created and selected",
+        string? seedPromptText = null)
     {
         if (!IsForumTopicChat(message))
         {
@@ -3590,9 +4110,14 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
 
         CodexSessionSummary session = await CreateAndSelectSessionAsync(
             topicScope,
-            topicName,
+            sessionName ?? topicName,
             workingDirectory,
             cancellationToken).ConfigureAwait(false);
+
+        if (templateConversation is not null)
+        {
+            await ApplyLaunchpadTemplateSettingsAsync(session.Id, templateConversation.Value, cancellationToken).ConfigureAwait(false);
+        }
 
         if (!string.IsNullOrWhiteSpace(workingDirectory))
         {
@@ -3605,15 +4130,54 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         await ReplyAsync(
             sender,
             message,
-            $"Created topic {topic.Name} and session {session.Name}. Open the new topic to continue.",
+            $"{rootReplyVerb} topic {topic.Name} and session {session.Name} in worktree {workingDirectory}. Open the new topic to continue.",
             null,
             cancellationToken).ConfigureAwait(false);
         await ReplyAsync(
             sender,
             topicScope,
-            BuildSelectedSessionReply("Created and selected", session, settings, projectName, usageSummary),
+            BuildSelectedSessionReply(topicReplyVerb, session, settings, projectName, usageSummary),
             BuildSessionButtons([session], includeUse: false),
             cancellationToken).ConfigureAwait(false);
+
+        if (!string.IsNullOrWhiteSpace(seedPromptText))
+        {
+            TelegramInboundMessage seededMessage = message with
+            {
+                Text = seedPromptText,
+                MessageThreadId = topic.MessageThreadId,
+                AudioFilePath = null,
+                Attachments = null,
+            };
+
+            await SendToActiveSessionAsync(seededMessage, seedPromptText, sender, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private async Task ApplyLaunchpadTemplateSettingsAsync(
+        string sessionId,
+        TelegramConversationScope templateConversation,
+        CancellationToken cancellationToken)
+    {
+        ResolvedSession templateSession = await ResolveActiveSessionAsync(templateConversation, cancellationToken).ConfigureAwait(false);
+        if (templateSession.Session is null)
+        {
+            return;
+        }
+
+        try
+        {
+            CodexSessionModelSettings templateSettings = await _sessionManager.GetModelSettingsAsync(templateSession.Session.Id, cancellationToken).ConfigureAwait(false);
+            await _sessionManager.UpdateModelSettingsAsync(
+                sessionId,
+                templateSettings.Model,
+                templateSettings.ReasoningEffort,
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            _logger.LogDebug(exception, "Launchpad template settings could not be applied to session {SessionId}.", sessionId);
+        }
     }
 
     private static TelegramInboundMessage ToMessage(TelegramInboundCallback callback)
@@ -3641,6 +4205,19 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
     }
 
     private sealed record SessionListRequest(bool IncludeAll, int Limit);
+
+    private sealed record GoalCommandRequest(GoalCommandAction Action, string? Objective, long? TokenBudget);
+
+    private enum GoalCommandAction
+    {
+        Invalid,
+        Show,
+        Set,
+        Clear,
+        Pause,
+        Resume,
+        Complete,
+    }
 
     private sealed record SessionListView(
         IReadOnlyList<CodexSessionSummary> Sessions,

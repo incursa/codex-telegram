@@ -56,10 +56,10 @@ Keep the token private. Anyone with the token can control the bot account.
 
 Recommended BotFather settings for a first private-chat release:
 
-1. Use `/setdescription` and `/setabouttext` to explain that this bot controls a local Codex installation.
+1. Let the app sync its command list, description, short description, and conservative group-admin defaults automatically on startup.
 2. Keep group joins disabled unless you intentionally want group support.
 3. Keep privacy mode enabled unless you intentionally need ordinary group text routed to Codex.
-4. Add commands later after the private-chat flow works.
+4. Add a profile image manually if you want one.
 
 Copy-paste BotFather text, command lists, and privacy recommendations are in [BotFather setup](docs/botfather.md).
 
@@ -339,12 +339,15 @@ After a successful test, you should see the transcription in Telegram before the
 | `/queue` | View queued prompts for the conversation, then edit, delete, or send one now. |
 | `/model` | Show or change the active session model. |
 | `/thinking` | Show or change reasoning effort. |
+| `/goal` | Show, set, pause, resume, complete, or clear the active session goal. |
 | `/status` | Show active session status, including compact Codex usage when available. |
 | `/usage` | Show five-hour and weekly Codex usage, with reset times. |
 | `/tail [lines]` | Show recent output and keep following the session; defaults to 40 lines. |
 | `/outbound` | Inspect delayed or batched Telegram output. |
 | `/stop` | Gracefully stop a session. |
 | `/restart confirm` | Show standalone-process restart guidance. |
+| `/launchpad on\|off\|status` | Arm or disarm root-chat launch mode for plain-text or audio launches; launchpad names lanes from the group title plus a sequence number. |
+| `/launch <name> [\| <path>]` | Create a detached git worktree-backed forum topic and Codex session while launchpad is armed. |
 | `/topic ...` | Manage forum-topic sessions in allowed supergroups. |
 
 For a fuller operator guide, see [docs/usage.md](docs/usage.md).
@@ -394,7 +397,7 @@ Groups and forum topics require:
 3. BotFather privacy settings that match the desired behavior.
 4. Topic-management rights if the bot should create forum topics.
 
-Start privately first. Then use a trusted group root as a single project/session lane, or use forum topics when one group needs multiple independent sessions.
+Start privately first. Then use a trusted group root as a single project/session lane, use launchpad mode when you want to fan out repeated plain-text, audio, or `/launch` topic launches quickly, or use forum topics when one group needs multiple independent sessions.
 
 ## Support And Security
 

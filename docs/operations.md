@@ -64,7 +64,7 @@ For groups and forum topics:
 1. Add only trusted users to `TelegramBot:AllowedUserIds`.
 2. Trust the group with `/trust` from an allowlisted admin account, or add the group chat ID to `TelegramBot:AllowedChatIds`.
 3. Keep Telegram privacy mode enabled unless ordinary group-root text should route to Codex.
-4. Grant topic-management rights only if `/topic new` is part of the supported workflow.
+4. Grant topic-management rights only if `/topic new`, `/launch`, or launchpad launch mode is part of the supported workflow.
 
 Group and forum messages require both an allowed user and a trusted chat.
 
