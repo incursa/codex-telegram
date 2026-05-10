@@ -185,6 +185,10 @@ builder.Services.PostConfigure<TelegramOutboundOptions>(options =>
         options.FlushIntervalMilliseconds,
         TelegramOutboundLimits.MinFlushIntervalMilliseconds,
         TelegramOutboundLimits.MaxFlushIntervalMilliseconds);
+    options.SendTimeoutSeconds = Math.Clamp(
+        options.SendTimeoutSeconds,
+        TelegramOutboundLimits.MinSendTimeoutSeconds,
+        TelegramOutboundLimits.MaxSendTimeoutSeconds);
     options.AgentMessageUpdateMinChars = Math.Clamp(
         options.AgentMessageUpdateMinChars,
         TelegramOutboundLimits.MinAgentMessageUpdateChars,
