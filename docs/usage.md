@@ -7,7 +7,7 @@ For Telegram buttons and menus, use [menus.md](menus.md).
 
 ## Normal Start
 
-1. Start the bot from its app folder, or use the full executable path; settings resolve beside the executable by default.
+1. Start the bot from its app folder, or use the full executable path; settings resolve beside the executable by default. If that file is missing and the launch directory has `appsettings.Local.json`, the app uses the launch-directory file.
 2. Use `--run` for normal unattended operation.
 3. Confirm the process stays running.
 4. In Telegram, send `/doctor` if anything feels unclear.
@@ -179,8 +179,8 @@ Stop the console process with Ctrl+C, or stop it through the service manager tha
 
 After restart:
 
-1. Start from the same working directory.
-2. Confirm the same `appsettings.Local.json` is loaded.
+1. Start from the same working directory, or keep `appsettings.Local.json` beside the executable.
+2. Confirm the expected `appsettings.Local.json` is loaded.
 3. Confirm the same `CodexTelegram:Workspace:DataRoot` is loaded.
 4. Send `/project current`.
 5. Send `/status`.

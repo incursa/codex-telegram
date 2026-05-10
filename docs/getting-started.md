@@ -126,7 +126,7 @@ You can configure the app in four ways.
 
 This is the simplest path for a single machine.
 
-The file is resolved beside the executable by default, not from the shell's current working directory.
+The file is resolved beside the executable by default. If the executable-local file is missing and the shell's current working directory contains `appsettings.Local.json`, that launch-directory file is used.
 The interactive bootstrap menu also writes `appsettings.Local.json` beside the executable, so command-line launches from another directory still use the same local settings.
 
 Use this when:

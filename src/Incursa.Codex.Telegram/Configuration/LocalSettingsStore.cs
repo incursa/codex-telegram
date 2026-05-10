@@ -41,9 +41,33 @@ internal sealed class LocalSettingsStore
     /// <summary>
     /// Resolves the default machine-local settings file path.
     /// </summary>
-    /// <returns>The absolute path to <c>appsettings.Local.json</c> beside the executable.</returns>
+    /// <returns>The absolute path to the local settings file.</returns>
     public static string ResolveDefaultPath()
-        => Path.GetFullPath(Path.Combine(ResolveDefaultDirectory(), FileName));
+        => ResolveDefaultPath(ResolveDefaultDirectory(), Environment.CurrentDirectory);
+
+    internal static string ResolveDefaultPath(string executableDirectory, string currentDirectory)
+    {
+        string executableSettingsPath = Path.GetFullPath(Path.Combine(executableDirectory, FileName));
+        if (File.Exists(executableSettingsPath))
+        {
+            return executableSettingsPath;
+        }
+
+        if (string.IsNullOrWhiteSpace(currentDirectory))
+        {
+            return executableSettingsPath;
+        }
+
+        string currentDirectorySettingsPath = Path.GetFullPath(Path.Combine(currentDirectory, FileName));
+        if (PathsEqual(executableSettingsPath, currentDirectorySettingsPath))
+        {
+            return executableSettingsPath;
+        }
+
+        return File.Exists(currentDirectorySettingsPath)
+            ? currentDirectorySettingsPath
+            : executableSettingsPath;
+    }
 
     public static LocalSettingsStore Load(string? filePath = null)
     {
@@ -382,4 +406,10 @@ internal sealed class LocalSettingsStore
             }
         }
     }
+
+    private static bool PathsEqual(string left, string right)
+        => string.Equals(
+            Path.GetFullPath(left).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
+            Path.GetFullPath(right).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
+            OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
 }

@@ -124,6 +124,36 @@ public sealed class TelegramHostedServiceUpdateAdapterTests
         Assert.Equal(" /whoami@codex_bot details ", message.Text);
     }
 
+    [Theory]
+    [InlineData(ChatType.Group)]
+    [InlineData(ChatType.Supergroup)]
+    public async Task HandleUpdateAsync_AllowsUnauthorizedGroupWhoAmICommandForDiagnostics(ChatType chatType)
+    {
+        using Harness harness = Harness.Create(new TelegramBotOptions
+        {
+            AllowedUserIds = [1234],
+            AllowedChatIds = [],
+        });
+        Update update = new()
+        {
+            Id = 35,
+            Message = CreateMessage(
+                text: "/whoami@codex_bot",
+                userId: 9999,
+                chatId: -1005555,
+                chatType: chatType),
+        };
+
+        await harness.Service.HandleUpdateAsync(harness.FileClient, update, harness.Sender, CancellationToken.None);
+
+        TelegramInboundMessage message = Assert.Single(harness.Handler.Messages);
+        Assert.Equal(9999, message.UserId);
+        Assert.Equal(-1005555, message.ChatId);
+        Assert.Equal(chatType.ToString(), message.ChatType);
+        Assert.Equal("/whoami@codex_bot", message.Text);
+        Assert.Empty(harness.Sender.Sent);
+    }
+
     [Fact]
     public async Task HandleUpdateAsync_ForwardsTrustCommandFromAllowedUserInUntrustedGroup()
     {

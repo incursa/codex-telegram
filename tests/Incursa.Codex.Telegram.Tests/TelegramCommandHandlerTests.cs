@@ -47,6 +47,25 @@ public sealed class TelegramCommandHandlerTests
     }
 
     [Fact]
+    public async Task HandleMessageAsync_AllowsUnauthorizedSharedChatWhoamiMessages()
+    {
+        using CommandHandlerHarness harness = CommandHandlerHarness.Create(new TelegramBotOptions
+        {
+            AllowedUserIds = [1234],
+            AllowedChatIds = [],
+        });
+
+        await harness.Handler.HandleMessageAsync(
+            new TelegramInboundMessage(9999, -1005555, "supergroup", "/whoami@codex_bot"),
+            harness.Sender,
+            CancellationToken.None);
+
+        SentTelegramMessage sent = Assert.Single(harness.Sender.Sent);
+        Assert.Contains("Telegram user ID: 9999", sent.Text);
+        Assert.Contains("Chat ID: -1005555", sent.Text);
+    }
+
+    [Fact]
     public async Task HandleMessageAsync_SessionsListUsesOnlyUseSelectionButtons()
     {
         using CommandHandlerHarness harness = CommandHandlerHarness.Create();
