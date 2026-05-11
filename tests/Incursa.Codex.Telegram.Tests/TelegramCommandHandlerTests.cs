@@ -595,6 +595,66 @@ public sealed class TelegramCommandHandlerTests
     }
 
     [Fact]
+    public async Task HandleMessageAsync_ReplyPlainTextQueuesTelegramContextWhenSessionIsRunning()
+    {
+        using CommandHandlerHarness harness = CommandHandlerHarness.Create();
+        TelegramConversationScope conversation = new(5555, null);
+        harness.SessionManager.Sessions.Add(CreateSession(
+            "thread-1",
+            "Goal session",
+            harness.Temp.Path,
+            CodexSessionStatus.Running));
+        await harness.StateStore.SetActiveSessionIdAsync(conversation, "thread-1", CancellationToken.None);
+        TelegramReplyContext replyContext = new(
+            12,
+            TelegramMessageAuthor.Bot,
+            "I am going to delete the stale file.",
+            [
+                new TelegramMessageContextRecord(conversation, 10, TelegramMessageAuthor.Bot, "First progress update.", DateTimeOffset.Parse("2026-05-10T12:00:00Z")),
+                new TelegramMessageContextRecord(conversation, 11, TelegramMessageAuthor.Bot, "Second progress update.", DateTimeOffset.Parse("2026-05-10T12:01:00Z")),
+            ]);
+
+        await harness.Handler.HandleMessageAsync(
+            new TelegramInboundMessage(1234, conversation.ChatId, "private", "do not delete that", ReplyContext: replyContext),
+            harness.Sender,
+            CancellationToken.None);
+
+        TelegramQueuedPrompt queued = Assert.Single(await harness.StateStore.ListQueuedPromptsAsync(1234, conversation, CancellationToken.None));
+        Assert.Contains("Telegram reply context:", queued.Text);
+        Assert.Contains("First progress update.", queued.Text);
+        Assert.Contains("I am going to delete the stale file.", queued.Text);
+        Assert.Contains("Operator reply:", queued.Text);
+        Assert.Contains("do not delete that", queued.Text);
+    }
+
+    [Fact]
+    public async Task HandleMessageAsync_SteerReplyIncludesTelegramContext()
+    {
+        using CommandHandlerHarness harness = CommandHandlerHarness.Create();
+        TelegramConversationScope conversation = new(5555, null);
+        harness.SessionManager.Sessions.Add(CreateSession("thread-1", "Goal session", harness.Temp.Path));
+        await harness.StateStore.SetActiveSessionIdAsync(conversation, "thread-1", CancellationToken.None);
+        TelegramReplyContext replyContext = new(
+            12,
+            TelegramMessageAuthor.Bot,
+            "I am going to delete the stale file.",
+            []);
+
+        await harness.Handler.HandleMessageAsync(
+            new TelegramInboundMessage(1234, conversation.ChatId, "private", "/steer do not delete that", ReplyContext: replyContext),
+            harness.Sender,
+            CancellationToken.None);
+
+        (string sessionId, object input) = Assert.Single(harness.SessionManager.SteerRequests);
+        Assert.Equal("thread-1", sessionId);
+        string text = Assert.IsType<string>(input);
+        Assert.Contains("Telegram reply context:", text);
+        Assert.Contains("I am going to delete the stale file.", text);
+        Assert.Contains("Operator reply:", text);
+        Assert.Contains("do not delete that", text);
+    }
+
+    [Fact]
     public async Task HandleMessageAsync_AudioTranscribesRoutesAndDeletesTemporaryFile()
     {
         using CommandHandlerHarness harness = CommandHandlerHarness.Create();
@@ -2187,6 +2247,9 @@ public sealed class TelegramCommandHandlerTests
             CallbackAnswers.Add(new CallbackAnswer(callbackQueryId, text));
             return Task.CompletedTask;
         }
+
+        public Task AcknowledgeMessageAsync(TelegramMessageAcknowledgement acknowledgement, CancellationToken cancellationToken)
+            => Task.CompletedTask;
     }
 
     private sealed record SentTelegramMessage(

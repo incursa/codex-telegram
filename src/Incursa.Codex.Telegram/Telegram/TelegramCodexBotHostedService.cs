@@ -12,11 +12,12 @@ namespace Incursa.Codex.Telegram.Telegram;
 
 internal sealed class TelegramCodexBotHostedService : BackgroundService
 {
-    private static readonly UpdateType[] AllowedUpdates = [UpdateType.Message, UpdateType.CallbackQuery];
+    private static readonly UpdateType[] AllowedUpdates = [UpdateType.Message, UpdateType.BusinessMessage, UpdateType.CallbackQuery];
 
     private readonly ITelegramCodexBotUpdateHandler _handler;
     private readonly ITelegramBotMessageSender _sender;
     private readonly ITelegramBotStateStore _stateStore;
+    private readonly ITelegramMessageContextStore _messageContextStore;
     private readonly TelegramBotOptions _options;
     private readonly ILogger<TelegramCodexBotHostedService> _logger;
 
@@ -24,12 +25,14 @@ internal sealed class TelegramCodexBotHostedService : BackgroundService
         ITelegramCodexBotUpdateHandler handler,
         ITelegramBotMessageSender sender,
         ITelegramBotStateStore stateStore,
+        ITelegramMessageContextStore messageContextStore,
         IOptions<TelegramBotOptions> options,
         ILogger<TelegramCodexBotHostedService> logger)
     {
         _handler = handler;
         _sender = sender;
         _stateStore = stateStore;
+        _messageContextStore = messageContextStore;
         _options = options.Value;
         _logger = logger;
     }
@@ -127,7 +130,7 @@ internal sealed class TelegramCodexBotHostedService : BackgroundService
         ITelegramBotMessageSender sender,
         CancellationToken cancellationToken)
     {
-        Message? message = update.Message;
+        Message? message = update.Message ?? update.BusinessMessage;
         if (message is not null)
         {
             _logger.LogDebug(
@@ -167,6 +170,7 @@ internal sealed class TelegramCodexBotHostedService : BackgroundService
                 return;
             }
 
+            await AcknowledgeMessageAsync(sender, message, cancellationToken).ConfigureAwait(false);
             await HandleAudioMessageAsync(client, message, audioMessage.FileId, sender, cancellationToken).ConfigureAwait(false);
             return;
         }
@@ -208,6 +212,13 @@ internal sealed class TelegramCodexBotHostedService : BackgroundService
                 return;
             }
 
+            if (text is null && attachmentDecision is AttachmentHandlingDecision.Skip)
+            {
+                return;
+            }
+
+            await AcknowledgeMessageAsync(sender, message, cancellationToken).ConfigureAwait(false);
+
             if (attachmentDecision is AttachmentHandlingDecision.Download)
             {
                 try
@@ -239,12 +250,15 @@ internal sealed class TelegramCodexBotHostedService : BackgroundService
                 return;
             }
 
+            TelegramReplyContext? replyContext = await ResolveReplyContextAsync(message, cancellationToken).ConfigureAwait(false);
             TelegramInboundMessage inbound = new(
                 GetSenderId(message),
                 message.Chat.Id,
                 message.Chat.Type.ToString(),
                 text,
-                message.MessageThreadId);
+                message.MessageThreadId,
+                SourceMessageId: message.MessageId,
+                ReplyContext: replyContext);
 
             if (attachments is { Count: > 0 })
             {
@@ -313,7 +327,9 @@ internal sealed class TelegramCodexBotHostedService : BackgroundService
                 message.Chat.Type.ToString(),
                 null,
                 message.MessageThreadId,
-                tempAudioPath);
+                tempAudioPath,
+                SourceMessageId: message.MessageId,
+                ReplyContext: await ResolveReplyContextAsync(message, cancellationToken).ConfigureAwait(false));
 
             await _handler.HandleMessageAsync(inbound, sender, cancellationToken).ConfigureAwait(false);
         }
@@ -337,6 +353,57 @@ internal sealed class TelegramCodexBotHostedService : BackgroundService
         {
             TryDelete(tempAudioPath);
         }
+    }
+
+    private async Task AcknowledgeMessageAsync(
+        ITelegramBotMessageSender sender,
+        Message message,
+        CancellationToken cancellationToken)
+    {
+        await sender.AcknowledgeMessageAsync(
+            new TelegramMessageAcknowledgement(
+                new TelegramConversationScope(message.Chat.Id, message.MessageThreadId),
+                message.MessageId,
+                message.BusinessConnectionId),
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<TelegramReplyContext?> ResolveReplyContextAsync(Message message, CancellationToken cancellationToken)
+    {
+        if (message.ReplyToMessage is null)
+        {
+            return null;
+        }
+
+        Message reply = message.ReplyToMessage;
+        return await _messageContextStore.ResolveReplyContextAsync(
+            new TelegramConversationScope(message.Chat.Id, message.MessageThreadId),
+            reply.MessageId,
+            reply.From?.IsBot is true ? TelegramMessageAuthor.Bot : TelegramMessageAuthor.User,
+            ExtractMessageSummary(reply),
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    private static string? ExtractMessageSummary(Message message)
+    {
+        string? text = message.Text ?? message.Caption;
+        if (!string.IsNullOrWhiteSpace(text))
+        {
+            return text;
+        }
+
+        return message.Type switch
+        {
+            MessageType.Photo => "[photo]",
+            MessageType.Document => "[document]",
+            MessageType.Audio => "[audio]",
+            MessageType.Voice => "[voice message]",
+            MessageType.Video => "[video]",
+            MessageType.Animation => "[animation]",
+            MessageType.Sticker => "[sticker]",
+            MessageType.VideoNote => "[video note]",
+            _ => null,
+        };
     }
 
     private async Task<bool> ValidateAudioMessageAsync(

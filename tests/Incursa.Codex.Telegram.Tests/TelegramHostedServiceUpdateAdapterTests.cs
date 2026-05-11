@@ -75,6 +75,58 @@ public sealed class TelegramHostedServiceUpdateAdapterTests
     }
 
     [Fact]
+    public async Task HandleUpdateAsync_AcknowledgesAuthorizedMessage()
+    {
+        using Harness harness = Harness.Create();
+        Update update = new()
+        {
+            Id = 17,
+            Message = CreateMessage(text: "run this", messageThreadId: 77, messageId: 42),
+        };
+
+        await harness.Service.HandleUpdateAsync(harness.FileClient, update, harness.Sender, CancellationToken.None);
+
+        TelegramMessageAcknowledgement acknowledgement = Assert.Single(harness.Sender.Acknowledgements);
+        Assert.Equal(new TelegramConversationScope(5555, 77), acknowledgement.Conversation);
+        Assert.Equal(42, acknowledgement.MessageId);
+    }
+
+    [Fact]
+    public async Task HandleUpdateAsync_AttachesReplyContextFromStoredTelegramMessages()
+    {
+        using Harness harness = Harness.Create();
+        TelegramConversationScope conversation = new(5555, null);
+        await harness.MessageContextStore.RecordAsync(new TelegramMessageContextRecord(conversation, 10, TelegramMessageAuthor.Bot, "First progress update.", DateTimeOffset.Parse("2026-05-10T12:00:00Z")), CancellationToken.None);
+        await harness.MessageContextStore.RecordAsync(new TelegramMessageContextRecord(conversation, 11, TelegramMessageAuthor.Bot, "Second progress update.", DateTimeOffset.Parse("2026-05-10T12:01:00Z")), CancellationToken.None);
+        await harness.MessageContextStore.RecordAsync(new TelegramMessageContextRecord(conversation, 12, TelegramMessageAuthor.Bot, "I am going to delete the stale file.", DateTimeOffset.Parse("2026-05-10T12:02:00Z")), CancellationToken.None);
+        Message message = CreateMessage(text: "do not delete that", messageId: 13);
+        message.ReplyToMessage = CreateMessage(text: "fallback reply text", messageId: 12);
+        message.ReplyToMessage.From = new User
+        {
+            Id = 999,
+            IsBot = true,
+            FirstName = "Codex",
+        };
+        Update update = new()
+        {
+            Id = 18,
+            Message = message,
+        };
+
+        await harness.Service.HandleUpdateAsync(harness.FileClient, update, harness.Sender, CancellationToken.None);
+
+        TelegramReplyContext? context = Assert.Single(harness.Handler.Messages).ReplyContext;
+        Assert.NotNull(context);
+        Assert.Equal(12, context.MessageId);
+        Assert.Equal(TelegramMessageAuthor.Bot, context.Author);
+        Assert.Equal("I am going to delete the stale file.", context.Text);
+        Assert.Collection(
+            context.PriorMessages,
+            prior => Assert.Equal("First progress update.", prior.Text),
+            prior => Assert.Equal("Second progress update.", prior.Text));
+    }
+
+    [Fact]
     public async Task HandleUpdateAsync_IgnoresEmptyAuthorizedMessageWithoutAttachments()
     {
         using Harness harness = Harness.Create();
@@ -724,6 +776,7 @@ public sealed class TelegramHostedServiceUpdateAdapterTests
             TestTelegramBotMessageSender sender,
             FakeTelegramUpdateFileClient fileClient,
             TelegramBotStateStore stateStore,
+            TelegramMessageContextStore messageContextStore,
             TelegramCodexBotHostedService service)
         {
             Temp = temp;
@@ -731,6 +784,7 @@ public sealed class TelegramHostedServiceUpdateAdapterTests
             Sender = sender;
             FileClient = fileClient;
             StateStore = stateStore;
+            MessageContextStore = messageContextStore;
             Service = service;
         }
 
@@ -744,6 +798,8 @@ public sealed class TelegramHostedServiceUpdateAdapterTests
 
         public TelegramBotStateStore StateStore { get; }
 
+        public TelegramMessageContextStore MessageContextStore { get; }
+
         public TelegramCodexBotHostedService Service { get; }
 
         public static Harness Create(TelegramBotOptions? options = null)
@@ -752,6 +808,7 @@ public sealed class TelegramHostedServiceUpdateAdapterTests
             CapturingTelegramUpdateHandler handler = new();
             TestTelegramBotMessageSender sender = new();
             FakeTelegramUpdateFileClient fileClient = new();
+            TelegramMessageContextStore messageContextStore = new();
             TelegramBotStateStore stateStore = new(Microsoft.Extensions.Options.Options.Create(new CodexTelegramOptions
             {
                 Workspace = new CodexWorkspaceOptions
@@ -768,10 +825,11 @@ public sealed class TelegramHostedServiceUpdateAdapterTests
                 handler,
                 sender,
                 stateStore,
+                messageContextStore,
                 Microsoft.Extensions.Options.Options.Create(options),
                 NullLogger<TelegramCodexBotHostedService>.Instance);
 
-            return new Harness(temp, handler, sender, fileClient, stateStore, service);
+            return new Harness(temp, handler, sender, fileClient, stateStore, messageContextStore, service);
         }
 
         public void Dispose()
@@ -913,6 +971,14 @@ public sealed class TelegramHostedServiceUpdateAdapterTests
 
         public Task AnswerCallbackQueryAsync(string callbackQueryId, string? text, CancellationToken cancellationToken)
             => Task.CompletedTask;
+
+        public List<TelegramMessageAcknowledgement> Acknowledgements { get; } = [];
+
+        public Task AcknowledgeMessageAsync(TelegramMessageAcknowledgement acknowledgement, CancellationToken cancellationToken)
+        {
+            Acknowledgements.Add(acknowledgement);
+            return Task.CompletedTask;
+        }
     }
 
     private sealed record SentTelegramMessage(TelegramConversationScope Conversation, string Text);

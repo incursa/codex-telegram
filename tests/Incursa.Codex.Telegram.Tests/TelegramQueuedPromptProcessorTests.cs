@@ -587,6 +587,9 @@ public sealed class TelegramQueuedPromptProcessorTests
 
         public Task AnswerCallbackQueryAsync(string callbackQueryId, string? text, CancellationToken cancellationToken)
             => Task.CompletedTask;
+
+        public Task AcknowledgeMessageAsync(TelegramMessageAcknowledgement acknowledgement, CancellationToken cancellationToken)
+            => Task.CompletedTask;
     }
 
     private sealed record SentTelegramMessage(TelegramConversationScope Conversation, string Text);

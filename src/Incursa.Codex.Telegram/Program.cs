@@ -217,6 +217,7 @@ builder.Services.AddSingleton<ICodexProjectCatalogStore>(sp => sp.GetRequiredSer
 builder.Services.AddSingleton<CodexWorkspaceBrowser>();
 builder.Services.AddSingleton<ITelegramThreadFollowRegistry, TelegramThreadFollowRegistry>();
 builder.Services.AddSingleton<ITelegramForumTopicService, TelegramForumTopicService>();
+builder.Services.AddSingleton<ITelegramMessageContextStore, TelegramMessageContextStore>();
 builder.Services.AddSingleton<ITelegramBotMessageSender, TelegramBotClientMessageSender>();
 builder.Services.AddSingleton<IOutboundTelegramMessageSender>(sp => (TelegramBotClientMessageSender)sp.GetRequiredService<ITelegramBotMessageSender>());
 builder.Services.AddSingleton<OutboundTelegramScheduler>();
