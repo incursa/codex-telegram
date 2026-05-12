@@ -101,6 +101,10 @@ public sealed class TelegramBotClientMessageSenderTests
         TelegramChatAction action = Assert.Single(client.ChatActions);
         Assert.Equal(1234, action.ChatId);
         Assert.Equal(55, action.MessageThreadId);
+        Assert.Equal(TelegramChatActivity.Typing, action.Activity);
+        TelegramReaction reaction = Assert.Single(client.Reactions);
+        Assert.Equal(42, reaction.MessageId);
+        Assert.Equal("\U0001F440", reaction.Emoji);
     }
 
     [Fact]
@@ -118,6 +122,7 @@ public sealed class TelegramBotClientMessageSenderTests
         Assert.Equal(1234, read.ChatId);
         Assert.Equal(42, read.MessageId);
         Assert.Empty(client.ChatActions);
+        Assert.Single(client.Reactions);
     }
 
     [Fact]
@@ -131,6 +136,119 @@ public sealed class TelegramBotClientMessageSenderTests
         TelegramChatAction action = Assert.Single(client.ChatActions);
         Assert.Equal(1234, action.ChatId);
         Assert.Equal(55, action.MessageThreadId);
+        Assert.Equal(TelegramChatActivity.Typing, action.Activity);
+    }
+
+    [Fact]
+    public async Task OutboundSendFileMessageAsync_PhotoSendsUploadActionAndRecordsContext()
+    {
+        using TemporaryDirectory temp = TemporaryDirectory.Create();
+        string filePath = Path.Combine(temp.Path, "screenshot.png");
+        await File.WriteAllBytesAsync(filePath, [0x89, 0x50, 0x4e, 0x47], CancellationToken.None);
+        FakeTelegramBotApiClient client = new();
+        TelegramMessageContextStore contextStore = new();
+        IOutboundTelegramMessageSender sender = CreateSender(client, messageContextStore: contextStore);
+        TelegramConversationScope conversation = new(1234, 55);
+
+        await sender.SendFileMessageAsync(
+            conversation,
+            new OutboundTelegramFile
+            {
+                Kind = TelegramOutboundFileKind.Photo,
+                Path = filePath,
+                FileName = "screenshot.png",
+                Caption = "Codex artifact: screenshot.png",
+            },
+            CancellationToken.None);
+
+        TelegramChatAction action = Assert.Single(client.ChatActions);
+        Assert.Equal(TelegramChatActivity.UploadPhoto, action.Activity);
+        SentTelegramFile photo = Assert.Single(client.Photos);
+        Assert.Equal(1234, photo.ChatId);
+        Assert.Equal(55, photo.MessageThreadId);
+        Assert.Equal(filePath, photo.FilePath);
+        Assert.Equal("screenshot.png", photo.FileName);
+        Assert.Equal("Codex artifact: screenshot.png", photo.Caption);
+        Assert.Empty(client.Documents);
+
+        TelegramReplyContext? context = await contextStore.ResolveReplyContextAsync(
+            conversation,
+            photo.MessageId,
+            TelegramMessageAuthor.Bot,
+            null,
+            CancellationToken.None);
+        Assert.NotNull(context);
+        Assert.Equal("Codex artifact: screenshot.png", context.Text);
+    }
+
+    [Fact]
+    public async Task OutboundSendFileMessageAsync_DocumentSendsUploadDocumentAction()
+    {
+        using TemporaryDirectory temp = TemporaryDirectory.Create();
+        string filePath = Path.Combine(temp.Path, "capture.gif");
+        await File.WriteAllBytesAsync(filePath, [0x47, 0x49, 0x46], CancellationToken.None);
+        FakeTelegramBotApiClient client = new();
+        IOutboundTelegramMessageSender sender = CreateSender(client);
+
+        await sender.SendFileMessageAsync(
+            new TelegramConversationScope(1234, null),
+            new OutboundTelegramFile
+            {
+                Kind = TelegramOutboundFileKind.Document,
+                Path = filePath,
+                FileName = "capture.gif",
+                Caption = "Codex artifact: capture.gif",
+            },
+            CancellationToken.None);
+
+        Assert.Equal(TelegramChatActivity.UploadDocument, Assert.Single(client.ChatActions).Activity);
+        SentTelegramFile document = Assert.Single(client.Documents);
+        Assert.Equal(filePath, document.FilePath);
+        Assert.Equal("capture.gif", document.FileName);
+        Assert.Empty(client.Photos);
+    }
+
+    [Fact]
+    public async Task OutboundSendFileMessageAsync_WhenFileIsMissingSendsFallbackText()
+    {
+        FakeTelegramBotApiClient client = new();
+        IOutboundTelegramMessageSender sender = CreateSender(client);
+
+        await sender.SendFileMessageAsync(
+            new TelegramConversationScope(1234, null),
+            new OutboundTelegramFile
+            {
+                Kind = TelegramOutboundFileKind.Photo,
+                Path = "C:\\missing\\screenshot.png",
+                FileName = "screenshot.png",
+                Caption = "Codex artifact: screenshot.png",
+            },
+            CancellationToken.None);
+
+        SentTelegramApiMessage sent = Assert.Single(client.SentMessages);
+        Assert.Contains("file is no longer available", sent.Text);
+        Assert.Contains("screenshot.png", sent.Text);
+        Assert.Empty(client.ChatActions);
+        Assert.Empty(client.Photos);
+        Assert.Empty(client.Documents);
+    }
+
+    [Fact]
+    public async Task ReactToMessageAsync_MapsSimpleStatusReactions()
+    {
+        FakeTelegramBotApiClient client = new();
+        TelegramBotClientMessageSender sender = CreateSender(client);
+        TelegramConversationScope conversation = new(1234, null);
+
+        await sender.ReactToMessageAsync(new TelegramMessageReaction(conversation, 10, TelegramMessageReactionKind.Accepted), CancellationToken.None);
+        await sender.ReactToMessageAsync(new TelegramMessageReaction(conversation, 11, TelegramMessageReactionKind.Completed), CancellationToken.None);
+        await sender.ReactToMessageAsync(new TelegramMessageReaction(conversation, 12, TelegramMessageReactionKind.Failed), CancellationToken.None);
+
+        Assert.Collection(
+            client.Reactions,
+            reaction => Assert.Equal("\U0001F440", reaction.Emoji),
+            reaction => Assert.Equal("\u2705", reaction.Emoji),
+            reaction => Assert.Equal("\U0001F628", reaction.Emoji));
     }
 
     [Fact]
@@ -170,6 +288,38 @@ public sealed class TelegramBotClientMessageSenderTests
         Assert.NotNull(context);
         Assert.Equal("main chat status", context.Text);
         Assert.Equal(TelegramMessageAuthor.Bot, context.Author);
+    }
+
+    [Fact]
+    public async Task SendTextMessageAsync_WhenDebugPreambleIsEnabledPrependsDiagnosticsAndRecordsCleanContext()
+    {
+        FakeTelegramBotApiClient client = new();
+        TelegramMessageContextStore contextStore = new();
+        TelegramBotClientMessageSender sender = CreateSender(
+            client,
+            messageContextStore: contextStore,
+            debugPreambleMode: new TestTelegramDebugPreambleMode { IsEnabled = true });
+        TelegramConversationScope conversation = new(1234, 55);
+
+        await sender.SendTextMessageAsync(
+            conversation,
+            "body text",
+            null,
+            CancellationToken.None,
+            new TelegramDebugMessageContext("reply", "thread-1", "turn-1", "turn-2", "Update", "msg-1", 2));
+
+        SentTelegramApiMessage sent = Assert.Single(client.SentMessages);
+        Assert.StartsWith("[codex-debug source=reply chat=1234 topic=55 session=thread-1 turn=turn-1 activeTurn=turn-2 kind=Update items=2 msg=msg-1]", sent.Text, StringComparison.Ordinal);
+        Assert.EndsWith("body text", sent.Text, StringComparison.Ordinal);
+
+        TelegramReplyContext? context = await contextStore.ResolveReplyContextAsync(
+            conversation,
+            1001,
+            TelegramMessageAuthor.Bot,
+            null,
+            CancellationToken.None);
+        Assert.NotNull(context);
+        Assert.Equal("body text", context.Text);
     }
 
     [Fact]
@@ -531,7 +681,8 @@ public sealed class TelegramBotClientMessageSenderTests
     private static TelegramBotClientMessageSender CreateSender(
         FakeTelegramBotApiClient client,
         ILogger<TelegramBotClientMessageSender>? logger = null,
-        ITelegramMessageContextStore? messageContextStore = null)
+        ITelegramMessageContextStore? messageContextStore = null,
+        ITelegramDebugPreambleMode? debugPreambleMode = null)
         => new(
             new TelegramBotOptions
             {
@@ -540,7 +691,8 @@ public sealed class TelegramBotClientMessageSenderTests
             },
             logger ?? NullLogger<TelegramBotClientMessageSender>.Instance,
             client,
-            messageContextStore);
+            messageContextStore,
+            debugPreambleMode);
 
     private sealed class FakeTelegramBotApiClient : ITelegramBotApiClient
     {
@@ -553,6 +705,12 @@ public sealed class TelegramBotClientMessageSenderTests
         public List<TelegramChatAction> ChatActions { get; } = [];
 
         public List<BusinessRead> BusinessReads { get; } = [];
+
+        public List<SentTelegramFile> Photos { get; } = [];
+
+        public List<SentTelegramFile> Documents { get; } = [];
+
+        public List<TelegramReaction> Reactions { get; } = [];
 
         public Queue<Exception> SendFailures { get; } = new();
 
@@ -604,9 +762,41 @@ public sealed class TelegramBotClientMessageSenderTests
             return Task.CompletedTask;
         }
 
-        public Task SendChatActionAsync(long chatId, int? messageThreadId, CancellationToken cancellationToken)
+        public Task SendChatActionAsync(long chatId, int? messageThreadId, TelegramChatActivity activity, CancellationToken cancellationToken)
         {
-            ChatActions.Add(new TelegramChatAction(chatId, messageThreadId));
+            ChatActions.Add(new TelegramChatAction(chatId, messageThreadId, activity));
+            return Task.CompletedTask;
+        }
+
+        public Task<int> SendPhotoAsync(
+            long chatId,
+            string filePath,
+            string fileName,
+            string? caption,
+            int? messageThreadId,
+            CancellationToken cancellationToken)
+        {
+            int messageId = 2000 + Photos.Count + 1;
+            Photos.Add(new SentTelegramFile(messageId, chatId, filePath, fileName, caption, messageThreadId));
+            return Task.FromResult(messageId);
+        }
+
+        public Task<int> SendDocumentAsync(
+            long chatId,
+            string filePath,
+            string fileName,
+            string? caption,
+            int? messageThreadId,
+            CancellationToken cancellationToken)
+        {
+            int messageId = 3000 + Documents.Count + 1;
+            Documents.Add(new SentTelegramFile(messageId, chatId, filePath, fileName, caption, messageThreadId));
+            return Task.FromResult(messageId);
+        }
+
+        public Task SetMessageReactionAsync(long chatId, int messageId, string emoji, bool isBig, CancellationToken cancellationToken)
+        {
+            Reactions.Add(new TelegramReaction(chatId, messageId, emoji, isBig));
             return Task.CompletedTask;
         }
 
@@ -628,11 +818,32 @@ public sealed class TelegramBotClientMessageSenderTests
 
     private sealed record CallbackAnswer(string CallbackQueryId, string? Text);
 
-    private sealed record TelegramChatAction(long ChatId, int? MessageThreadId);
+    private sealed record TelegramChatAction(long ChatId, int? MessageThreadId, TelegramChatActivity Activity);
 
     private sealed record BusinessRead(string BusinessConnectionId, long ChatId, int MessageId);
 
+    private sealed record SentTelegramFile(int MessageId, long ChatId, string FilePath, string FileName, string? Caption, int? MessageThreadId);
+
+    private sealed record TelegramReaction(long ChatId, int MessageId, string Emoji, bool IsBig);
+
     private sealed record LogEntry(LogLevel Level, string Message, Exception? Exception);
+
+    private sealed class TestTelegramDebugPreambleMode : ITelegramDebugPreambleMode
+    {
+        public bool IsEnabled { get; init; }
+
+        public bool ConfiguredDefaultEnabled => IsEnabled;
+
+        public bool? RuntimeOverrideEnabled => null;
+
+        public void SetRuntimeOverride(bool enabled)
+        {
+        }
+
+        public void ClearRuntimeOverride()
+        {
+        }
+    }
 
     private sealed class TestLogger<T> : ILogger<T>
     {

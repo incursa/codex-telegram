@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Text;
 using Incursa.Codex.Telegram.Models;
 using Incursa.Codex.Telegram.Options;
 using Microsoft.Extensions.Logging;
@@ -31,10 +32,14 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
     private const string TurnFailedType = "turn.failed";
     private const string TurnFinishedMarker = "~~ fin ~~";
     private const int InternalProgressMaxCharacters = 2000;
+    private const long MaxTelegramPhotoBytes = 10L * 1024L * 1024L;
+    private const long MaxTelegramDocumentBytes = 50L * 1024L * 1024L;
 
     private readonly ConcurrentDictionary<string, AgentMessageProgressBuffer> _agentMessageBuffersByThreadId = new(StringComparer.Ordinal);
     private readonly IOutboundTelegramQueue _outboundQueue;
     private readonly ITelegramThreadFollowRegistry _followRegistry;
+    private readonly ITelegramTurnReactionRegistry _reactionRegistry;
+    private readonly ITelegramBotMessageSender _messageSender;
     private readonly TelegramOutboundOptions _options;
     private readonly ILogger<TelegramTurnOutputRelay> _logger;
 
@@ -43,16 +48,22 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
     /// </summary>
     /// <param name="outboundQueue">Outbound Telegram queue.</param>
     /// <param name="followRegistry">Registry of Telegram conversations following Codex threads.</param>
+    /// <param name="reactionRegistry">Registry that maps Codex turns back to their source Telegram messages for reactions.</param>
+    /// <param name="messageSender">Telegram sender used for best-effort message reactions.</param>
     /// <param name="options">Outbound delivery options.</param>
     /// <param name="logger">Logger for enqueue failures.</param>
     public TelegramTurnOutputRelay(
         IOutboundTelegramQueue outboundQueue,
         ITelegramThreadFollowRegistry followRegistry,
+        ITelegramTurnReactionRegistry reactionRegistry,
+        ITelegramBotMessageSender messageSender,
         IOptions<TelegramOutboundOptions> options,
         ILogger<TelegramTurnOutputRelay> logger)
     {
         _outboundQueue = outboundQueue;
         _followRegistry = followRegistry;
+        _reactionRegistry = reactionRegistry;
+        _messageSender = messageSender;
         _options = options.Value;
         _logger = logger;
     }
@@ -74,7 +85,7 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
                 _options.AgentMessageUpdateMaxChars);
             if (!string.IsNullOrWhiteSpace(updateText))
             {
-                await PublishTextAsync(entry.ThreadId, entry.Type, updateText, CodexOutboundMessageKind.Update, OutboundPriority.High, cancellationToken).ConfigureAwait(false);
+                await PublishTextAsync(entry.ThreadId, entry.TurnId, entry.Type, updateText, CodexOutboundMessageKind.Update, OutboundPriority.High, cancellationToken).ConfigureAwait(false);
             }
 
             return;
@@ -91,6 +102,11 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
             }
         }
 
+        if (await TryPublishExplicitMediaAsync(entry, cancellationToken).ConfigureAwait(false))
+        {
+            return;
+        }
+
         CodexOutboundMessageKind kind = Classify(entry);
         if (entry.IsInternal && kind is not (CodexOutboundMessageKind.Error or CodexOutboundMessageKind.System or CodexOutboundMessageKind.Progress))
         {
@@ -102,19 +118,140 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
             ? FormatInternalProgressEntry(entry)
             : FormatEntry(entry, bufferedAgentMessage);
 
+        bool publishedTerminalText = false;
         if (!string.IsNullOrWhiteSpace(text))
         {
-            await PublishTextAsync(entry.ThreadId, entry.Type, text, kind, ResolvePriority(kind), cancellationToken).ConfigureAwait(false);
+            publishedTerminalText = true;
+            await PublishTextAsync(entry.ThreadId, entry.TurnId, entry.Type, text, kind, ResolvePriority(kind), cancellationToken).ConfigureAwait(false);
+        }
+
+        if (isTerminal && ShouldPublishFinishedMarker(entry, bufferedAgentMessage, publishedTerminalText))
+        {
+            await PublishTextAsync(entry.ThreadId, entry.TurnId, entry.Type + ".finished", TurnFinishedMarker, CodexOutboundMessageKind.Completion, OutboundPriority.High, cancellationToken).ConfigureAwait(false);
         }
 
         if (isTerminal)
         {
-            await PublishTextAsync(entry.ThreadId, entry.Type + ".finished", TurnFinishedMarker, CodexOutboundMessageKind.Completion, OutboundPriority.High, cancellationToken).ConfigureAwait(false);
+            await ReactToTerminalTurnAsync(entry, cancellationToken).ConfigureAwait(false);
         }
+    }
+
+    private async Task<bool> TryPublishExplicitMediaAsync(CodexTimelineEntryVm entry, CancellationToken cancellationToken)
+    {
+        if (!TryGetMetadata(entry, "explicitMediaKind", out _))
+        {
+            return false;
+        }
+
+        if (!TryResolveExplicitMediaFile(entry, out string path, out string? contentType))
+        {
+            return false;
+        }
+
+        string fileName = Path.GetFileName(path);
+        if (string.IsNullOrWhiteSpace(fileName))
+        {
+            return false;
+        }
+
+        FileInfo? info = File.Exists(path) ? new FileInfo(path) : null;
+        if (info is not null && info.Length > MaxTelegramDocumentBytes)
+        {
+            await PublishTextAsync(
+                entry.ThreadId!,
+                entry.TurnId,
+                entry.Type,
+                $"Codex produced {fileName}, but it is too large for Telegram file delivery.",
+                CodexOutboundMessageKind.System,
+                OutboundPriority.High,
+                cancellationToken).ConfigureAwait(false);
+            return true;
+        }
+
+        TelegramOutboundFileKind kind = IsTelegramPhotoCandidate(path, info)
+            ? TelegramOutboundFileKind.Photo
+            : TelegramOutboundFileKind.Document;
+        await PublishFileAsync(
+            entry.ThreadId!,
+            entry.TurnId,
+            entry.Type,
+            new OutboundTelegramFile
+            {
+                Kind = kind,
+                Path = path,
+                FileName = fileName,
+                Caption = $"Codex artifact: {fileName}",
+                ContentType = contentType ?? ResolveContentType(path),
+            },
+            cancellationToken).ConfigureAwait(false);
+        return true;
+    }
+
+    private async Task PublishFileAsync(
+        string threadId,
+        string? turnId,
+        string eventType,
+        OutboundTelegramFile file,
+        CancellationToken cancellationToken)
+    {
+        IReadOnlyCollection<TelegramConversationScope> targets = _followRegistry.GetTargets(threadId);
+        if (targets.Count == 0)
+        {
+            return;
+        }
+
+        foreach (TelegramConversationScope target in targets)
+        {
+            try
+            {
+                await _outboundQueue.EnqueueAsync(
+                    new OutboundTelegramMessage
+                    {
+                        MessageId = $"{threadId}:{eventType}:file:{Guid.NewGuid():n}",
+                        ChatId = target.ChatId,
+                        MessageThreadId = target.MessageThreadId,
+                        SessionId = threadId,
+                        TurnId = string.IsNullOrWhiteSpace(turnId) ? null : turnId,
+                        Kind = CodexOutboundMessageKind.Update,
+                        Text = file.Caption ?? file.FileName ?? "Codex artifact",
+                        File = file,
+                        CreatedUtc = DateTimeOffset.UtcNow,
+                        Priority = OutboundPriority.High,
+                    },
+                    cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception exception)
+            {
+                _logger.LogWarning(exception, "Failed to enqueue Codex media event {EventType} for thread {ThreadId} to Telegram destination {Destination}.", eventType, threadId, target);
+            }
+        }
+    }
+
+    private async Task ReactToTerminalTurnAsync(CodexTimelineEntryVm entry, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(entry.ThreadId) || string.IsNullOrWhiteSpace(entry.TurnId))
+        {
+            return;
+        }
+
+        TelegramTurnReactionTarget? target = _reactionRegistry.TryTake(entry.ThreadId, entry.TurnId);
+        if (target is null)
+        {
+            return;
+        }
+
+        TelegramMessageReactionKind reactionKind = string.Equals(entry.Type, TurnFailedType, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(entry.Severity, "danger", StringComparison.OrdinalIgnoreCase)
+                ? TelegramMessageReactionKind.Failed
+                : TelegramMessageReactionKind.Completed;
+        await _messageSender.ReactToMessageAsync(
+            new TelegramMessageReaction(target.Conversation, target.MessageId, reactionKind),
+            cancellationToken).ConfigureAwait(false);
     }
 
     private async Task PublishTextAsync(
         string threadId,
+        string? turnId,
         string eventType,
         string text,
         CodexOutboundMessageKind kind,
@@ -138,6 +275,7 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
                         ChatId = target.ChatId,
                         MessageThreadId = target.MessageThreadId,
                         SessionId = threadId,
+                        TurnId = string.IsNullOrWhiteSpace(turnId) ? null : turnId,
                         Kind = kind,
                         Text = text,
                         CreatedUtc = DateTimeOffset.UtcNow,
@@ -262,6 +400,21 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
         => string.Equals(entry.Type, TurnCompletedType, StringComparison.OrdinalIgnoreCase)
             || string.Equals(entry.Type, TurnFailedType, StringComparison.OrdinalIgnoreCase);
 
+    private static bool ShouldPublishFinishedMarker(CodexTimelineEntryVm entry, AgentMessageFlush? bufferedAgentMessage, bool publishedTerminalText)
+    {
+        if (!string.Equals(entry.Type, TurnCompletedType, StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        if (publishedTerminalText)
+        {
+            return true;
+        }
+
+        return bufferedAgentMessage?.PublishedAny != true;
+    }
+
     private static bool IsItemProgressEntry(CodexTimelineEntryVm entry)
         => entry.Type.StartsWith("item.", StringComparison.OrdinalIgnoreCase);
 
@@ -346,6 +499,249 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
 
     private static string? GetMetadata(CodexTimelineEntryVm entry, string key)
         => entry.Metadata.TryGetValue(key, out string? value) && !string.IsNullOrWhiteSpace(value) ? value : null;
+
+    private static bool TryResolveExplicitMediaFile(CodexTimelineEntryVm entry, out string path, out string? contentType)
+    {
+        if (TryResolveExplicitMediaPath(entry, out path, out contentType))
+        {
+            return true;
+        }
+
+        return TryMaterializeExplicitMediaData(entry, out path, out contentType);
+    }
+
+    private static bool TryResolveExplicitMediaPath(CodexTimelineEntryVm entry, out string path, out string? contentType)
+    {
+        string? candidate = GetMetadata(entry, "path") ?? GetMetadata(entry, "result");
+        contentType = null;
+        if (string.IsNullOrWhiteSpace(candidate))
+        {
+            path = string.Empty;
+            return false;
+        }
+
+        if (Uri.TryCreate(candidate, UriKind.Absolute, out Uri? uri))
+        {
+            if (!uri.IsFile)
+            {
+                path = string.Empty;
+                return false;
+            }
+
+            candidate = uri.LocalPath;
+        }
+        else if (!Path.IsPathRooted(candidate))
+        {
+            path = string.Empty;
+            return false;
+        }
+
+        string fullPath;
+        try
+        {
+            fullPath = Path.GetFullPath(candidate);
+        }
+        catch (Exception exception) when (exception is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            path = string.Empty;
+            return false;
+        }
+
+        if (!IsSupportedExplicitMediaExtension(fullPath))
+        {
+            path = string.Empty;
+            return false;
+        }
+
+        path = fullPath;
+        contentType = NormalizeSupportedContentType(GetMetadata(entry, "contentType")) ?? ResolveContentType(fullPath);
+        return true;
+    }
+
+    private static bool TryMaterializeExplicitMediaData(CodexTimelineEntryVm entry, out string path, out string? contentType)
+    {
+        path = string.Empty;
+        contentType = null;
+        string? candidate = GetMetadata(entry, "result");
+        if (string.IsNullOrWhiteSpace(candidate))
+        {
+            return false;
+        }
+
+        string encoded = candidate.Trim();
+        string? declaredContentType = NormalizeSupportedContentType(GetMetadata(entry, "contentType"));
+        const string dataPrefix = "data:";
+        int commaIndex = encoded.IndexOf(',');
+        if (encoded.StartsWith(dataPrefix, StringComparison.OrdinalIgnoreCase) && commaIndex > dataPrefix.Length)
+        {
+            string header = encoded[dataPrefix.Length..commaIndex];
+            if (!header.Contains(";base64", StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            string mediaType = header.Split(';', 2)[0];
+            declaredContentType = NormalizeSupportedContentType(mediaType);
+            encoded = encoded[(commaIndex + 1)..].Trim();
+        }
+
+        if (encoded.Length < 128)
+        {
+            return false;
+        }
+
+        byte[] bytes;
+        try
+        {
+            bytes = Convert.FromBase64String(RemoveBase64Whitespace(encoded));
+        }
+        catch (FormatException)
+        {
+            return false;
+        }
+
+        contentType = ResolveImageContentType(bytes) ?? declaredContentType;
+        if (contentType is null)
+        {
+            return false;
+        }
+
+        string extension = ExtensionForContentType(contentType);
+        string fileName = ResolveMaterializedFileName(entry, extension);
+        string directory = Path.Combine(Path.GetTempPath(), "codex-telegram", "outbound-artifacts");
+        Directory.CreateDirectory(directory);
+        path = Path.Combine(directory, fileName);
+        File.WriteAllBytes(path, bytes);
+        return true;
+    }
+
+    private static bool IsTelegramPhotoCandidate(string path, FileInfo? info)
+    {
+        if (info is not null && info.Length > MaxTelegramPhotoBytes)
+        {
+            return false;
+        }
+
+        return Path.GetExtension(path).ToLowerInvariant() is ".jpg" or ".jpeg" or ".png" or ".webp";
+    }
+
+    private static bool IsSupportedExplicitMediaExtension(string path)
+        => Path.GetExtension(path).ToLowerInvariant() is ".gif" or ".jpg" or ".jpeg" or ".png" or ".webp";
+
+    private static string ResolveContentType(string path)
+        => Path.GetExtension(path).ToLowerInvariant() switch
+        {
+            ".gif" => "image/gif",
+            ".jpg" or ".jpeg" => "image/jpeg",
+            ".png" => "image/png",
+            ".webp" => "image/webp",
+            _ => "application/octet-stream",
+        };
+
+    private static string? NormalizeSupportedContentType(string? contentType)
+        => string.IsNullOrWhiteSpace(contentType)
+            ? null
+            : contentType.Trim().ToLowerInvariant() switch
+            {
+                "image/gif" => "image/gif",
+                "image/jpeg" or "image/jpg" => "image/jpeg",
+                "image/png" => "image/png",
+                "image/webp" => "image/webp",
+                _ => null,
+            };
+
+    private static string? ResolveImageContentType(byte[] bytes)
+    {
+        if (bytes.Length >= 8
+            && bytes[0] == 0x89
+            && bytes[1] == 0x50
+            && bytes[2] == 0x4e
+            && bytes[3] == 0x47
+            && bytes[4] == 0x0d
+            && bytes[5] == 0x0a
+            && bytes[6] == 0x1a
+            && bytes[7] == 0x0a)
+        {
+            return "image/png";
+        }
+
+        if (bytes.Length >= 3 && bytes[0] == 0xff && bytes[1] == 0xd8 && bytes[2] == 0xff)
+        {
+            return "image/jpeg";
+        }
+
+        if (bytes.Length >= 3 && bytes[0] == 0x47 && bytes[1] == 0x49 && bytes[2] == 0x46)
+        {
+            return "image/gif";
+        }
+
+        if (bytes.Length >= 12
+            && bytes[0] == 0x52
+            && bytes[1] == 0x49
+            && bytes[2] == 0x46
+            && bytes[3] == 0x46
+            && bytes[8] == 0x57
+            && bytes[9] == 0x45
+            && bytes[10] == 0x42
+            && bytes[11] == 0x50)
+        {
+            return "image/webp";
+        }
+
+        return null;
+    }
+
+    private static string ExtensionForContentType(string contentType)
+        => contentType switch
+        {
+            "image/gif" => ".gif",
+            "image/jpeg" => ".jpg",
+            "image/png" => ".png",
+            "image/webp" => ".webp",
+            _ => ".bin",
+        };
+
+    private static string ResolveMaterializedFileName(CodexTimelineEntryVm entry, string extension)
+    {
+        string rawId = GetMetadata(entry, "id")
+            ?? entry.TurnId
+            ?? Guid.NewGuid().ToString("n");
+        string safeId = SanitizeFileName(rawId);
+        return $"codex-image-{safeId}{extension}";
+    }
+
+    private static string SanitizeFileName(string value)
+    {
+        StringBuilder builder = new(value.Length);
+        foreach (char ch in value)
+        {
+            if (char.IsLetterOrDigit(ch) || ch is '-' or '_')
+            {
+                builder.Append(ch);
+            }
+        }
+
+        return builder.Length == 0 ? Guid.NewGuid().ToString("n") : builder.ToString();
+    }
+
+    private static string RemoveBase64Whitespace(string value)
+    {
+        if (!value.Any(char.IsWhiteSpace))
+        {
+            return value;
+        }
+
+        StringBuilder builder = new(value.Length);
+        foreach (char ch in value)
+        {
+            if (!char.IsWhiteSpace(ch))
+            {
+                builder.Append(ch);
+            }
+        }
+
+        return builder.ToString();
+    }
 
     private static string FormatStatusSuffix(CodexTimelineEntryVm entry)
         => GetMetadata(entry, "status") is { } status ? $" [{status}]" : string.Empty;

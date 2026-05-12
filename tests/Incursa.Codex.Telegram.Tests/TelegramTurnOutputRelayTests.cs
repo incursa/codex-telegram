@@ -61,6 +61,130 @@ public sealed class TelegramTurnOutputRelayTests
     }
 
     [Fact]
+    public async Task PublishTurnEventAsync_ExplicitImageMediaQueuesTelegramFilePayload()
+    {
+        using TemporaryDirectory temp = TemporaryDirectory.Create();
+        string filePath = Path.Combine(temp.Path, "browser-shot.png");
+        await File.WriteAllBytesAsync(filePath, [0x89, 0x50, 0x4e, 0x47], CancellationToken.None);
+        FakeOutboundTelegramQueue queue = new();
+        TelegramThreadFollowRegistry followRegistry = FollowThread();
+        TelegramTurnOutputRelay relay = CreateRelay(queue, followRegistry);
+
+        await relay.PublishTurnEventAsync(
+            CreateEntry(
+                type: "item.image_view",
+                title: "Image",
+                body: null,
+                metadata: new Dictionary<string, string?>
+                {
+                    ["explicitMediaKind"] = "image-view",
+                    ["path"] = filePath,
+                }),
+            CancellationToken.None);
+
+        OutboundTelegramMessage message = Assert.Single(queue.Messages);
+        Assert.Equal(CodexOutboundMessageKind.Update, message.Kind);
+        Assert.Equal(OutboundPriority.High, message.Priority);
+        Assert.Equal("Codex artifact: browser-shot.png", message.Text);
+        Assert.NotNull(message.File);
+        Assert.Equal(TelegramOutboundFileKind.Photo, message.File.Kind);
+        Assert.Equal(filePath, message.File.Path);
+        Assert.Equal("browser-shot.png", message.File.FileName);
+        Assert.Equal("image/png", message.File.ContentType);
+    }
+
+    [Fact]
+    public async Task PublishTurnEventAsync_ExplicitGifMediaQueuesDocumentPayload()
+    {
+        using TemporaryDirectory temp = TemporaryDirectory.Create();
+        string filePath = Path.Combine(temp.Path, "animation.gif");
+        await File.WriteAllBytesAsync(filePath, [0x47, 0x49, 0x46], CancellationToken.None);
+        FakeOutboundTelegramQueue queue = new();
+        TelegramThreadFollowRegistry followRegistry = FollowThread();
+        TelegramTurnOutputRelay relay = CreateRelay(queue, followRegistry);
+
+        await relay.PublishTurnEventAsync(
+            CreateEntry(
+                type: "item.image_generation",
+                title: "Generated image",
+                body: null,
+                metadata: new Dictionary<string, string?>
+                {
+                    ["explicitMediaKind"] = "image-generation",
+                    ["result"] = filePath,
+                }),
+            CancellationToken.None);
+
+        OutboundTelegramMessage message = Assert.Single(queue.Messages);
+        Assert.NotNull(message.File);
+        Assert.Equal(TelegramOutboundFileKind.Document, message.File.Kind);
+        Assert.Equal("image/gif", message.File.ContentType);
+    }
+
+    [Fact]
+    public async Task PublishTurnEventAsync_ExplicitBase64ImageMediaMaterializesTelegramFilePayload()
+    {
+        byte[] imageBytes = new byte[160];
+        byte[] pngSignature = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+        pngSignature.CopyTo(imageBytes, 0);
+        FakeOutboundTelegramQueue queue = new();
+        TelegramThreadFollowRegistry followRegistry = FollowThread();
+        TelegramTurnOutputRelay relay = CreateRelay(queue, followRegistry);
+
+        await relay.PublishTurnEventAsync(
+            CreateEntry(
+                type: "item.image_generation",
+                title: "Generated image",
+                body: null,
+                metadata: new Dictionary<string, string?>
+                {
+                    ["explicitMediaKind"] = "image-generation",
+                    ["id"] = "ig-test",
+                    ["result"] = Convert.ToBase64String(imageBytes),
+                }),
+            CancellationToken.None);
+
+        OutboundTelegramMessage message = Assert.Single(queue.Messages);
+        Assert.NotNull(message.File);
+        Assert.Equal(TelegramOutboundFileKind.Photo, message.File.Kind);
+        Assert.Equal("codex-image-ig-test.png", message.File.FileName);
+        Assert.Equal("image/png", message.File.ContentType);
+        Assert.True(File.Exists(message.File.Path));
+        Assert.Equal(imageBytes, await File.ReadAllBytesAsync(message.File.Path, CancellationToken.None));
+
+        File.Delete(message.File.Path);
+    }
+
+    [Theory]
+    [InlineData("turn.completed", "info", 1)]
+    [InlineData("turn.failed", "danger", 2)]
+    public async Task PublishTurnEventAsync_TerminalEventReactsToRegisteredSourceMessage(
+        string eventType,
+        string severity,
+        int expectedReaction)
+    {
+        FakeOutboundTelegramQueue queue = new();
+        TelegramThreadFollowRegistry followRegistry = FollowThread();
+        TelegramTurnReactionRegistry reactionRegistry = new();
+        TestTelegramBotMessageSender sender = new();
+        reactionRegistry.Register("thread-1", "turn-1", new TelegramConversationScope(1234, 55), 42);
+        TelegramTurnOutputRelay relay = CreateRelay(queue, followRegistry, reactionRegistry: reactionRegistry, messageSender: sender);
+
+        await relay.PublishTurnEventAsync(
+            CreateEntry(
+                type: eventType,
+                title: eventType,
+                body: null,
+                severity: severity),
+            CancellationToken.None);
+
+        TelegramMessageReaction reaction = Assert.Single(sender.Reactions);
+        Assert.Equal(new TelegramConversationScope(1234, 55), reaction.Conversation);
+        Assert.Equal(42, reaction.MessageId);
+        Assert.Equal((TelegramMessageReactionKind)expectedReaction, reaction.Kind);
+    }
+
+    [Fact]
     public async Task PublishTurnEventAsync_ContinuesAfterOneDestinationFailsToEnqueue()
     {
         FakeOutboundTelegramQueue queue = new();
@@ -335,7 +459,7 @@ public sealed class TelegramTurnOutputRelayTests
     }
 
     [Fact]
-    public async Task PublishTurnEventAsync_CompletesWithBareFinishedMarkerWhenAllAgentTextWasAlreadyPublished()
+    public async Task PublishTurnEventAsync_SuppressesBareFinishedMarkerWhenAllAgentTextWasAlreadyPublished()
     {
         FakeOutboundTelegramQueue queue = new();
         TelegramThreadFollowRegistry followRegistry = FollowThread();
@@ -352,10 +476,7 @@ public sealed class TelegramTurnOutputRelayTests
             CreateEntry(type: "turn.completed", title: "Turn completed", body: "all done.", severity: "success"),
             CancellationToken.None);
 
-        Assert.Collection(
-            queue.Messages,
-            message => Assert.Equal("all done.", message.Text),
-            message => Assert.Equal("~~ fin ~~", message.Text));
+        Assert.Equal("all done.", Assert.Single(queue.Messages).Text);
     }
 
     [Fact]
@@ -563,10 +684,14 @@ public sealed class TelegramTurnOutputRelayTests
     private static TelegramTurnOutputRelay CreateRelay(
         FakeOutboundTelegramQueue queue,
         TelegramThreadFollowRegistry followRegistry,
-        TelegramOutboundOptions? options = null)
+        TelegramOutboundOptions? options = null,
+        ITelegramTurnReactionRegistry? reactionRegistry = null,
+        TestTelegramBotMessageSender? messageSender = null)
         => new(
             queue,
             followRegistry,
+            reactionRegistry ?? new TelegramTurnReactionRegistry(),
+            messageSender ?? new TestTelegramBotMessageSender(),
             Microsoft.Extensions.Options.Options.Create(options ?? new TelegramOutboundOptions()),
             NullLogger<TelegramTurnOutputRelay>.Instance);
 
@@ -618,5 +743,42 @@ public sealed class TelegramTurnOutputRelayTests
 
         public Task<TelegramOutboundQueueStatus> GetStatusAsync(CancellationToken cancellationToken)
             => Task.FromResult(new TelegramOutboundQueueStatus(0, 0, 0, 0, null, null, null, []));
+    }
+
+    private sealed class TestTelegramBotMessageSender : ITelegramBotMessageSender
+    {
+        public List<TelegramMessageReaction> Reactions { get; } = [];
+
+        public Task SendTextMessageAsync(
+            TelegramConversationScope conversation,
+            string text,
+            IReadOnlyList<IReadOnlyList<TelegramReplyButton>>? buttons,
+            CancellationToken cancellationToken,
+            TelegramDebugMessageContext? debugContext = null)
+            => Task.CompletedTask;
+
+        public Task EditTextMessageAsync(
+            TelegramConversationScope conversation,
+            int messageId,
+            string text,
+            IReadOnlyList<IReadOnlyList<TelegramReplyButton>>? buttons,
+            CancellationToken cancellationToken,
+            TelegramDebugMessageContext? debugContext = null)
+            => Task.CompletedTask;
+
+        public Task AnswerCallbackQueryAsync(string callbackQueryId, string? text, CancellationToken cancellationToken)
+            => Task.CompletedTask;
+
+        public Task AcknowledgeMessageAsync(TelegramMessageAcknowledgement acknowledgement, CancellationToken cancellationToken)
+            => Task.CompletedTask;
+
+        public Task SendTypingActionAsync(TelegramConversationScope conversation, CancellationToken cancellationToken)
+            => Task.CompletedTask;
+
+        public Task ReactToMessageAsync(TelegramMessageReaction reaction, CancellationToken cancellationToken)
+        {
+            Reactions.Add(reaction);
+            return Task.CompletedTask;
+        }
     }
 }

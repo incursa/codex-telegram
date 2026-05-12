@@ -47,6 +47,37 @@ public sealed class OutboundTelegramQueueTests
     }
 
     [Fact]
+    public async Task EnqueueAsync_AllowsBlankTextWhenFilePayloadIsPresent()
+    {
+        TestTelegramSender sender = new();
+        OutboundTelegramScheduler scheduler = CreateScheduler(sender, new TelegramOutboundOptions
+        {
+            BatchWindowSeconds = 0,
+            PrivateMinimumSendIntervalSeconds = 0,
+        });
+
+        await scheduler.EnqueueAsync(CreateFileMessage(
+            new OutboundTelegramFile
+            {
+                Kind = TelegramOutboundFileKind.Photo,
+                Path = " C:\\temp\\codex.png ",
+                FileName = " codex.png ",
+                Caption = " shown screenshot ",
+            },
+            text: "   "),
+            CancellationToken.None);
+
+        Assert.Equal(1, (await scheduler.GetStatusAsync(CancellationToken.None)).PendingMessageCount);
+        Assert.True(await scheduler.ProcessNextAsync(CancellationToken.None));
+        SentTelegramFileMessage sent = Assert.Single(sender.SentFiles);
+        Assert.Equal(TelegramOutboundFileKind.Photo, sent.File.Kind);
+        Assert.Equal("C:\\temp\\codex.png", sent.File.Path);
+        Assert.Equal("codex.png", sent.File.FileName);
+        Assert.Equal("shown screenshot", sent.File.Caption);
+        Assert.Empty(sender.Sent);
+    }
+
+    [Fact]
     public async Task EnqueueAsync_WhenCancelledThrowsAndDoesNotQueue()
     {
         TestTelegramSender sender = new();
@@ -241,6 +272,65 @@ public sealed class OutboundTelegramQueueTests
         Assert.Contains("second update", sent.Text);
         Assert.DoesNotContain("2 updates", sent.Text);
         Assert.DoesNotContain("Use /tail", sent.Text);
+    }
+
+    [Fact]
+    public async Task ProcessNextAsync_SendsFilePayloadAsStandaloneItemBetweenTextBatches()
+    {
+        TestTelegramSender sender = new();
+        OutboundTelegramScheduler scheduler = CreateScheduler(sender, new TelegramOutboundOptions
+        {
+            BatchWindowSeconds = 0,
+            PrivateMinimumSendIntervalSeconds = 0,
+        });
+        OutboundTelegramFile file = new()
+        {
+            Kind = TelegramOutboundFileKind.Document,
+            Path = "C:\\temp\\capture.gif",
+            FileName = "capture.gif",
+            Caption = "Codex artifact: capture.gif",
+        };
+
+        await scheduler.EnqueueAsync(CreateMessage(CodexOutboundMessageKind.Update, "before file"), CancellationToken.None);
+        await scheduler.EnqueueAsync(CreateFileMessage(file), CancellationToken.None);
+        await scheduler.EnqueueAsync(CreateMessage(CodexOutboundMessageKind.Update, "after file"), CancellationToken.None);
+
+        Assert.True(await scheduler.ProcessNextAsync(CancellationToken.None));
+        Assert.Equal("before file", Assert.Single(sender.Sent).Text);
+        Assert.Empty(sender.SentFiles);
+
+        Assert.True(await scheduler.ProcessNextAsync(CancellationToken.None));
+        SentTelegramFileMessage sentFile = Assert.Single(sender.SentFiles);
+        Assert.Equal(file, sentFile.File);
+
+        Assert.True(await scheduler.ProcessNextAsync(CancellationToken.None));
+        Assert.Equal(2, sender.Sent.Count);
+        Assert.Equal("after file", sender.Sent[1].Text);
+    }
+
+    [Fact]
+    public async Task ProcessNextAsync_PassesDebugContextForBatchedMessages()
+    {
+        TestTelegramSender sender = new();
+        OutboundTelegramScheduler scheduler = CreateScheduler(sender, new TelegramOutboundOptions
+        {
+            BatchWindowSeconds = 0,
+            PrivateMinimumSendIntervalSeconds = 0,
+            GroupMinimumSendIntervalSeconds = 0,
+            MaxMessageChars = 3500,
+        });
+
+        await scheduler.EnqueueAsync(CreateMessage(CodexOutboundMessageKind.Update, "first update", sessionId: "thread-1", turnId: "turn-1"), CancellationToken.None);
+        await scheduler.EnqueueAsync(CreateMessage(CodexOutboundMessageKind.Update, "second update", sessionId: "thread-1", turnId: "turn-1"), CancellationToken.None);
+
+        Assert.True(await scheduler.ProcessNextAsync(CancellationToken.None));
+
+        TelegramDebugMessageContext context = Assert.Single(sender.Sent).DebugContext!;
+        Assert.Equal("outbound", context.Source);
+        Assert.Equal("thread-1", context.SessionId);
+        Assert.Equal("turn-1", context.TurnId);
+        Assert.Equal("Update", context.Kind);
+        Assert.Equal(2, context.ItemCount);
     }
 
     [Fact]
@@ -725,6 +815,38 @@ public sealed class OutboundTelegramQueueTests
     }
 
     [Fact]
+    public async Task EnqueueAsync_DoesNotCompactFilePayloads()
+    {
+        TestTelegramSender sender = new();
+        OutboundTelegramScheduler scheduler = CreateScheduler(sender, new TelegramOutboundOptions
+        {
+            BatchWindowSeconds = 0,
+            MaxBufferedMessagesPerDestination = 1,
+            MaxBufferedCharsPerDestination = 10,
+            PrivateMinimumSendIntervalSeconds = 0,
+        });
+        OutboundTelegramFile file = new()
+        {
+            Kind = TelegramOutboundFileKind.Photo,
+            Path = "C:\\temp\\screenshot.png",
+            FileName = "screenshot.png",
+            Caption = "Codex artifact: screenshot.png",
+        };
+
+        await scheduler.EnqueueAsync(CreateFileMessage(file, priority: OutboundPriority.Normal), CancellationToken.None);
+        await scheduler.EnqueueAsync(CreateMessage(CodexOutboundMessageKind.Error, "critical two", priority: OutboundPriority.Critical), CancellationToken.None);
+
+        Assert.True(await scheduler.ProcessNextAsync(CancellationToken.None));
+        Assert.Equal(file, Assert.Single(sender.SentFiles).File);
+        Assert.Empty(sender.Sent);
+
+        Assert.True(await scheduler.ProcessNextAsync(CancellationToken.None));
+        string text = Assert.Single(sender.Sent).Text;
+        Assert.DoesNotContain("older outbound updates compacted", text);
+        Assert.Contains("critical two", text);
+    }
+
+    [Fact]
     public async Task ProcessNextAsync_KeepsMessagesQueuedAfterSendFailure()
     {
         TestTelegramSender sender = new() { ThrowOnSend = true };
@@ -796,6 +918,7 @@ public sealed class OutboundTelegramQueueTests
         long chatId = 1234,
         int? messageThreadId = null,
         string sessionId = "thread-1234567890",
+        string? turnId = null,
         DateTimeOffset? createdUtc = null,
         OutboundPriority priority = OutboundPriority.Normal,
         bool omitCreatedUtc = false)
@@ -805,9 +928,33 @@ public sealed class OutboundTelegramQueueTests
             ChatId = chatId,
             MessageThreadId = messageThreadId,
             SessionId = sessionId,
+            TurnId = turnId,
             Kind = kind,
             Text = text,
             CreatedUtc = omitCreatedUtc ? default : createdUtc ?? TestNow,
+            Priority = priority,
+        };
+
+    private static OutboundTelegramMessage CreateFileMessage(
+        OutboundTelegramFile file,
+        string text = "Codex artifact",
+        long chatId = 1234,
+        int? messageThreadId = null,
+        string sessionId = "thread-1234567890",
+        string? turnId = null,
+        DateTimeOffset? createdUtc = null,
+        OutboundPriority priority = OutboundPriority.Normal)
+        => new()
+        {
+            MessageId = Guid.NewGuid().ToString("n"),
+            ChatId = chatId,
+            MessageThreadId = messageThreadId,
+            SessionId = sessionId,
+            TurnId = turnId,
+            Kind = CodexOutboundMessageKind.Update,
+            Text = text,
+            File = file,
+            CreatedUtc = createdUtc ?? TestNow,
             Priority = priority,
         };
 
@@ -817,6 +964,8 @@ public sealed class OutboundTelegramQueueTests
 
         public List<SentTelegramMessage> Sent { get; } = [];
 
+        public List<SentTelegramFileMessage> SentFiles { get; } = [];
+
         public Task<SentTelegramMessage> NextSend => _nextSend.Task;
 
         public Queue<Exception> Exceptions { get; } = [];
@@ -825,7 +974,11 @@ public sealed class OutboundTelegramQueueTests
 
         public bool ThrowOnSend { get; init; }
 
-        public Task SendTextMessageAsync(TelegramConversationScope conversation, string text, CancellationToken cancellationToken)
+        public Task SendTextMessageAsync(
+            TelegramConversationScope conversation,
+            string text,
+            CancellationToken cancellationToken,
+            TelegramDebugMessageContext? debugContext = null)
         {
             if (Exceptions.TryDequeue(out Exception? exception))
             {
@@ -842,14 +995,36 @@ public sealed class OutboundTelegramQueueTests
                 return Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
             }
 
-            SentTelegramMessage sent = new(conversation, text);
+            SentTelegramMessage sent = new(conversation, text, debugContext);
             Sent.Add(sent);
             _nextSend.TrySetResult(sent);
             return Task.CompletedTask;
         }
+
+        public Task SendFileMessageAsync(
+            TelegramConversationScope conversation,
+            OutboundTelegramFile file,
+            CancellationToken cancellationToken,
+            TelegramDebugMessageContext? debugContext = null)
+        {
+            if (Exceptions.TryDequeue(out Exception? exception))
+            {
+                throw exception;
+            }
+
+            if (ThrowOnSend)
+            {
+                throw new InvalidOperationException("send failed");
+            }
+
+            SentFiles.Add(new SentTelegramFileMessage(conversation, file, debugContext));
+            return Task.CompletedTask;
+        }
     }
 
-    private sealed record SentTelegramMessage(TelegramConversationScope Conversation, string Text);
+    private sealed record SentTelegramMessage(TelegramConversationScope Conversation, string Text, TelegramDebugMessageContext? DebugContext);
+
+    private sealed record SentTelegramFileMessage(TelegramConversationScope Conversation, OutboundTelegramFile File, TelegramDebugMessageContext? DebugContext);
 
     private sealed class TestTimeProvider(DateTimeOffset utcNow) : TimeProvider
     {

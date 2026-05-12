@@ -1,3 +1,4 @@
+using System.Text.Json.Nodes;
 using Incursa.Codex.Telegram.Models;
 using Incursa.Codex.Telegram.Services;
 using Incursa.OpenAI.Codex;
@@ -75,5 +76,41 @@ public sealed class CodexViewModelMapperTests
 
         Assert.Equal("The repo itself doesn’t expose the RFC label, so I’m checking the local project shape and docs.", vm.ErrorMessage);
         Assert.Equal("The repo itself doesn’t expose the RFC label, so I’m checking the local project shape and docs.", vm.FinalResponse);
+    }
+
+    [Fact]
+    public void ToTurnItemVm_MarksExplicitImageViewMedia()
+    {
+        CodexTimelineEntryVm item = CodexViewModelMapper.ToTurnItemVm(new CodexImageViewItem
+        {
+            Id = "item-image",
+            Type = "image_view",
+            Path = @"C:\temp\screenshot.png",
+        });
+
+        Assert.Equal("image-view", item.Metadata["explicitMediaKind"]);
+        Assert.Equal(@"C:\temp\screenshot.png", item.Metadata["path"]);
+    }
+
+    [Fact]
+    public void ToTurnItemVm_MarksUnknownImageGenerationMedia()
+    {
+        CodexTimelineEntryVm item = CodexViewModelMapper.ToTurnItemVm(new CodexUnknownThreadItem("imageGeneration")
+        {
+            Id = "ig-test",
+            RawPayload = new JsonObject
+            {
+                ["type"] = "image_generation_call",
+                ["result"] = "base64-result",
+                ["status"] = "completed",
+                ["mime_type"] = "image/png",
+            },
+        });
+
+        Assert.Equal("image-generation", item.Metadata["explicitMediaKind"]);
+        Assert.Equal("base64-result", item.Metadata["result"]);
+        Assert.Equal("completed", item.Metadata["status"]);
+        Assert.Equal("ig-test", item.Metadata["id"]);
+        Assert.Equal("image/png", item.Metadata["contentType"]);
     }
 }

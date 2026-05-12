@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">Codex Telegram Floating Logo</title>
+  <desc id="desc">A transparent Codex Telegram mark with the original paper plane and Codex terminal treatment without the app-icon container.</desc>
+  <defs>
+    <linearGradient id="plane" x1="154" y1="123" x2="379" y2="357" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#8BE7FF"/>
+      <stop offset="1" stop-color="#43D6A3"/>
+    </linearGradient>
+  </defs>
+
+  <g>
+    <path d="M139 160c-22 10-21 42 1 51l72 28 28 72c9 22 41 23 51 1l88-194c8-18-10-36-28-28l-212 70Z" fill="url(#plane)"/>
+    <path d="M213 239 352 103 270 316l-29-77-28 0Z" fill="#092033" opacity="0.28"/>
+    <path d="M213 239 352 103 241 239l29 77Z" fill="#FFFFFF" opacity="0.34"/>
+  </g>
+
+  <g transform="translate(96 312)">
+    <rect width="320" height="90" rx="26" fill="#08141F" opacity="0.94"/>
+    <path d="M34 36h42M55 22l22 14-22 14" fill="none" stroke="#43D6A3" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
+    <text x="98" y="55" fill="#D7F7FF" font-family="Cascadia Mono, Consolas, monospace" font-size="32" font-weight="700">codex</text>
+    <rect x="219" y="30" width="14" height="34" rx="4" fill="#8BE7FF"/>
+  </g>
+
+  <path d="M102 104h95" stroke="#8BE7FF" stroke-width="10" stroke-linecap="round" opacity="0.38"/>
+  <path d="M88 128h54" stroke="#43D6A3" stroke-width="8" stroke-linecap="round" opacity="0.3"/>
+</svg>

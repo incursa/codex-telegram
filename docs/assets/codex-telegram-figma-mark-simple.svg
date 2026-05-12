@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">Codex Telegram Simple Figma Mark</title>
+  <desc id="desc">A transparent Codex Telegram mark with a blue Telegram-style paper plane above a compact Codex terminal block.</desc>
+  <defs>
+    <linearGradient id="planeGradient" x1="138" y1="100" x2="372" y2="319" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#8BE7FF"/>
+      <stop offset="1" stop-color="#38BDF8"/>
+    </linearGradient>
+    <linearGradient id="terminalGradient" x1="82" y1="302" x2="430" y2="414" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#07131F"/>
+      <stop offset="1" stop-color="#103548"/>
+    </linearGradient>
+  </defs>
+
+  <g>
+    <path d="M139 158c-22 10-21 42 1 51l72 28 28 72c9 22 41 23 51 1l88-194c8-18-10-36-28-28l-212 70Z" fill="url(#planeGradient)"/>
+    <path d="M213 237 352 103 270 316l-29-79h-28Z" fill="#092033" opacity="0.26"/>
+    <path d="M213 237 352 103 241 237l29 79Z" fill="#FFFFFF" opacity="0.32"/>
+  </g>
+
+  <g transform="translate(72 300)">
+    <rect width="368" height="104" rx="28" fill="url(#terminalGradient)"/>
+    <rect x="1.5" y="1.5" width="365" height="101" rx="26.5" fill="none" stroke="#8BE7FF" stroke-width="3" opacity="0.15"/>
+    <path d="M40 43h50M64 27l26 16-26 16" fill="none" stroke="#43D6A3" stroke-width="11" stroke-linecap="round" stroke-linejoin="round"/>
+    <text x="116" y="65" fill="#D7F7FF" font-family="Cascadia Mono, Consolas, monospace" font-size="38" font-weight="700">codex</text>
+    <rect x="258" y="36" width="16" height="38" rx="5" fill="#8BE7FF"/>
+  </g>
+</svg>

@@ -157,7 +157,8 @@ public sealed class TelegramTypingHeartbeatHostedServiceTests
             TelegramConversationScope conversation,
             string text,
             IReadOnlyList<IReadOnlyList<TelegramReplyButton>>? buttons,
-            CancellationToken cancellationToken)
+            CancellationToken cancellationToken,
+            TelegramDebugMessageContext? debugContext = null)
             => Task.CompletedTask;
 
         public Task EditTextMessageAsync(
@@ -165,7 +166,8 @@ public sealed class TelegramTypingHeartbeatHostedServiceTests
             int messageId,
             string text,
             IReadOnlyList<IReadOnlyList<TelegramReplyButton>>? buttons,
-            CancellationToken cancellationToken)
+            CancellationToken cancellationToken,
+            TelegramDebugMessageContext? debugContext = null)
             => Task.CompletedTask;
 
         public Task AnswerCallbackQueryAsync(string callbackQueryId, string? text, CancellationToken cancellationToken)
@@ -179,5 +181,8 @@ public sealed class TelegramTypingHeartbeatHostedServiceTests
             TypingActions.Add(conversation);
             return Task.CompletedTask;
         }
+
+        public Task ReactToMessageAsync(TelegramMessageReaction reaction, CancellationToken cancellationToken)
+            => Task.CompletedTask;
     }
 }

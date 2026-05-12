@@ -60,7 +60,8 @@ internal sealed class TelegramQueuedPromptProcessor : ITelegramQueuedPromptProce
                 prompt.ConversationScope,
                 $"Queued message for {prompt.SessionName} was skipped because the session is no longer available.",
                 null,
-                cancellationToken).ConfigureAwait(false);
+                cancellationToken,
+                CreateDebugContext("queued-worker", prompt.SessionId, kind: "skipped")).ConfigureAwait(false);
             return true;
         }
 
@@ -72,7 +73,8 @@ internal sealed class TelegramQueuedPromptProcessor : ITelegramQueuedPromptProce
                 prompt.ConversationScope,
                 $"Queued message for {prompt.SessionName} was skipped because this conversation now points at another session.",
                 null,
-                cancellationToken).ConfigureAwait(false);
+                cancellationToken,
+                CreateDebugContext("queued-worker", prompt.SessionId, kind: "skipped")).ConfigureAwait(false);
             return true;
         }
 
@@ -92,7 +94,8 @@ internal sealed class TelegramQueuedPromptProcessor : ITelegramQueuedPromptProce
                 prompt.ConversationScope,
                 $"Starting queued message for {session.Name}. Live updates will stream here.",
                 null,
-                cancellationToken).ConfigureAwait(false);
+                cancellationToken,
+                CreateDebugContext("queued-worker", prompt.SessionId, kind: "start")).ConfigureAwait(false);
             await _sender.SendTypingActionAsync(prompt.ConversationScope, cancellationToken).ConfigureAwait(false);
 
             CodexThreadExecutionVm execution = prompt.Attachments is { Count: > 0 }
@@ -113,7 +116,8 @@ internal sealed class TelegramQueuedPromptProcessor : ITelegramQueuedPromptProce
                 prompt.ConversationScope,
                 $"Queued message for {session.Name} is still queued because another Codex turn started first.",
                 null,
-                cancellationToken).ConfigureAwait(false);
+                cancellationToken,
+                CreateDebugContext("queued-worker", prompt.SessionId, kind: "requeued")).ConfigureAwait(false);
             return false;
         }
         catch (Exception exception)
@@ -124,10 +128,14 @@ internal sealed class TelegramQueuedPromptProcessor : ITelegramQueuedPromptProce
                 prompt.ConversationScope,
                 $"Queued message for {session.Name} failed to start: {exception.Message}",
                 null,
-                cancellationToken).ConfigureAwait(false);
+                cancellationToken,
+                CreateDebugContext("queued-worker", prompt.SessionId, kind: "failed")).ConfigureAwait(false);
             return true;
         }
     }
+
+    private TelegramDebugMessageContext CreateDebugContext(string source, string sessionId, string? kind = null)
+        => new(source, sessionId, null, _turnCoordinator.GetActiveTurnId(sessionId), kind);
 
     private static void TryDeleteAttachments(IReadOnlyList<TelegramAttachmentDescriptor>? attachments)
     {

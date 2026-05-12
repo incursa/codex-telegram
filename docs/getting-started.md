@@ -543,8 +543,10 @@ If you are tuning a busier bot or a noisy session, the outbound queue settings m
 12. `TelegramBot:Outbound:AgentMessageUpdateMaxChars`
 13. `TelegramBot:Outbound:BatchWindowSeconds`
 14. `TelegramBot:Outbound:DropPolicy`
+15. `TelegramBot:Outbound:DebugPreambleEnabled`
 
 The app also clamps several of those values to safe ranges at startup, so wildly out-of-range values will be normalized rather than trusted blindly.
+`DebugPreambleEnabled` can also be changed at runtime with `/debug on`, `/debug off`, and `/debug reset`; when enabled, every Telegram text message is prefixed with diagnostic source, chat/topic, session, turn, and active-turn metadata.
 
 ## Troubleshooting
 

@@ -47,6 +47,14 @@ The publish script writes:
 
 Other runtime identifiers can be passed with `-Runtime`, for example `linux-x64` or `osx-arm64`, when the .NET SDK has the required runtime packs.
 
+If the published executable is already running from the output directory, Windows will lock the existing binary and `dotnet publish` cannot replace it. Stop that process first, or opt in to the script-managed stop:
+
+```powershell
+.\scripts\Publish.ps1 -Runtime win-x64 -StopRunningProcess
+```
+
+`-StopRunningProcess` only targets a process whose executable path exactly matches the publish output binary.
+
 ## Release-Readiness Gate
 
 Run this before release validation, release tags, and pushes that affect runtime behavior:

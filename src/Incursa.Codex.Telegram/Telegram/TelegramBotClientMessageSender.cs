@@ -13,6 +13,7 @@ internal sealed class TelegramBotClientMessageSender : ITelegramBotMessageSender
     private readonly ILogger<TelegramBotClientMessageSender> _logger;
     private readonly Lazy<ITelegramBotApiClient> _client;
     private readonly ITelegramMessageContextStore _messageContextStore;
+    private readonly ITelegramDebugPreambleMode _debugPreambleMode;
 
     public TelegramBotClientMessageSender(
         IOptions<TelegramBotOptions> options,
@@ -21,7 +22,8 @@ internal sealed class TelegramBotClientMessageSender : ITelegramBotMessageSender
             options.Value,
             logger,
             new Lazy<ITelegramBotApiClient>(() => new TelegramBotApiClient(new TelegramBotClient(RequireToken(options.Value)))),
-            NullTelegramMessageContextStore.Instance)
+            NullTelegramMessageContextStore.Instance,
+            DisabledTelegramDebugPreambleMode.Instance)
     {
     }
 
@@ -33,7 +35,22 @@ internal sealed class TelegramBotClientMessageSender : ITelegramBotMessageSender
             options.Value,
             logger,
             new Lazy<ITelegramBotApiClient>(() => new TelegramBotApiClient(new TelegramBotClient(RequireToken(options.Value)))),
-            messageContextStore)
+            messageContextStore,
+            DisabledTelegramDebugPreambleMode.Instance)
+    {
+    }
+
+    public TelegramBotClientMessageSender(
+        IOptions<TelegramBotOptions> options,
+        ILogger<TelegramBotClientMessageSender> logger,
+        ITelegramMessageContextStore messageContextStore,
+        ITelegramDebugPreambleMode debugPreambleMode)
+        : this(
+            options.Value,
+            logger,
+            new Lazy<ITelegramBotApiClient>(() => new TelegramBotApiClient(new TelegramBotClient(RequireToken(options.Value)))),
+            messageContextStore,
+            debugPreambleMode)
     {
     }
 
@@ -41,8 +58,14 @@ internal sealed class TelegramBotClientMessageSender : ITelegramBotMessageSender
         TelegramBotOptions options,
         ILogger<TelegramBotClientMessageSender> logger,
         ITelegramBotApiClient client,
-        ITelegramMessageContextStore? messageContextStore = null)
-        : this(options, logger, new Lazy<ITelegramBotApiClient>(() => client), messageContextStore ?? NullTelegramMessageContextStore.Instance)
+        ITelegramMessageContextStore? messageContextStore = null,
+        ITelegramDebugPreambleMode? debugPreambleMode = null)
+        : this(
+            options,
+            logger,
+            new Lazy<ITelegramBotApiClient>(() => client),
+            messageContextStore ?? NullTelegramMessageContextStore.Instance,
+            debugPreambleMode ?? DisabledTelegramDebugPreambleMode.Instance)
     {
     }
 
@@ -50,19 +73,22 @@ internal sealed class TelegramBotClientMessageSender : ITelegramBotMessageSender
         TelegramBotOptions options,
         ILogger<TelegramBotClientMessageSender> logger,
         Lazy<ITelegramBotApiClient> client,
-        ITelegramMessageContextStore messageContextStore)
+        ITelegramMessageContextStore messageContextStore,
+        ITelegramDebugPreambleMode debugPreambleMode)
     {
         _options = options;
         _logger = logger;
         _client = client;
         _messageContextStore = messageContextStore;
+        _debugPreambleMode = debugPreambleMode;
     }
 
     public async Task SendTextMessageAsync(
         TelegramConversationScope conversation,
         string text,
         IReadOnlyList<IReadOnlyList<TelegramReplyButton>>? buttons,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        TelegramDebugMessageContext? debugContext = null)
     {
         if (!_options.Enabled)
         {
@@ -71,7 +97,7 @@ internal sealed class TelegramBotClientMessageSender : ITelegramBotMessageSender
 
         try
         {
-            await SendMessageAsync(conversation, text, buttons, cancellationToken).ConfigureAwait(false);
+            await SendMessageAsync(conversation, text, buttons, cancellationToken, debugContext).ConfigureAwait(false);
         }
         catch (ApiRequestException exception) when (conversation.MessageThreadId is not null && IsThreadReplyFailure(exception))
         {
@@ -98,7 +124,8 @@ internal sealed class TelegramBotClientMessageSender : ITelegramBotMessageSender
     async Task IOutboundTelegramMessageSender.SendTextMessageAsync(
         TelegramConversationScope conversation,
         string text,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        TelegramDebugMessageContext? debugContext)
     {
         if (!_options.Enabled)
         {
@@ -107,7 +134,7 @@ internal sealed class TelegramBotClientMessageSender : ITelegramBotMessageSender
 
         try
         {
-            await SendMessageAsync(conversation, text, null, cancellationToken).ConfigureAwait(false);
+            await SendMessageAsync(conversation, text, null, cancellationToken, debugContext).ConfigureAwait(false);
         }
         catch (ApiRequestException exception) when (IsRateLimited(exception))
         {
@@ -124,12 +151,11 @@ internal sealed class TelegramBotClientMessageSender : ITelegramBotMessageSender
         }
     }
 
-    public async Task EditTextMessageAsync(
+    async Task IOutboundTelegramMessageSender.SendFileMessageAsync(
         TelegramConversationScope conversation,
-        int messageId,
-        string text,
-        IReadOnlyList<IReadOnlyList<TelegramReplyButton>>? buttons,
-        CancellationToken cancellationToken)
+        OutboundTelegramFile file,
+        CancellationToken cancellationToken,
+        TelegramDebugMessageContext? debugContext)
     {
         if (!_options.Enabled)
         {
@@ -138,10 +164,43 @@ internal sealed class TelegramBotClientMessageSender : ITelegramBotMessageSender
 
         try
         {
+            await SendFileMessageAsync(conversation, file, cancellationToken, debugContext).ConfigureAwait(false);
+        }
+        catch (ApiRequestException exception) when (IsRateLimited(exception))
+        {
+            throw new TelegramOutboundRateLimitException(
+                "Telegram Bot API returned a rate limit response.",
+                ResolveRetryAfter(exception),
+                exception);
+        }
+        catch (ApiRequestException exception) when (conversation.MessageThreadId is not null && IsThreadReplyFailure(exception))
+        {
+            throw new TelegramTopicSendException(
+                $"Telegram rejected a file send to chat {conversation.ChatId} topic {conversation.MessageThreadId}; the file was not retried in the main chat.",
+                exception);
+        }
+    }
+
+    public async Task EditTextMessageAsync(
+        TelegramConversationScope conversation,
+        int messageId,
+        string text,
+        IReadOnlyList<IReadOnlyList<TelegramReplyButton>>? buttons,
+        CancellationToken cancellationToken,
+        TelegramDebugMessageContext? debugContext = null)
+    {
+        if (!_options.Enabled)
+        {
+            return;
+        }
+
+        try
+        {
+            string sendText = ApplyDebugPreamble(conversation, text, debugContext);
             await _client.Value.EditMessageTextAsync(
                 conversation.ChatId,
                 messageId,
-                text,
+                sendText,
                 ToInlineKeyboardMarkup(buttons),
                 cancellationToken).ConfigureAwait(false);
             await _messageContextStore.RecordAsync(
@@ -158,7 +217,7 @@ internal sealed class TelegramBotClientMessageSender : ITelegramBotMessageSender
                 conversation.ChatId,
                 messageId,
                 conversation.MessageThreadId,
-                text.Length,
+                sendText.Length,
                 buttons?.Count ?? 0);
         }
         catch (ApiRequestException exception) when (IsMessageNotModified(exception))
@@ -180,7 +239,7 @@ internal sealed class TelegramBotClientMessageSender : ITelegramBotMessageSender
                 "Telegram edit failed for chat {ChatId} message {MessageId}; falling back to a new message.",
                 conversation.ChatId,
                 messageId);
-            await SendTextMessageAsync(conversation, text, buttons, cancellationToken).ConfigureAwait(false);
+            await SendTextMessageAsync(conversation, text, buttons, cancellationToken, debugContext).ConfigureAwait(false);
         }
     }
 
@@ -226,6 +285,13 @@ internal sealed class TelegramBotClientMessageSender : ITelegramBotMessageSender
             {
                 await SendTypingActionAsync(acknowledgement.Conversation, cancellationToken).ConfigureAwait(false);
             }
+
+            await ReactToMessageAsync(
+                new TelegramMessageReaction(
+                    acknowledgement.Conversation,
+                    acknowledgement.MessageId,
+                    TelegramMessageReactionKind.Accepted),
+                cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -242,6 +308,37 @@ internal sealed class TelegramBotClientMessageSender : ITelegramBotMessageSender
         }
     }
 
+    public async Task ReactToMessageAsync(TelegramMessageReaction reaction, CancellationToken cancellationToken)
+    {
+        if (!_options.Enabled || reaction.MessageId <= 0)
+        {
+            return;
+        }
+
+        try
+        {
+            await _client.Value.SetMessageReactionAsync(
+                reaction.Conversation.ChatId,
+                reaction.MessageId,
+                ResolveReactionEmoji(reaction.Kind),
+                isBig: false,
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            _logger.LogDebug(
+                exception,
+                "Telegram reaction {ReactionKind} failed for chat {ChatId} message {MessageId}; continuing.",
+                reaction.Kind,
+                reaction.Conversation.ChatId,
+                reaction.MessageId);
+        }
+    }
+
     public async Task SendTypingActionAsync(TelegramConversationScope conversation, CancellationToken cancellationToken)
     {
         if (!_options.Enabled)
@@ -254,6 +351,7 @@ internal sealed class TelegramBotClientMessageSender : ITelegramBotMessageSender
             await _client.Value.SendChatActionAsync(
                 conversation.ChatId,
                 conversation.MessageThreadId,
+                TelegramChatActivity.Typing,
                 cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -270,22 +368,108 @@ internal sealed class TelegramBotClientMessageSender : ITelegramBotMessageSender
         }
     }
 
+    private async Task SendFileMessageAsync(
+        TelegramConversationScope conversation,
+        OutboundTelegramFile file,
+        CancellationToken cancellationToken,
+        TelegramDebugMessageContext? debugContext)
+    {
+        string fileName = ResolveFileName(file);
+        string caption = BuildFileCaption(conversation, file, fileName, debugContext);
+        if (!File.Exists(file.Path))
+        {
+            await SendMessageAsync(
+                conversation,
+                $"Codex artifact could not be sent because the file is no longer available: {fileName}",
+                null,
+                cancellationToken,
+                debugContext).ConfigureAwait(false);
+            return;
+        }
+
+        TelegramChatActivity activity = file.Kind == TelegramOutboundFileKind.Photo
+            ? TelegramChatActivity.UploadPhoto
+            : TelegramChatActivity.UploadDocument;
+        await TrySendChatActionAsync(conversation, activity, cancellationToken).ConfigureAwait(false);
+
+        int messageId = file.Kind == TelegramOutboundFileKind.Photo
+            ? await _client.Value.SendPhotoAsync(
+                conversation.ChatId,
+                file.Path,
+                fileName,
+                caption,
+                conversation.MessageThreadId,
+                cancellationToken).ConfigureAwait(false)
+            : await _client.Value.SendDocumentAsync(
+                conversation.ChatId,
+                file.Path,
+                fileName,
+                caption,
+                conversation.MessageThreadId,
+                cancellationToken).ConfigureAwait(false);
+
+        await _messageContextStore.RecordAsync(
+            new TelegramMessageContextRecord(
+                conversation,
+                messageId,
+                TelegramMessageAuthor.Bot,
+                string.IsNullOrWhiteSpace(file.Caption) ? fileName : file.Caption,
+                DateTimeOffset.UtcNow),
+            cancellationToken).ConfigureAwait(false);
+
+        _logger.LogDebug(
+            "Telegram {FileKind} send succeeded for chat {ChatId} topic {MessageThreadId}; file {FileName}; caption length {CaptionLength}.",
+            file.Kind,
+            conversation.ChatId,
+            conversation.MessageThreadId,
+            fileName,
+            caption.Length);
+    }
+
+    private async Task TrySendChatActionAsync(TelegramConversationScope conversation, TelegramChatActivity activity, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await _client.Value.SendChatActionAsync(
+                conversation.ChatId,
+                conversation.MessageThreadId,
+                activity,
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            _logger.LogDebug(
+                exception,
+                "Telegram chat action {Activity} failed for chat {ChatId} topic {MessageThreadId}; continuing with send.",
+                activity,
+                conversation.ChatId,
+                conversation.MessageThreadId);
+        }
+    }
+
     private Task SendMessageAsync(
         TelegramConversationScope conversation,
         string text,
         IReadOnlyList<IReadOnlyList<TelegramReplyButton>>? buttons,
-        CancellationToken cancellationToken)
-        => SendMessageReturningIdAsync(conversation, text, buttons, cancellationToken);
+        CancellationToken cancellationToken,
+        TelegramDebugMessageContext? debugContext)
+        => SendMessageReturningIdAsync(conversation, text, buttons, cancellationToken, debugContext);
 
     private async Task<int> SendMessageReturningIdAsync(
         TelegramConversationScope conversation,
         string text,
         IReadOnlyList<IReadOnlyList<TelegramReplyButton>>? buttons,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        TelegramDebugMessageContext? debugContext)
     {
+        string sendText = ApplyDebugPreamble(conversation, text, debugContext);
         int messageId = await _client.Value.SendMessageAsync(
             conversation.ChatId,
-            text,
+            sendText,
             ToInlineKeyboardMarkup(buttons),
             conversation.MessageThreadId,
             cancellationToken).ConfigureAwait(false);
@@ -302,11 +486,47 @@ internal sealed class TelegramBotClientMessageSender : ITelegramBotMessageSender
             "Telegram send succeeded for chat {ChatId} topic {MessageThreadId}; text length {TextLength}; button rows {ButtonRowCount}.",
             conversation.ChatId,
             conversation.MessageThreadId,
-            text.Length,
+            sendText.Length,
             buttons?.Count ?? 0);
 
         return messageId;
     }
+
+    private string ApplyDebugPreamble(TelegramConversationScope conversation, string text, TelegramDebugMessageContext? debugContext)
+        => _debugPreambleMode.IsEnabled
+            ? TelegramDebugPreambleFormatter.Apply(conversation, text, debugContext)
+            : text;
+
+    private static string ResolveFileName(OutboundTelegramFile file)
+        => string.IsNullOrWhiteSpace(file.FileName)
+            ? Path.GetFileName(file.Path)
+            : Path.GetFileName(file.FileName.Trim());
+
+    private string BuildFileCaption(
+        TelegramConversationScope conversation,
+        OutboundTelegramFile file,
+        string fileName,
+        TelegramDebugMessageContext? debugContext)
+    {
+        string caption = string.IsNullOrWhiteSpace(file.Caption) ? fileName : file.Caption.Trim();
+        if (_debugPreambleMode.IsEnabled)
+        {
+            caption = ApplyDebugPreamble(conversation, caption, debugContext);
+        }
+
+        const int maxTelegramCaptionLength = 1024;
+        return caption.Length <= maxTelegramCaptionLength
+            ? caption
+            : caption[..(maxTelegramCaptionLength - 3)] + "...";
+    }
+
+    private static string ResolveReactionEmoji(TelegramMessageReactionKind kind)
+        => kind switch
+        {
+            TelegramMessageReactionKind.Completed => "\u2705",
+            TelegramMessageReactionKind.Failed => "\U0001F628",
+            _ => "\U0001F440",
+        };
 
     private static string RequireToken(TelegramBotOptions options)
     {
@@ -366,7 +586,25 @@ internal interface ITelegramBotApiClient
 
     Task AnswerCallbackQueryAsync(string callbackQueryId, string? text, CancellationToken cancellationToken);
 
-    Task SendChatActionAsync(long chatId, int? messageThreadId, CancellationToken cancellationToken);
+    Task SendChatActionAsync(long chatId, int? messageThreadId, TelegramChatActivity activity, CancellationToken cancellationToken);
+
+    Task<int> SendPhotoAsync(
+        long chatId,
+        string filePath,
+        string fileName,
+        string? caption,
+        int? messageThreadId,
+        CancellationToken cancellationToken);
+
+    Task<int> SendDocumentAsync(
+        long chatId,
+        string filePath,
+        string fileName,
+        string? caption,
+        int? messageThreadId,
+        CancellationToken cancellationToken);
+
+    Task SetMessageReactionAsync(long chatId, int messageId, string emoji, bool isBig, CancellationToken cancellationToken);
 
     Task ReadBusinessMessageAsync(string businessConnectionId, long chatId, int messageId, CancellationToken cancellationToken);
 }
@@ -421,13 +659,63 @@ internal sealed class TelegramBotApiClient : ITelegramBotApiClient
     public Task AnswerCallbackQueryAsync(string callbackQueryId, string? text, CancellationToken cancellationToken)
         => _client.AnswerCallbackQuery(callbackQueryId, text, cancellationToken: cancellationToken);
 
-    public Task SendChatActionAsync(long chatId, int? messageThreadId, CancellationToken cancellationToken)
+    public Task SendChatActionAsync(long chatId, int? messageThreadId, TelegramChatActivity activity, CancellationToken cancellationToken)
         => _client.SendChatAction(
             chatId,
-            global::Telegram.Bot.Types.Enums.ChatAction.Typing,
+            ToTelegramChatAction(activity),
             messageThreadId: messageThreadId,
             cancellationToken: cancellationToken);
 
+    public async Task<int> SendPhotoAsync(
+        long chatId,
+        string filePath,
+        string fileName,
+        string? caption,
+        int? messageThreadId,
+        CancellationToken cancellationToken)
+    {
+        await using FileStream stream = File.OpenRead(filePath);
+        global::Telegram.Bot.Types.Message message = await _client.SendPhoto(
+            chatId,
+            global::Telegram.Bot.Types.InputFile.FromStream(stream, fileName),
+            caption: caption,
+            messageThreadId: messageThreadId,
+            cancellationToken: cancellationToken).ConfigureAwait(false);
+        return message.MessageId;
+    }
+
+    public async Task<int> SendDocumentAsync(
+        long chatId,
+        string filePath,
+        string fileName,
+        string? caption,
+        int? messageThreadId,
+        CancellationToken cancellationToken)
+    {
+        await using FileStream stream = File.OpenRead(filePath);
+        global::Telegram.Bot.Types.Message message = await _client.SendDocument(
+            chatId,
+            global::Telegram.Bot.Types.InputFile.FromStream(stream, fileName),
+            caption: caption,
+            messageThreadId: messageThreadId,
+            cancellationToken: cancellationToken).ConfigureAwait(false);
+        return message.MessageId;
+    }
+
+    public Task SetMessageReactionAsync(long chatId, int messageId, string emoji, bool isBig, CancellationToken cancellationToken)
+    {
+        global::Telegram.Bot.Types.ReactionType[] reaction = [emoji];
+        return _client.SetMessageReaction(chatId, messageId, reaction, isBig, cancellationToken);
+    }
+
     public Task ReadBusinessMessageAsync(string businessConnectionId, long chatId, int messageId, CancellationToken cancellationToken)
         => _client.ReadBusinessMessage(businessConnectionId, chatId, messageId, cancellationToken);
+
+    private static global::Telegram.Bot.Types.Enums.ChatAction ToTelegramChatAction(TelegramChatActivity activity)
+        => activity switch
+        {
+            TelegramChatActivity.UploadPhoto => global::Telegram.Bot.Types.Enums.ChatAction.UploadPhoto,
+            TelegramChatActivity.UploadDocument => global::Telegram.Bot.Types.Enums.ChatAction.UploadDocument,
+            _ => global::Telegram.Bot.Types.Enums.ChatAction.Typing,
+        };
 }

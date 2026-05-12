@@ -132,6 +132,30 @@ Expected behavior:
 
 Use this before changing configuration blindly.
 
+### `/debug`
+
+Shows or changes the Telegram debug preamble mode.
+
+Syntax:
+
+```text
+/debug
+/debug status
+/debug on
+/debug off
+/debug reset
+```
+
+Expected behavior:
+
+1. `/debug` or `/debug status` shows the effective setting, runtime override, and configuration default.
+2. `/debug on` starts prefixing Telegram text messages with diagnostic metadata.
+3. `/debug off` disables the runtime override.
+4. `/debug reset` clears the runtime override and returns to `TelegramBot:Outbound:DebugPreambleEnabled`.
+5. Preambles include source, chat/topic, session, turn, and active-turn fields when known.
+
+Use this when investigating whether foreground replies, queued work, and live Codex turn output are interleaving.
+
 ### `/projects`
 
 Lists known local project directories.

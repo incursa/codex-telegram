@@ -89,6 +89,11 @@ internal sealed record OutboundTelegramMessage
     public required string SessionId { get; init; }
 
     /// <summary>
+    /// Gets the Codex turn ID associated with the message, when the source event supplied one.
+    /// </summary>
+    public string? TurnId { get; init; }
+
+    /// <summary>
     /// Gets the message kind used for filtering and compaction.
     /// </summary>
     public required CodexOutboundMessageKind Kind { get; init; }
@@ -97,6 +102,11 @@ internal sealed record OutboundTelegramMessage
     /// Gets the text to deliver after batching and chunking.
     /// </summary>
     public required string Text { get; init; }
+
+    /// <summary>
+    /// Gets the Telegram-native file payload to send as a standalone item, when present.
+    /// </summary>
+    public OutboundTelegramFile? File { get; init; }
 
     /// <summary>
     /// Gets the UTC time when the source event was created.
@@ -208,8 +218,27 @@ internal interface IOutboundTelegramMessageSender
     /// <param name="conversation">Telegram destination.</param>
     /// <param name="text">Prepared text chunk.</param>
     /// <param name="cancellationToken">Cancellation token for request aborts.</param>
+    /// <param name="debugContext">Diagnostic source context for optional Telegram debug preambles.</param>
     /// <returns>A task that completes after the Telegram API call finishes.</returns>
-    Task SendTextMessageAsync(TelegramConversationScope conversation, string text, CancellationToken cancellationToken);
+    Task SendTextMessageAsync(
+        TelegramConversationScope conversation,
+        string text,
+        CancellationToken cancellationToken,
+        TelegramDebugMessageContext? debugContext = null);
+
+    /// <summary>
+    /// Sends a Telegram-native file payload to one conversation.
+    /// </summary>
+    /// <param name="conversation">Telegram destination.</param>
+    /// <param name="file">Prepared file payload.</param>
+    /// <param name="cancellationToken">Cancellation token for request aborts.</param>
+    /// <param name="debugContext">Diagnostic source context for optional Telegram debug preambles.</param>
+    /// <returns>A task that completes after the Telegram API call finishes.</returns>
+    Task SendFileMessageAsync(
+        TelegramConversationScope conversation,
+        OutboundTelegramFile file,
+        CancellationToken cancellationToken,
+        TelegramDebugMessageContext? debugContext = null);
 }
 
 /// <summary>
@@ -306,7 +335,7 @@ internal sealed class OutboundTelegramScheduler : BackgroundService, IOutboundTe
     {
         cancellationToken.ThrowIfCancellationRequested();
         TelegramOutboundOptions options = _options;
-        if (!options.Enabled || string.IsNullOrWhiteSpace(message.Text))
+        if (!options.Enabled || (string.IsNullOrWhiteSpace(message.Text) && message.File is null))
         {
             return ValueTask.CompletedTask;
         }
@@ -321,6 +350,7 @@ internal sealed class OutboundTelegramScheduler : BackgroundService, IOutboundTe
         {
             CreatedUtc = message.CreatedUtc == default ? now : message.CreatedUtc,
             Text = message.Text.Trim(),
+            File = NormalizeFile(message.File),
         };
 
         TelegramDestinationKey destination = new(normalized.ChatId, normalized.MessageThreadId);
@@ -403,14 +433,14 @@ internal sealed class OutboundTelegramScheduler : BackgroundService, IOutboundTe
                 return false;
             }
 
-            string? chunk = buffer.PeekOrPrepareChunk(_chunker, options.MaxMessageChars);
-            if (string.IsNullOrWhiteSpace(chunk))
+            PreparedOutboundChunk? chunk = buffer.PeekOrPrepareChunk(_chunker, options.MaxMessageChars);
+            if (chunk is null || !chunk.HasPayload)
             {
                 _buffers.TryRemove(buffer.Destination, out _);
                 return false;
             }
 
-            pending = new PendingSend(buffer.Destination, chunk);
+            pending = new PendingSend(buffer.Destination, chunk.Text, chunk.File, chunk.DebugContext);
         }
 
         try
@@ -475,7 +505,9 @@ internal sealed class OutboundTelegramScheduler : BackgroundService, IOutboundTe
     {
         TimeSpan timeout = TimeSpan.FromSeconds(Math.Max(1, options.SendTimeoutSeconds));
         using CancellationTokenSource sendCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        Task sendTask = _sender.SendTextMessageAsync(pending.Destination.ToConversationScope(), pending.Text, sendCancellation.Token);
+        Task sendTask = pending.File is not null
+            ? _sender.SendFileMessageAsync(pending.Destination.ToConversationScope(), pending.File, sendCancellation.Token, pending.DebugContext)
+            : _sender.SendTextMessageAsync(pending.Destination.ToConversationScope(), pending.Text ?? string.Empty, sendCancellation.Token, pending.DebugContext);
         Task timeoutTask = Task.Delay(timeout, _timeProvider, cancellationToken);
 
         Task completed = await Task.WhenAny(sendTask, timeoutTask).ConfigureAwait(false);
@@ -708,13 +740,28 @@ internal sealed class OutboundTelegramScheduler : BackgroundService, IOutboundTe
             ? TimeSpan.FromSeconds(options.GroupMinimumSendIntervalSeconds)
             : TimeSpan.FromSeconds(options.PrivateMinimumSendIntervalSeconds);
 
+    private static OutboundTelegramFile? NormalizeFile(OutboundTelegramFile? file)
+        => file is null
+            ? null
+            : file with
+            {
+                Path = file.Path.Trim(),
+                FileName = string.IsNullOrWhiteSpace(file.FileName) ? null : Path.GetFileName(file.FileName.Trim()),
+                Caption = string.IsNullOrWhiteSpace(file.Caption) ? null : file.Caption.Trim(),
+                ContentType = string.IsNullOrWhiteSpace(file.ContentType) ? null : file.ContentType.Trim(),
+            };
+
     private static DateTimeOffset? Max(DateTimeOffset? left, DateTimeOffset right)
         => left is null || right > left.Value ? right : left;
 
     private static TimeSpan Max(TimeSpan left, TimeSpan right)
         => left >= right ? left : right;
 
-    private readonly record struct PendingSend(TelegramDestinationKey Destination, string Text);
+    private readonly record struct PendingSend(
+        TelegramDestinationKey Destination,
+        string? Text,
+        OutboundTelegramFile? File,
+        TelegramDebugMessageContext? DebugContext);
 
     private sealed class BudgetState
     {
@@ -735,7 +782,7 @@ internal sealed class OutboundTelegramScheduler : BackgroundService, IOutboundTe
     private sealed class DestinationBuffer
     {
         private readonly List<PendingOutboundItem> _messages = [];
-        private readonly Queue<string> _chunks = new();
+        private readonly Queue<PreparedOutboundChunk> _chunks = new();
 
         /// <summary>
         /// Initializes a new instance of the <see cref="DestinationBuffer"/> class.
@@ -784,7 +831,9 @@ internal sealed class OutboundTelegramScheduler : BackgroundService, IOutboundTe
         /// <summary>
         /// Gets the approximate pending text character count.
         /// </summary>
-        public int PendingCharacterCount => _messages.Sum(message => message.Text.Length) + _chunks.Sum(chunk => chunk.Length);
+        public int PendingCharacterCount
+            => _messages.Sum(message => message.Text.Length + (message.File?.Caption?.Length ?? 0))
+                + _chunks.Sum(chunk => (chunk.Text?.Length ?? 0) + (chunk.File?.Caption?.Length ?? 0));
 
         /// <summary>
         /// Gets a value indicating whether this buffer already has prepared Telegram chunks.
@@ -809,7 +858,15 @@ internal sealed class OutboundTelegramScheduler : BackgroundService, IOutboundTe
         /// <param name="now">Current scheduler time.</param>
         public void Enqueue(OutboundTelegramMessage message, DateTimeOffset now)
         {
-            _messages.Add(new PendingOutboundItem(message.MessageId, message.SessionId, message.Kind, message.Text, message.CreatedUtc, message.Priority));
+            _messages.Add(new PendingOutboundItem(
+                message.MessageId,
+                message.SessionId,
+                message.TurnId,
+                message.Kind,
+                message.Text,
+                message.File,
+                message.CreatedUtc,
+                message.Priority));
             FirstPendingUtc ??= message.CreatedUtc == default ? now : message.CreatedUtc;
             LastEnqueuedUtc = now;
             SessionId = string.IsNullOrWhiteSpace(message.SessionId) ? SessionId : message.SessionId;
@@ -821,14 +878,21 @@ internal sealed class OutboundTelegramScheduler : BackgroundService, IOutboundTe
         /// <param name="chunker">Telegram text chunker.</param>
         /// <param name="maxMessageChars">Maximum text length for each Telegram send.</param>
         /// <returns>The next chunk to send, or <see langword="null"/> when nothing can be prepared.</returns>
-        public string? PeekOrPrepareChunk(TelegramMessageChunker chunker, int maxMessageChars)
+        public PreparedOutboundChunk? PeekOrPrepareChunk(TelegramMessageChunker chunker, int maxMessageChars)
         {
             if (_chunks.Count == 0 && _messages.Count > 0)
             {
-                string text = FormatNextSend();
-                foreach (string chunk in chunker.Split(text, maxMessageChars))
+                PreparedOutboundSend prepared = FormatNextSend();
+                if (prepared.File is not null)
                 {
-                    _chunks.Enqueue(chunk);
+                    _chunks.Enqueue(new PreparedOutboundChunk(prepared.Text, prepared.File, prepared.DebugContext));
+                }
+                else
+                {
+                    foreach (string chunk in chunker.Split(prepared.Text ?? string.Empty, maxMessageChars))
+                    {
+                        _chunks.Enqueue(new PreparedOutboundChunk(chunk, null, prepared.DebugContext));
+                    }
                 }
             }
 
@@ -868,7 +932,7 @@ internal sealed class OutboundTelegramScheduler : BackgroundService, IOutboundTe
                 int index = _messages.FindIndex(message => message.Kind == CodexOutboundMessageKind.Progress);
                 if (index < 0)
                 {
-                    index = _messages.FindIndex(message => message.Priority < OutboundPriority.High);
+                    index = _messages.FindIndex(message => message.Priority < OutboundPriority.High && message.File is null);
                 }
 
                 if (index < 0 || _messages.Count <= 1)
@@ -887,8 +951,10 @@ internal sealed class OutboundTelegramScheduler : BackgroundService, IOutboundTe
                 _messages.Insert(0, new PendingOutboundItem(
                     "compacted-" + Guid.NewGuid().ToString("n"),
                     SessionId,
+                    null,
                     CodexOutboundMessageKind.System,
                     $"... {compacted} older outbound updates compacted to protect local memory.",
+                    null,
                     FirstPendingUtc ?? DateTimeOffset.UtcNow,
                     OutboundPriority.Normal));
             }
@@ -896,20 +962,67 @@ internal sealed class OutboundTelegramScheduler : BackgroundService, IOutboundTe
             return compacted;
         }
 
-        private string FormatNextSend()
+        private PreparedOutboundSend FormatNextSend()
         {
             int standaloneIndex = _messages.FindIndex(IsStandaloneMessage);
             if (standaloneIndex == 0)
             {
                 PendingOutboundItem standalone = _messages[0];
                 _messages.RemoveAt(0);
-                return FormatBatchItem(standalone.Text);
+                if (standalone.File is not null)
+                {
+                    return new PreparedOutboundSend(
+                        string.IsNullOrWhiteSpace(standalone.Text) ? standalone.File.Caption : standalone.Text,
+                        standalone.File,
+                        CreateDebugContext([standalone]));
+                }
+
+                return new PreparedOutboundSend(
+                    FormatBatchItem(standalone.Text),
+                    null,
+                    CreateDebugContext([standalone]));
             }
 
             int count = standaloneIndex > 0 ? standaloneIndex : _messages.Count;
             List<PendingOutboundItem> messages = _messages.GetRange(0, count);
             _messages.RemoveRange(0, count);
-            return FormatBatch(messages);
+            return new PreparedOutboundSend(FormatBatch(messages), null, CreateDebugContext(messages));
+        }
+
+        private static TelegramDebugMessageContext CreateDebugContext(IReadOnlyList<PendingOutboundItem> messages)
+        {
+            string? sessionId = ResolveSingleValue(messages.Select(message => message.SessionId));
+            string? turnId = ResolveSingleValue(messages.Select(message => message.TurnId));
+            string? kind = ResolveSingleValue(messages.Select(message => message.Kind.ToString()));
+            string? messageId = messages.Count == 1 ? messages[0].MessageId : null;
+            return new TelegramDebugMessageContext(
+                "outbound",
+                sessionId,
+                turnId,
+                ActiveTurnId: null,
+                kind,
+                messageId,
+                messages.Count);
+        }
+
+        private static string? ResolveSingleValue(IEnumerable<string?> values)
+        {
+            string? result = null;
+            foreach (string? value in values.Where(value => !string.IsNullOrWhiteSpace(value)))
+            {
+                if (result is null)
+                {
+                    result = value;
+                    continue;
+                }
+
+                if (!string.Equals(result, value, StringComparison.Ordinal))
+                {
+                    return "mixed";
+                }
+            }
+
+            return result;
         }
 
         private static string FormatBatch(IReadOnlyList<PendingOutboundItem> messages)
@@ -937,7 +1050,8 @@ internal sealed class OutboundTelegramScheduler : BackgroundService, IOutboundTe
             => value.Replace("\r\n", "\n", StringComparison.Ordinal).Trim();
 
         private static bool IsStandaloneMessage(PendingOutboundItem message)
-            => string.Equals(FormatBatchItem(message.Text), TurnFinishedMarker, StringComparison.Ordinal);
+            => message.File is not null
+                || string.Equals(FormatBatchItem(message.Text), TurnFinishedMarker, StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -945,15 +1059,26 @@ internal sealed class OutboundTelegramScheduler : BackgroundService, IOutboundTe
     /// </summary>
     /// <param name="MessageId">Queue item identifier.</param>
     /// <param name="SessionId">Associated Codex session ID.</param>
+    /// <param name="TurnId">Associated Codex turn ID.</param>
     /// <param name="Kind">Message kind for compaction.</param>
     /// <param name="Text">Text to include in a batch.</param>
+    /// <param name="File">Standalone Telegram file payload, when present.</param>
     /// <param name="CreatedUtc">Source creation time.</param>
     /// <param name="Priority">Delivery priority.</param>
     private sealed record PendingOutboundItem(
         string MessageId,
         string? SessionId,
+        string? TurnId,
         CodexOutboundMessageKind Kind,
         string Text,
+        OutboundTelegramFile? File,
         DateTimeOffset CreatedUtc,
         OutboundPriority Priority);
+
+    private sealed record PreparedOutboundSend(string? Text, OutboundTelegramFile? File, TelegramDebugMessageContext DebugContext);
+
+    private sealed record PreparedOutboundChunk(string? Text, OutboundTelegramFile? File, TelegramDebugMessageContext DebugContext)
+    {
+        public bool HasPayload => File is not null || !string.IsNullOrWhiteSpace(Text);
+    }
 }

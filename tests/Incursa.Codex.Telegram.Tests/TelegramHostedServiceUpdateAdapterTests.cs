@@ -950,7 +950,8 @@ public sealed class TelegramHostedServiceUpdateAdapterTests
             TelegramConversationScope conversation,
             string text,
             IReadOnlyList<IReadOnlyList<TelegramReplyButton>>? buttons,
-            CancellationToken cancellationToken)
+            CancellationToken cancellationToken,
+            TelegramDebugMessageContext? debugContext = null)
         {
             Sent.Add(new SentTelegramMessage(conversation, text));
             if (SendException is not null)
@@ -966,7 +967,8 @@ public sealed class TelegramHostedServiceUpdateAdapterTests
             int messageId,
             string text,
             IReadOnlyList<IReadOnlyList<TelegramReplyButton>>? buttons,
-            CancellationToken cancellationToken)
+            CancellationToken cancellationToken,
+            TelegramDebugMessageContext? debugContext = null)
             => Task.CompletedTask;
 
         public Task AnswerCallbackQueryAsync(string callbackQueryId, string? text, CancellationToken cancellationToken)
@@ -981,6 +983,9 @@ public sealed class TelegramHostedServiceUpdateAdapterTests
         }
 
         public Task SendTypingActionAsync(TelegramConversationScope conversation, CancellationToken cancellationToken)
+            => Task.CompletedTask;
+
+        public Task ReactToMessageAsync(TelegramMessageReaction reaction, CancellationToken cancellationToken)
             => Task.CompletedTask;
     }
 

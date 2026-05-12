@@ -326,6 +326,8 @@ internal static class CodexViewModelMapper
             CodexWebSearchItem webSearch => RepairText(webSearch.Query),
             CodexImageViewItem imageView => RepairText(imageView.Path),
             CodexImageGenerationItem imageGeneration => RepairText(imageGeneration.Status),
+            CodexUnknownThreadItem unknown when IsUnknownImageViewItem(unknown) => RepairText(GetStringAny(unknown.RawPayload, "path", "url", "imageUrl", "image_url", "filePath", "file_path")),
+            CodexUnknownThreadItem unknown when IsUnknownImageGenerationItem(unknown) => RepairText(GetStringAny(unknown.RawPayload, "status", "result")),
             CodexEnteredReviewModeItem enteredReview => RepairText(enteredReview.Review),
             CodexExitedReviewModeItem exitedReview => RepairText(exitedReview.Review),
             CodexTodoListItem todo => $"{todo.Items.Count} todo items",
@@ -364,6 +366,31 @@ internal static class CodexViewModelMapper
             CodexWebSearchItem webSearch => new Dictionary<string, string?>
             {
                 ["query"] = RepairTextOrNull(webSearch.Query),
+            },
+            CodexImageViewItem imageView => new Dictionary<string, string?>
+            {
+                ["explicitMediaKind"] = "image-view",
+                ["path"] = RepairTextOrNull(imageView.Path),
+            },
+            CodexImageGenerationItem imageGeneration => new Dictionary<string, string?>
+            {
+                ["explicitMediaKind"] = "image-generation",
+                ["result"] = RepairTextOrNull(imageGeneration.Result),
+                ["status"] = RepairTextOrNull(imageGeneration.Status),
+            },
+            CodexUnknownThreadItem unknown when IsUnknownImageViewItem(unknown) => new Dictionary<string, string?>
+            {
+                ["explicitMediaKind"] = "image-view",
+                ["path"] = RepairTextOrNull(GetStringAny(unknown.RawPayload, "path", "url", "imageUrl", "image_url", "filePath", "file_path")),
+                ["id"] = RepairTextOrNull(unknown.Id),
+            },
+            CodexUnknownThreadItem unknown when IsUnknownImageGenerationItem(unknown) => new Dictionary<string, string?>
+            {
+                ["explicitMediaKind"] = "image-generation",
+                ["result"] = RepairTextOrNull(GetStringAny(unknown.RawPayload, "result", "image", "imageData", "image_data", "b64_json", "base64")),
+                ["status"] = RepairTextOrNull(GetStringAny(unknown.RawPayload, "status")),
+                ["id"] = RepairTextOrNull(unknown.Id),
+                ["contentType"] = RepairTextOrNull(GetStringAny(unknown.RawPayload, "contentType", "content_type", "mimeType", "mime_type")),
             },
             _ => new Dictionary<string, string?>(),
         };
@@ -429,6 +456,19 @@ internal static class CodexViewModelMapper
                 ? obj
                 : null;
 
+    private static bool IsUnknownImageViewItem(CodexUnknownThreadItem item)
+        => IsUnknownItemType(item, "imageView", "image_view", "image_view_item");
+
+    private static bool IsUnknownImageGenerationItem(CodexUnknownThreadItem item)
+        => IsUnknownItemType(item, "imageGeneration", "image_generation", "image_generation_call", "imageGenerationCall");
+
+    private static bool IsUnknownItemType(CodexUnknownThreadItem item, params string[] names)
+    {
+        string? payloadType = GetString(item.RawPayload, "type");
+        return names.Any(name => string.Equals(item.UnknownType, name, StringComparison.OrdinalIgnoreCase))
+            || names.Any(name => string.Equals(payloadType, name, StringComparison.OrdinalIgnoreCase));
+    }
+
     private static string? GetString(JsonObject? payload, string name)
     {
         if (payload is null || !payload.TryGetPropertyValue(name, out JsonNode? node) || node is not JsonValue value)
@@ -439,6 +479,20 @@ internal static class CodexViewModelMapper
         return value.TryGetValue(out string? text) && !string.IsNullOrEmpty(text)
             ? text
             : null;
+    }
+
+    private static string? GetStringAny(JsonObject? payload, params string[] names)
+    {
+        foreach (string name in names)
+        {
+            string? value = GetString(payload, name);
+            if (!string.IsNullOrWhiteSpace(value))
+            {
+                return value;
+            }
+        }
+
+        return null;
     }
 
     private static string RepairText(string? value)

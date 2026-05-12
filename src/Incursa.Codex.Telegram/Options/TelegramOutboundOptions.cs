@@ -68,6 +68,11 @@ public static class TelegramOutboundDefaults
     /// Default compaction policy name used in configuration and diagnostics.
     /// </summary>
     public const string DropPolicy = "DropOldestProgressThenOldestUpdateSummary";
+
+    /// <summary>
+    /// Default setting for per-message Telegram debug preambles.
+    /// </summary>
+    public const bool DebugPreambleEnabled = false;
 }
 
 /// <summary>
@@ -241,4 +246,9 @@ public sealed class TelegramOutboundOptions
     /// Gets or sets the configured local compaction policy name.
     /// </summary>
     public string DropPolicy { get; set; } = TelegramOutboundDefaults.DropPolicy;
+
+    /// <summary>
+    /// Gets or sets a value indicating whether each outbound Telegram text message should include diagnostic session and turn metadata.
+    /// </summary>
+    public bool DebugPreambleEnabled { get; set; } = TelegramOutboundDefaults.DebugPreambleEnabled;
 }

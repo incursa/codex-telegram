@@ -172,13 +172,44 @@ public sealed class TelegramCommandHandlerTests
             harness.Sender,
             CancellationToken.None);
 
-        SentTelegramMessage sent = Assert.Single(harness.Sender.Sent);
         CreateCodexSessionRequest request = Assert.Single(harness.SessionManager.CreateRequests);
         Assert.StartsWith("repo session ", request.Name, StringComparison.Ordinal);
         Assert.Equal(projectPath, request.WorkingDirectory);
         Assert.Equal("please look at this", Assert.Single(harness.SessionManager.SendRequests));
         Assert.Equal("thread-1", await harness.StateStore.GetActiveSessionIdAsync(conversation, CancellationToken.None));
-        Assert.Contains("Sent to repo session", sent.Text);
+        Assert.Empty(harness.Sender.Sent);
+    }
+
+    [Fact]
+    public async Task HandleMessageAsync_RegistersSourceMessageForTurnReaction()
+    {
+        using CommandHandlerHarness harness = CommandHandlerHarness.Create();
+
+        await harness.Handler.HandleMessageAsync(
+            new TelegramInboundMessage(1234, 5555, "private", "please inspect this", SourceMessageId: 77),
+            harness.Sender,
+            CancellationToken.None);
+
+        TelegramTurnReactionTarget? target = harness.TurnReactionRegistry.TryTake("thread-1", "turn-1");
+        Assert.NotNull(target);
+        Assert.Equal(new TelegramConversationScope(5555, null), target.Conversation);
+        Assert.Equal(77, target.MessageId);
+    }
+
+    [Fact]
+    public async Task HandleMessageAsync_WhenSendFailsReactsToSourceMessage()
+    {
+        using CommandHandlerHarness harness = CommandHandlerHarness.Create();
+        harness.SessionManager.SendExceptions.Enqueue(new InvalidOperationException("send failed"));
+
+        await harness.Handler.HandleMessageAsync(
+            new TelegramInboundMessage(1234, 5555, "private", "please inspect this", SourceMessageId: 77),
+            harness.Sender,
+            CancellationToken.None);
+
+        TelegramMessageReaction reaction = Assert.Single(harness.Sender.Reactions);
+        Assert.Equal(TelegramMessageReactionKind.Failed, reaction.Kind);
+        Assert.Equal(77, reaction.MessageId);
     }
 
     [Fact]
@@ -221,7 +252,7 @@ public sealed class TelegramCommandHandlerTests
         CodexLocalImageInput image = Assert.IsType<CodexLocalImageInput>(Assert.Single(input));
         Assert.Equal(photoPath, image.Path);
         Assert.True(File.Exists(photoPath));
-        Assert.Contains("Sent to repo session", Assert.Single(harness.Sender.Sent).Text);
+        Assert.Empty(harness.Sender.Sent);
     }
 
     [Fact]
@@ -252,10 +283,7 @@ public sealed class TelegramCommandHandlerTests
             CancellationToken.None);
 
         Assert.Equal("transcribed text", Assert.Single(harness.SessionManager.SendRequests));
-        Assert.Collection(
-            harness.Sender.Sent,
-            sent => Assert.Contains("Here's what I transcribed:", sent.Text),
-            sent => Assert.Contains("Sent to repo session", sent.Text));
+        Assert.Contains("Here's what I transcribed:", Assert.Single(harness.Sender.Sent).Text);
     }
 
     [Fact]
@@ -293,7 +321,7 @@ public sealed class TelegramCommandHandlerTests
             input,
             item => Assert.Equal("inspect this image 🚀", Assert.IsType<CodexTextInput>(item).Text),
             item => Assert.EndsWith("photo.png", Assert.IsType<CodexLocalImageInput>(item).Path, StringComparison.Ordinal));
-        Assert.Contains("Sent to Topic session.", Assert.Single(harness.Sender.Sent).Text);
+        Assert.Empty(harness.Sender.Sent);
     }
 
     [Fact]
@@ -431,6 +459,7 @@ public sealed class TelegramCommandHandlerTests
         Assert.Contains("/model", sent.Text);
         Assert.Contains("/version", sent.Text);
         Assert.Contains("/queue", sent.Text);
+        Assert.Contains("/debug", sent.Text);
         Assert.Contains("/outbound", sent.Text);
         Assert.Contains("configured OpenAI transcription model", sent.Text);
         Assert.Equal(["Sessions", "Projects", "Help"], FlattenButtonLabels(sent));
@@ -449,6 +478,29 @@ public sealed class TelegramCommandHandlerTests
         SentTelegramMessage sent = Assert.Single(harness.Sender.Sent);
         Assert.Contains("Incursa Codex Telegram", sent.Text);
         Assert.Contains("older binary", sent.Text);
+    }
+
+    [Fact]
+    public async Task HandleMessageAsync_DebugCommandTogglesRuntimePreambleMode()
+    {
+        using CommandHandlerHarness harness = CommandHandlerHarness.Create();
+
+        await harness.Handler.HandleMessageAsync(
+            new TelegramInboundMessage(1234, 5555, "private", "/debug on"),
+            harness.Sender,
+            CancellationToken.None);
+
+        Assert.True(harness.DebugPreambleMode.RuntimeOverrideEnabled);
+        Assert.Contains("Effective: on", Assert.Single(harness.Sender.Sent).Text);
+
+        harness.Sender.Sent.Clear();
+        await harness.Handler.HandleMessageAsync(
+            new TelegramInboundMessage(1234, 5555, "private", "/debug reset"),
+            harness.Sender,
+            CancellationToken.None);
+
+        Assert.Null(harness.DebugPreambleMode.RuntimeOverrideEnabled);
+        Assert.Contains("reset to configuration", Assert.Single(harness.Sender.Sent).Text);
     }
 
     [Fact]
@@ -567,7 +619,7 @@ public sealed class TelegramCommandHandlerTests
 
         Assert.Equal("please inspect the repo", Assert.Single(harness.SessionManager.SendRequests));
         Assert.Equal("thread-1", await harness.StateStore.GetActiveSessionIdAsync(conversation, CancellationToken.None));
-        Assert.Contains("Sent to", Assert.Single(harness.Sender.Sent).Text);
+        Assert.Empty(harness.Sender.Sent);
     }
 
     [Fact]
@@ -585,10 +637,12 @@ public sealed class TelegramCommandHandlerTests
             CancellationToken.None);
         await harness.SessionManager.SendStarted.Task.WaitAsync(TimeSpan.FromSeconds(1));
 
+        Assert.Empty(harness.Sender.Sent);
         Assert.Contains(conversation, harness.TypingIndicatorRegistry.GetTargets());
 
         harness.SessionManager.PendingSend.SetResult(new CodexThreadExecutionVm("thread-1", "turn-1", "running", null));
         await handleTask.WaitAsync(TimeSpan.FromSeconds(1));
+        Assert.Empty(harness.Sender.Sent);
         Assert.Empty(harness.TypingIndicatorRegistry.GetTargets());
     }
 
@@ -698,10 +752,7 @@ public sealed class TelegramCommandHandlerTests
 
         Assert.False(File.Exists(audioPath));
         Assert.Equal("transcribed text", Assert.Single(harness.SessionManager.SendRequests));
-        Assert.Collection(
-            harness.Sender.Sent,
-            sent => Assert.Contains("Here's what I transcribed:", sent.Text),
-            sent => Assert.Contains("Sent to", sent.Text));
+        Assert.Contains("Here's what I transcribed:", Assert.Single(harness.Sender.Sent).Text);
     }
 
     [Fact]
@@ -736,8 +787,7 @@ public sealed class TelegramCommandHandlerTests
         Assert.Collection(
             harness.Sender.Sent,
             sent => Assert.Contains("Here's what I transcribed:", sent.Text),
-            sent => Assert.Contains("could not be resumed", sent.Text),
-            sent => Assert.Contains("Sent to repo session", sent.Text));
+            sent => Assert.Contains("could not be resumed", sent.Text));
     }
 
     [Fact]
@@ -1869,6 +1919,8 @@ public sealed class TelegramCommandHandlerTests
             TelegramBotStateStore stateStore,
             FakeOutboundTelegramQueue outboundQueue,
             TelegramTypingIndicatorRegistry typingIndicatorRegistry,
+            TelegramTurnReactionRegistry turnReactionRegistry,
+            TestTelegramDebugPreambleMode debugPreambleMode,
             FakeTelegramForumTopicService topicService,
             FakeAudioTranscriptionService audioTranscription,
             TestTelegramBotMessageSender sender,
@@ -1881,6 +1933,8 @@ public sealed class TelegramCommandHandlerTests
             StateStore = stateStore;
             OutboundQueue = outboundQueue;
             TypingIndicatorRegistry = typingIndicatorRegistry;
+            TurnReactionRegistry = turnReactionRegistry;
+            DebugPreambleMode = debugPreambleMode;
             TopicService = topicService;
             AudioTranscription = audioTranscription;
             Sender = sender;
@@ -1900,6 +1954,10 @@ public sealed class TelegramCommandHandlerTests
         public FakeOutboundTelegramQueue OutboundQueue { get; }
 
         public TelegramTypingIndicatorRegistry TypingIndicatorRegistry { get; }
+
+        public TelegramTurnReactionRegistry TurnReactionRegistry { get; }
+
+        public TestTelegramDebugPreambleMode DebugPreambleMode { get; }
 
         public FakeTelegramForumTopicService TopicService { get; }
 
@@ -1927,6 +1985,8 @@ public sealed class TelegramCommandHandlerTests
             TelegramBotStateStore stateStore = new(codexOptions);
             FakeOutboundTelegramQueue outboundQueue = new();
             TelegramTypingIndicatorRegistry typingIndicatorRegistry = new();
+            TelegramTurnReactionRegistry turnReactionRegistry = new();
+            TestTelegramDebugPreambleMode debugPreambleMode = new();
             FakeTelegramForumTopicService topicService = new();
             FakeAudioTranscriptionService audioTranscription = new();
             TestTelegramBotMessageSender sender = new();
@@ -1941,6 +2001,8 @@ public sealed class TelegramCommandHandlerTests
                 new FakeTurnExecutionCoordinator(),
                 new TelegramThreadFollowRegistry(),
                 typingIndicatorRegistry,
+                turnReactionRegistry,
+                debugPreambleMode,
                 topicService,
                 audioTranscription,
                 outboundQueue,
@@ -1950,7 +2012,7 @@ public sealed class TelegramCommandHandlerTests
                 }),
                 NullLogger<TelegramCodexBotCommandHandler>.Instance);
 
-            return new CommandHandlerHarness(temp, sessionManager, accountUsage, projectCatalog, stateStore, outboundQueue, typingIndicatorRegistry, topicService, audioTranscription, sender, handler);
+            return new CommandHandlerHarness(temp, sessionManager, accountUsage, projectCatalog, stateStore, outboundQueue, typingIndicatorRegistry, turnReactionRegistry, debugPreambleMode, topicService, audioTranscription, sender, handler);
         }
 
         public void Dispose()
@@ -2218,6 +2280,21 @@ public sealed class TelegramCommandHandlerTests
             => Task.CompletedTask;
     }
 
+    private sealed class TestTelegramDebugPreambleMode : ITelegramDebugPreambleMode
+    {
+        public bool ConfiguredDefaultEnabled { get; set; }
+
+        public bool? RuntimeOverrideEnabled { get; private set; }
+
+        public bool IsEnabled => RuntimeOverrideEnabled ?? ConfiguredDefaultEnabled;
+
+        public void SetRuntimeOverride(bool enabled)
+            => RuntimeOverrideEnabled = enabled;
+
+        public void ClearRuntimeOverride()
+            => RuntimeOverrideEnabled = null;
+    }
+
     private sealed class FakeTelegramForumTopicService : ITelegramForumTopicService
     {
         public List<(long ChatId, string Name)> CreateRequests { get; } = [];
@@ -2265,11 +2342,14 @@ public sealed class TelegramCommandHandlerTests
 
         public List<CallbackAnswer> CallbackAnswers { get; } = [];
 
+        public List<TelegramMessageReaction> Reactions { get; } = [];
+
         public Task SendTextMessageAsync(
             TelegramConversationScope conversation,
             string text,
             IReadOnlyList<IReadOnlyList<TelegramReplyButton>>? buttons,
-            CancellationToken cancellationToken)
+            CancellationToken cancellationToken,
+            TelegramDebugMessageContext? debugContext = null)
         {
             Sent.Add(new SentTelegramMessage(conversation, text, buttons));
             return Task.CompletedTask;
@@ -2280,7 +2360,8 @@ public sealed class TelegramCommandHandlerTests
             int messageId,
             string text,
             IReadOnlyList<IReadOnlyList<TelegramReplyButton>>? buttons,
-            CancellationToken cancellationToken)
+            CancellationToken cancellationToken,
+            TelegramDebugMessageContext? debugContext = null)
         {
             Edited.Add(new EditedTelegramMessage(conversation, messageId, text, buttons));
             return Task.CompletedTask;
@@ -2297,6 +2378,12 @@ public sealed class TelegramCommandHandlerTests
 
         public Task SendTypingActionAsync(TelegramConversationScope conversation, CancellationToken cancellationToken)
             => Task.CompletedTask;
+
+        public Task ReactToMessageAsync(TelegramMessageReaction reaction, CancellationToken cancellationToken)
+        {
+            Reactions.Add(reaction);
+            return Task.CompletedTask;
+        }
     }
 
     private sealed record SentTelegramMessage(

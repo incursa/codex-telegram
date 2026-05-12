@@ -104,6 +104,7 @@ goal - Show or change the session goal
 tail - Show recent session output
 status - Show session status and compact usage
 usage - Show five-hour and weekly Codex usage
+debug - Toggle diagnostic message preambles
 outbound - Show outbound Telegram queue status
 stop - Stop the active or selected session
 topic - Manage forum-topic sessions
