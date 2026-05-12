@@ -124,44 +124,6 @@ internal sealed class TelegramBotClientMessageSender : ITelegramBotMessageSender
         }
     }
 
-    public async Task<int?> SendStatusMessageAsync(
-        TelegramConversationScope conversation,
-        string text,
-        CancellationToken cancellationToken)
-    {
-        if (!_options.Enabled)
-        {
-            return null;
-        }
-
-        try
-        {
-            return await SendMessageReturningIdAsync(conversation, text, null, cancellationToken).ConfigureAwait(false);
-        }
-        catch (ApiRequestException exception) when (conversation.MessageThreadId is not null && IsThreadReplyFailure(exception))
-        {
-            _logger.LogWarning(
-                exception,
-                "Telegram rejected a status message to chat {ChatId} topic {MessageThreadId}.",
-                conversation.ChatId,
-                conversation.MessageThreadId);
-            return null;
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            throw;
-        }
-        catch (Exception exception)
-        {
-            _logger.LogDebug(
-                exception,
-                "Telegram status message failed for chat {ChatId} topic {MessageThreadId}; continuing.",
-                conversation.ChatId,
-                conversation.MessageThreadId);
-            return null;
-        }
-    }
-
     public async Task EditTextMessageAsync(
         TelegramConversationScope conversation,
         int messageId,

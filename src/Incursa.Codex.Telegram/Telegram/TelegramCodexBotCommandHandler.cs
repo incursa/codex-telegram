@@ -18,11 +18,6 @@ internal interface ITelegramBotMessageSender
         IReadOnlyList<IReadOnlyList<TelegramReplyButton>>? buttons,
         CancellationToken cancellationToken);
 
-    Task<int?> SendStatusMessageAsync(
-        TelegramConversationScope conversation,
-        string text,
-        CancellationToken cancellationToken);
-
     Task EditTextMessageAsync(
         TelegramConversationScope conversation,
         int messageId,

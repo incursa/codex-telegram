@@ -63,72 +63,6 @@ public sealed class TelegramTypingHeartbeatHostedServiceTests
     }
 
     [Fact]
-    public async Task SendHeartbeatAsync_SendsVisibleStatusAfterLongCodexWait()
-    {
-        FakeTurnCoordinator turnCoordinator = new();
-        TelegramThreadFollowRegistry followRegistry = new();
-        TelegramTypingIndicatorRegistry typingIndicatorRegistry = new();
-        TelegramConversationScope conversation = new(1234, 77);
-        using IDisposable registration = typingIndicatorRegistry.Track(conversation);
-        TestTelegramBotMessageSender sender = new();
-        TelegramTypingHeartbeatHostedService service = CreateService(turnCoordinator, followRegistry, typingIndicatorRegistry, sender);
-        DateTimeOffset startedAt = DateTimeOffset.Parse("2026-05-11T12:00:00Z");
-
-        Assert.Equal(1, await service.SendHeartbeatAsync(startedAt, CancellationToken.None));
-        Assert.Empty(sender.StatusMessages);
-
-        Assert.Equal(1, await service.SendHeartbeatAsync(startedAt.AddSeconds(10), CancellationToken.None));
-
-        SentStatusMessage status = Assert.Single(sender.StatusMessages);
-        Assert.Equal(conversation, status.Conversation);
-        Assert.Contains("Codex is still working", status.Text);
-        Assert.Contains("Elapsed: 0:10", status.Text);
-    }
-
-    [Fact]
-    public async Task SendHeartbeatAsync_DoesNotSendVisibleStatusForPrivateChat()
-    {
-        FakeTurnCoordinator turnCoordinator = new();
-        TelegramThreadFollowRegistry followRegistry = new();
-        TelegramTypingIndicatorRegistry typingIndicatorRegistry = new();
-        TelegramConversationScope conversation = new(1234, null);
-        using IDisposable registration = typingIndicatorRegistry.Track(conversation);
-        TestTelegramBotMessageSender sender = new();
-        TelegramTypingHeartbeatHostedService service = CreateService(turnCoordinator, followRegistry, typingIndicatorRegistry, sender);
-        DateTimeOffset startedAt = DateTimeOffset.Parse("2026-05-11T12:00:00Z");
-
-        Assert.Equal(1, await service.SendHeartbeatAsync(startedAt, CancellationToken.None));
-        Assert.Equal(1, await service.SendHeartbeatAsync(startedAt.AddSeconds(30), CancellationToken.None));
-
-        Assert.Empty(sender.StatusMessages);
-        Assert.Empty(sender.EditedStatusMessages);
-    }
-
-    [Fact]
-    public async Task SendHeartbeatAsync_EditsVisibleStatusWhenCodexWaitFinishes()
-    {
-        FakeTurnCoordinator turnCoordinator = new();
-        TelegramThreadFollowRegistry followRegistry = new();
-        TelegramTypingIndicatorRegistry typingIndicatorRegistry = new();
-        TelegramConversationScope conversation = new(1234, 77);
-        IDisposable registration = typingIndicatorRegistry.Track(conversation);
-        TestTelegramBotMessageSender sender = new();
-        TelegramTypingHeartbeatHostedService service = CreateService(turnCoordinator, followRegistry, typingIndicatorRegistry, sender);
-        DateTimeOffset startedAt = DateTimeOffset.Parse("2026-05-11T12:00:00Z");
-
-        await service.SendHeartbeatAsync(startedAt, CancellationToken.None);
-        await service.SendHeartbeatAsync(startedAt.AddSeconds(10), CancellationToken.None);
-        registration.Dispose();
-
-        Assert.Equal(0, await service.SendHeartbeatAsync(startedAt.AddSeconds(13), CancellationToken.None));
-
-        EditedStatusMessage edit = Assert.Single(sender.EditedStatusMessages);
-        Assert.Equal(conversation, edit.Conversation);
-        Assert.Equal(1, edit.MessageId);
-        Assert.Contains("Codex activity finished", edit.Text);
-    }
-
-    [Fact]
     public async Task WaitForChangeAsync_ReturnsImmediatelyWhenCodexWaitWasRegisteredBeforeWaitStarted()
     {
         TelegramTypingIndicatorRegistry typingIndicatorRegistry = new();
@@ -219,10 +153,6 @@ public sealed class TelegramTypingHeartbeatHostedServiceTests
     {
         public List<TelegramConversationScope> TypingActions { get; } = [];
 
-        public List<SentStatusMessage> StatusMessages { get; } = [];
-
-        public List<EditedStatusMessage> EditedStatusMessages { get; } = [];
-
         public Task SendTextMessageAsync(
             TelegramConversationScope conversation,
             string text,
@@ -230,25 +160,13 @@ public sealed class TelegramTypingHeartbeatHostedServiceTests
             CancellationToken cancellationToken)
             => Task.CompletedTask;
 
-        public Task<int?> SendStatusMessageAsync(
-            TelegramConversationScope conversation,
-            string text,
-            CancellationToken cancellationToken)
-        {
-            StatusMessages.Add(new SentStatusMessage(conversation, text));
-            return Task.FromResult<int?>(StatusMessages.Count);
-        }
-
         public Task EditTextMessageAsync(
             TelegramConversationScope conversation,
             int messageId,
             string text,
             IReadOnlyList<IReadOnlyList<TelegramReplyButton>>? buttons,
             CancellationToken cancellationToken)
-        {
-            EditedStatusMessages.Add(new EditedStatusMessage(conversation, messageId, text));
-            return Task.CompletedTask;
-        }
+            => Task.CompletedTask;
 
         public Task AnswerCallbackQueryAsync(string callbackQueryId, string? text, CancellationToken cancellationToken)
             => Task.CompletedTask;
@@ -262,8 +180,4 @@ public sealed class TelegramTypingHeartbeatHostedServiceTests
             return Task.CompletedTask;
         }
     }
-
-    private sealed record SentStatusMessage(TelegramConversationScope Conversation, string Text);
-
-    private sealed record EditedStatusMessage(TelegramConversationScope Conversation, int MessageId, string Text);
 }
