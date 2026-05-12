@@ -12,6 +12,7 @@ namespace Incursa.Codex.Telegram.Telegram;
 /// <param name="EnqueuedAt">UTC time when the prompt was queued.</param>
 /// <param name="MessageThreadId">Telegram forum topic thread ID, when the prompt came from a topic.</param>
 /// <param name="Attachments">Telegram attachments to forward with the prompt.</param>
+/// <param name="PlanMode">Whether the queued prompt should start as a plan-mode turn.</param>
 internal sealed record TelegramQueuedPrompt(
     string Id,
     long UserId,
@@ -21,7 +22,8 @@ internal sealed record TelegramQueuedPrompt(
     string Text,
     DateTimeOffset EnqueuedAt,
     int? MessageThreadId = null,
-    IReadOnlyList<TelegramAttachmentDescriptor>? Attachments = null)
+    IReadOnlyList<TelegramAttachmentDescriptor>? Attachments = null,
+    bool PlanMode = false)
 {
     /// <summary>
     /// Gets the Telegram conversation that owns this queued prompt.

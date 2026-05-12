@@ -517,6 +517,11 @@ internal sealed class CodexTurnSubmission : CodexThreadContextSubmission
     /// Gets selected Codex file IDs attached to the prompt.
     /// </summary>
     public List<string> SelectedFileIds { get; set; } = [];
+
+    /// <summary>
+    /// Gets or sets whether this turn should run as a Telegram plan-mode request.
+    /// </summary>
+    public bool PlanMode { get; set; }
 }
 
 /// <summary>

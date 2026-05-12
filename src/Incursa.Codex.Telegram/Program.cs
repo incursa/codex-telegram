@@ -223,6 +223,7 @@ builder.Services.AddSingleton<ITelegramForumTopicService, TelegramForumTopicServ
 builder.Services.AddSingleton<ITelegramMessageContextStore, TelegramMessageContextStore>();
 builder.Services.AddSingleton<ITelegramBotMessageSender, TelegramBotClientMessageSender>();
 builder.Services.AddSingleton<IOutboundTelegramMessageSender>(sp => (TelegramBotClientMessageSender)sp.GetRequiredService<ITelegramBotMessageSender>());
+builder.Services.AddSingleton<ITelegramPlanInputCoordinator, TelegramPlanInputCoordinator>();
 builder.Services.AddSingleton<OutboundTelegramScheduler>();
 builder.Services.AddSingleton<IOutboundTelegramQueue>(sp => sp.GetRequiredService<OutboundTelegramScheduler>());
 builder.Services.AddSingleton<ITelegramTurnOutputRelay, TelegramTurnOutputRelay>();

@@ -73,6 +73,22 @@ internal static class CodexViewModelMapper
                 true),
             CodexTurnCompletedEvent completedTurn => ToTurnTerminalEventVm(evt.Type, "Turn completed", completedTurn.Turn, "success", fallbackThreadId),
             CodexTurnFailedEvent failedTurn => ToTurnTerminalEventVm(evt.Type, "Turn failed", failedTurn.Turn, "danger", fallbackThreadId),
+            CodexTurnPlanUpdatedEvent planUpdated => ToPlanUpdatedEventVm(planUpdated, fallbackThreadId),
+            CodexPlanDeltaEvent planDelta => new CodexTimelineEntryVm(
+                evt.Type,
+                "Plan mode delta",
+                null,
+                RepairTextOrNull(planDelta.Delta),
+                "neutral",
+                DateTimeOffset.UtcNow,
+                ResolveThreadId(planDelta.ThreadId, fallbackThreadId),
+                planDelta.TurnId,
+                new Dictionary<string, string?>
+                {
+                    ["mode"] = "plan",
+                    ["itemId"] = RepairTextOrNull(planDelta.ItemId),
+                },
+                true),
             CodexItemStartedEvent startedItem => ToItemEventVm(evt.Type, "Item started", ResolveThreadId(startedItem.ThreadId, fallbackThreadId), startedItem.TurnId, startedItem.Item, "info"),
             CodexItemUpdatedEvent updatedItem => ToItemEventVm(evt.Type, "Item updated", ResolveThreadId(updatedItem.ThreadId, fallbackThreadId), updatedItem.TurnId, updatedItem.Item, "info"),
             CodexItemCompletedEvent completedItem => ToItemEventVm(evt.Type, "Item completed", ResolveThreadId(completedItem.ThreadId, fallbackThreadId), completedItem.TurnId, completedItem.Item, "success"),
@@ -243,6 +259,58 @@ internal static class CodexViewModelMapper
                 ["usage"] = turn.Usage?.Total.TotalTokens.ToString(),
             },
             false);
+    }
+
+    private static CodexTimelineEntryVm ToPlanUpdatedEventVm(CodexTurnPlanUpdatedEvent evt, string? fallbackThreadId)
+        => new(
+            evt.Type,
+            "Plan mode update",
+            FormatPlanStatus(evt.Plan),
+            FormatPlanBody(evt),
+            "info",
+            DateTimeOffset.UtcNow,
+            ResolveThreadId(evt.ThreadId, fallbackThreadId),
+            evt.TurnId,
+            new Dictionary<string, string?>
+            {
+                ["mode"] = "plan",
+                ["planStepCount"] = evt.Plan.Count.ToString(),
+                ["planStatus"] = FormatPlanStatus(evt.Plan),
+            },
+            false);
+
+    private static string? FormatPlanBody(CodexTurnPlanUpdatedEvent evt)
+    {
+        List<string> lines = [];
+        if (!string.IsNullOrWhiteSpace(evt.Explanation))
+        {
+            lines.Add(RepairText(evt.Explanation));
+        }
+
+        lines.AddRange(evt.Plan.Select(FormatPlanStep));
+        return lines.Count == 0 ? null : string.Join(Environment.NewLine, lines);
+    }
+
+    private static string FormatPlanStep(CodexTurnPlanStep step)
+        => step.Status switch
+        {
+            CodexTurnPlanStepStatus.Completed => $"[x] {RepairText(step.Step)}",
+            CodexTurnPlanStepStatus.InProgress => $"[>] {RepairText(step.Step)}",
+            _ => $"[ ] {RepairText(step.Step)}",
+        };
+
+    private static string FormatPlanStatus(IReadOnlyList<CodexTurnPlanStep> steps)
+    {
+        if (steps.Count == 0)
+        {
+            return "No steps yet";
+        }
+
+        int completed = steps.Count(step => step.Status == CodexTurnPlanStepStatus.Completed);
+        int inProgress = steps.Count(step => step.Status == CodexTurnPlanStepStatus.InProgress);
+        return inProgress > 0
+            ? $"{completed}/{steps.Count} complete, {inProgress} active"
+            : $"{completed}/{steps.Count} complete";
     }
 
     private static CodexTimelineEntryVm ToItemEventVm(

@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Text.Json.Nodes;
 using Incursa.Codex.Telegram.Models;
 using Incursa.Codex.Telegram.Telegram;
 using Incursa.OpenAI.Codex;
@@ -13,6 +14,7 @@ internal sealed class CodexSessionRuntimeRegistry : ICodexTurnExecutionCoordinat
     private readonly ConcurrentDictionary<string, Lazy<CodexRuntimeSlot>> _threadSlots = new(StringComparer.Ordinal);
     private readonly CodexRuntimeSlot _defaultSlot;
     private readonly IOptions<CodexClientOptions> _clientOptions;
+    private readonly ITelegramPlanInputCoordinator _planInputCoordinator;
     private readonly ICodexRealtimeBroadcaster _broadcaster;
     private readonly ITelegramTurnOutputRelay _telegramTurnOutputRelay;
     private readonly IHostApplicationLifetime _applicationLifetime;
@@ -20,12 +22,14 @@ internal sealed class CodexSessionRuntimeRegistry : ICodexTurnExecutionCoordinat
 
     public CodexSessionRuntimeRegistry(
         IOptions<CodexClientOptions> clientOptions,
+        ITelegramPlanInputCoordinator planInputCoordinator,
         ICodexRealtimeBroadcaster broadcaster,
         ITelegramTurnOutputRelay telegramTurnOutputRelay,
         IHostApplicationLifetime applicationLifetime,
         ILoggerFactory loggerFactory)
     {
         _clientOptions = clientOptions;
+        _planInputCoordinator = planInputCoordinator;
         _broadcaster = broadcaster;
         _telegramTurnOutputRelay = telegramTurnOutputRelay;
         _applicationLifetime = applicationLifetime;
@@ -142,7 +146,7 @@ internal sealed class CodexSessionRuntimeRegistry : ICodexTurnExecutionCoordinat
 
     private CodexRuntimeSlot CreateSlot(bool broadcastRuntimeState)
         => new(
-            new CodexClient(_clientOptions.Value),
+            new CodexClient(CreateClientOptions()),
             new CodexRuntimeState(),
             new CodexTurnExecutionCoordinator(
                 _broadcaster,
@@ -151,6 +155,35 @@ internal sealed class CodexSessionRuntimeRegistry : ICodexTurnExecutionCoordinat
                 _loggerFactory.CreateLogger<CodexTurnExecutionCoordinator>()),
             _broadcaster,
             broadcastRuntimeState);
+
+    private CodexClientOptions CreateClientOptions()
+    {
+        CodexClientOptions source = _clientOptions.Value;
+        CodexApprovalHandler? configuredHandler = source.ApprovalHandler;
+        return new CodexClientOptions
+        {
+            BackendSelection = source.BackendSelection,
+            CodexPathOverride = source.CodexPathOverride,
+            BaseUrl = source.BaseUrl,
+            ApiKey = source.ApiKey,
+            Config = source.Config,
+            Environment = source.Environment,
+            ClientName = source.ClientName,
+            ClientTitle = source.ClientTitle,
+            ClientVersion = source.ClientVersion,
+            ApprovalHandler = (action, request) => _planInputCoordinator.HandleApprovalRequest(action, request)
+                ?? configuredHandler?.Invoke(action, request)
+                ?? CreateDefaultApprovalResponse(action),
+        };
+    }
+
+    private static JsonObject? CreateDefaultApprovalResponse(string action)
+        => action switch
+        {
+            "item/commandExecution/requestApproval" => new JsonObject { ["decision"] = "accept" },
+            "item/fileChange/requestApproval" => new JsonObject { ["decision"] = "accept" },
+            _ => null,
+        };
 
     private CodexRuntimeSlot GetKnownSlotForThread(string threadId)
     {

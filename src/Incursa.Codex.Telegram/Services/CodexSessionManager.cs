@@ -18,6 +18,8 @@ internal interface ICodexSessionManager
 
     Task<CodexThreadExecutionVm> SendAsync(string sessionId, IReadOnlyList<CodexInputItem> input, CancellationToken cancellationToken);
 
+    Task<CodexThreadExecutionVm> SendPlanAsync(string sessionId, string input, CancellationToken cancellationToken);
+
     Task SteerAsync(string sessionId, string input, CancellationToken cancellationToken);
 
     Task SteerAsync(string sessionId, IReadOnlyList<CodexInputItem> input, CancellationToken cancellationToken);
@@ -200,6 +202,26 @@ internal sealed class CodexGatewaySessionManager : ICodexSessionManager
 
         await RequireSessionAsync(sessionId, cancellationToken).ConfigureAwait(false);
         CodexThreadExecutionVm execution = await _gateway.SendTurnAsync(sessionId, input, cancellationToken).ConfigureAwait(false);
+        await _stateStore.TrackSessionAsync(sessionId, cancellationToken).ConfigureAwait(false);
+        return execution;
+    }
+
+    public async Task<CodexThreadExecutionVm> SendPlanAsync(string sessionId, string input, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(input))
+        {
+            throw new ArgumentException("Plan input cannot be empty.", nameof(input));
+        }
+
+        await RequireSessionAsync(sessionId, cancellationToken).ConfigureAwait(false);
+        CodexThreadExecutionVm execution = await _gateway.SendTurnAsync(
+            sessionId,
+            new CodexTurnSubmission
+            {
+                Prompt = CodexPlanModePrompt.Wrap(input),
+                PlanMode = true,
+            },
+            cancellationToken).ConfigureAwait(false);
         await _stateStore.TrackSessionAsync(sessionId, cancellationToken).ConfigureAwait(false);
         return execution;
     }
