@@ -63,6 +63,19 @@ public sealed class TelegramTypingHeartbeatHostedServiceTests
     }
 
     [Fact]
+    public async Task WaitForChangeAsync_ReturnsImmediatelyWhenCodexWaitWasRegisteredBeforeWaitStarted()
+    {
+        TelegramTypingIndicatorRegistry typingIndicatorRegistry = new();
+        long observedVersion = typingIndicatorRegistry.ChangeVersion;
+
+        using IDisposable registration = typingIndicatorRegistry.Track(new TelegramConversationScope(1234, 77));
+
+        await typingIndicatorRegistry
+            .WaitForChangeAsync(TimeSpan.FromSeconds(30), observedVersion, CancellationToken.None)
+            .WaitAsync(TimeSpan.FromSeconds(1));
+    }
+
+    [Fact]
     public async Task SendHeartbeatAsync_WhenDisabledDoesNotSend()
     {
         FakeTurnCoordinator turnCoordinator = new("thread-1");

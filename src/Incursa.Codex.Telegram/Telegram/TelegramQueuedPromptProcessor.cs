@@ -93,6 +93,7 @@ internal sealed class TelegramQueuedPromptProcessor : ITelegramQueuedPromptProce
                 $"Starting queued message for {session.Name}. Live updates will stream here.",
                 null,
                 cancellationToken).ConfigureAwait(false);
+            await _sender.SendTypingActionAsync(prompt.ConversationScope, cancellationToken).ConfigureAwait(false);
 
             CodexThreadExecutionVm execution = prompt.Attachments is { Count: > 0 }
                 ? await _sessionManager.SendAsync(

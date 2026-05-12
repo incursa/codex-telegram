@@ -963,6 +963,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         IDisposable? typingRegistration = _typingIndicatorRegistry.Track(message.ConversationScope);
         try
         {
+            await sender.SendTypingActionAsync(message.ConversationScope, cancellationToken).ConfigureAwait(false);
             _logger.LogDebug(
                 "Sending Telegram message from chat {ChatId} topic {MessageThreadId} to session {SessionId}; text length {TextLength}; attachments {AttachmentCount}.",
                 message.ChatId,
