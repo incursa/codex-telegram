@@ -979,6 +979,9 @@ public sealed class TelegramHostedServiceUpdateAdapterTests
             Acknowledgements.Add(acknowledgement);
             return Task.CompletedTask;
         }
+
+        public Task SendTypingActionAsync(TelegramConversationScope conversation, CancellationToken cancellationToken)
+            => Task.CompletedTask;
     }
 
     private sealed record SentTelegramMessage(TelegramConversationScope Conversation, string Text);

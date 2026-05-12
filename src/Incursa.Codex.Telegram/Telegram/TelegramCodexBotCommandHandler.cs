@@ -28,6 +28,8 @@ internal interface ITelegramBotMessageSender
     Task AnswerCallbackQueryAsync(string callbackQueryId, string? text, CancellationToken cancellationToken);
 
     Task AcknowledgeMessageAsync(TelegramMessageAcknowledgement acknowledgement, CancellationToken cancellationToken);
+
+    Task SendTypingActionAsync(TelegramConversationScope conversation, CancellationToken cancellationToken);
 }
 
 internal interface ITelegramCodexBotUpdateHandler

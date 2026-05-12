@@ -224,10 +224,7 @@ internal sealed class TelegramBotClientMessageSender : ITelegramBotMessageSender
             }
             else
             {
-                await _client.Value.SendChatActionAsync(
-                    acknowledgement.Conversation.ChatId,
-                    acknowledgement.Conversation.MessageThreadId,
-                    cancellationToken).ConfigureAwait(false);
+                await SendTypingActionAsync(acknowledgement.Conversation, cancellationToken).ConfigureAwait(false);
             }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -242,6 +239,34 @@ internal sealed class TelegramBotClientMessageSender : ITelegramBotMessageSender
                 acknowledgement.Conversation.ChatId,
                 acknowledgement.Conversation.MessageThreadId,
                 acknowledgement.MessageId);
+        }
+    }
+
+    public async Task SendTypingActionAsync(TelegramConversationScope conversation, CancellationToken cancellationToken)
+    {
+        if (!_options.Enabled)
+        {
+            return;
+        }
+
+        try
+        {
+            await _client.Value.SendChatActionAsync(
+                conversation.ChatId,
+                conversation.MessageThreadId,
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            _logger.LogDebug(
+                exception,
+                "Telegram typing action failed for chat {ChatId} topic {MessageThreadId}; continuing.",
+                conversation.ChatId,
+                conversation.MessageThreadId);
         }
     }
 

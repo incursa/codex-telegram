@@ -121,6 +121,19 @@ public sealed class TelegramBotClientMessageSenderTests
     }
 
     [Fact]
+    public async Task SendTypingActionAsync_NormalMessageSendsTypingAction()
+    {
+        FakeTelegramBotApiClient client = new();
+        TelegramBotClientMessageSender sender = CreateSender(client);
+
+        await sender.SendTypingActionAsync(new TelegramConversationScope(1234, 55), CancellationToken.None);
+
+        TelegramChatAction action = Assert.Single(client.ChatActions);
+        Assert.Equal(1234, action.ChatId);
+        Assert.Equal(55, action.MessageThreadId);
+    }
+
+    [Fact]
     public async Task SendTextMessageAsync_MainChatSendKeepsThreadNull()
     {
         FakeTelegramBotApiClient client = new();

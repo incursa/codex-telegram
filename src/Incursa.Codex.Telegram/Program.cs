@@ -239,6 +239,7 @@ builder.Services.AddSingleton<ITelegramCodexBotUpdateHandler>(sp => sp.GetRequir
 builder.Services.AddHostedService<CodexWarmupHostedService>();
 builder.Services.AddHostedService<TelegramCodexBotHostedService>();
 builder.Services.AddHostedService<TelegramQueuedPromptProcessorHostedService>();
+builder.Services.AddHostedService<TelegramTypingHeartbeatHostedService>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<OutboundTelegramScheduler>());
 
 IHost host = builder.Build();
