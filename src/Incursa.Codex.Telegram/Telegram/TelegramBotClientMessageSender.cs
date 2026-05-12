@@ -12,6 +12,7 @@ internal sealed class TelegramBotClientMessageSender : ITelegramBotMessageSender
     private readonly TelegramBotOptions _options;
     private readonly ILogger<TelegramBotClientMessageSender> _logger;
     private readonly Lazy<ITelegramBotApiClient> _client;
+    private readonly ITelegramMessageContextStore _messageContextStore;
 
     public TelegramBotClientMessageSender(
         IOptions<TelegramBotOptions> options,
@@ -19,26 +20,42 @@ internal sealed class TelegramBotClientMessageSender : ITelegramBotMessageSender
         : this(
             options.Value,
             logger,
-            new Lazy<ITelegramBotApiClient>(() => new TelegramBotApiClient(new TelegramBotClient(RequireToken(options.Value)))))
+            new Lazy<ITelegramBotApiClient>(() => new TelegramBotApiClient(new TelegramBotClient(RequireToken(options.Value)))),
+            NullTelegramMessageContextStore.Instance)
+    {
+    }
+
+    public TelegramBotClientMessageSender(
+        IOptions<TelegramBotOptions> options,
+        ILogger<TelegramBotClientMessageSender> logger,
+        ITelegramMessageContextStore messageContextStore)
+        : this(
+            options.Value,
+            logger,
+            new Lazy<ITelegramBotApiClient>(() => new TelegramBotApiClient(new TelegramBotClient(RequireToken(options.Value)))),
+            messageContextStore)
     {
     }
 
     internal TelegramBotClientMessageSender(
         TelegramBotOptions options,
         ILogger<TelegramBotClientMessageSender> logger,
-        ITelegramBotApiClient client)
-        : this(options, logger, new Lazy<ITelegramBotApiClient>(() => client))
+        ITelegramBotApiClient client,
+        ITelegramMessageContextStore? messageContextStore = null)
+        : this(options, logger, new Lazy<ITelegramBotApiClient>(() => client), messageContextStore ?? NullTelegramMessageContextStore.Instance)
     {
     }
 
     private TelegramBotClientMessageSender(
         TelegramBotOptions options,
         ILogger<TelegramBotClientMessageSender> logger,
-        Lazy<ITelegramBotApiClient> client)
+        Lazy<ITelegramBotApiClient> client,
+        ITelegramMessageContextStore messageContextStore)
     {
         _options = options;
         _logger = logger;
         _client = client;
+        _messageContextStore = messageContextStore;
     }
 
     public async Task SendTextMessageAsync(
@@ -107,6 +124,44 @@ internal sealed class TelegramBotClientMessageSender : ITelegramBotMessageSender
         }
     }
 
+    public async Task<int?> SendStatusMessageAsync(
+        TelegramConversationScope conversation,
+        string text,
+        CancellationToken cancellationToken)
+    {
+        if (!_options.Enabled)
+        {
+            return null;
+        }
+
+        try
+        {
+            return await SendMessageReturningIdAsync(conversation, text, null, cancellationToken).ConfigureAwait(false);
+        }
+        catch (ApiRequestException exception) when (conversation.MessageThreadId is not null && IsThreadReplyFailure(exception))
+        {
+            _logger.LogWarning(
+                exception,
+                "Telegram rejected a status message to chat {ChatId} topic {MessageThreadId}.",
+                conversation.ChatId,
+                conversation.MessageThreadId);
+            return null;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            _logger.LogDebug(
+                exception,
+                "Telegram status message failed for chat {ChatId} topic {MessageThreadId}; continuing.",
+                conversation.ChatId,
+                conversation.MessageThreadId);
+            return null;
+        }
+    }
+
     public async Task EditTextMessageAsync(
         TelegramConversationScope conversation,
         int messageId,
@@ -126,6 +181,14 @@ internal sealed class TelegramBotClientMessageSender : ITelegramBotMessageSender
                 messageId,
                 text,
                 ToInlineKeyboardMarkup(buttons),
+                cancellationToken).ConfigureAwait(false);
+            await _messageContextStore.RecordAsync(
+                new TelegramMessageContextRecord(
+                    conversation,
+                    messageId,
+                    TelegramMessageAuthor.Bot,
+                    text,
+                    DateTimeOffset.UtcNow),
                 cancellationToken).ConfigureAwait(false);
 
             _logger.LogDebug(
@@ -180,24 +243,97 @@ internal sealed class TelegramBotClientMessageSender : ITelegramBotMessageSender
         }
     }
 
+    public async Task AcknowledgeMessageAsync(TelegramMessageAcknowledgement acknowledgement, CancellationToken cancellationToken)
+    {
+        if (!_options.Enabled)
+        {
+            return;
+        }
+
+        try
+        {
+            if (!string.IsNullOrWhiteSpace(acknowledgement.BusinessConnectionId))
+            {
+                await _client.Value.ReadBusinessMessageAsync(
+                    acknowledgement.BusinessConnectionId,
+                    acknowledgement.Conversation.ChatId,
+                    acknowledgement.MessageId,
+                    cancellationToken).ConfigureAwait(false);
+            }
+            else
+            {
+                await SendTypingActionAsync(acknowledgement.Conversation, cancellationToken).ConfigureAwait(false);
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            _logger.LogDebug(
+                exception,
+                "Telegram acknowledgement failed for chat {ChatId} topic {MessageThreadId} message {MessageId}; continuing.",
+                acknowledgement.Conversation.ChatId,
+                acknowledgement.Conversation.MessageThreadId,
+                acknowledgement.MessageId);
+        }
+    }
+
+    public async Task SendTypingActionAsync(TelegramConversationScope conversation, CancellationToken cancellationToken)
+    {
+        if (!_options.Enabled)
+        {
+            return;
+        }
+
+        try
+        {
+            await _client.Value.SendChatActionAsync(
+                conversation.ChatId,
+                conversation.MessageThreadId,
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            _logger.LogDebug(
+                exception,
+                "Telegram typing action failed for chat {ChatId} topic {MessageThreadId}; continuing.",
+                conversation.ChatId,
+                conversation.MessageThreadId);
+        }
+    }
+
     private Task SendMessageAsync(
         TelegramConversationScope conversation,
         string text,
         IReadOnlyList<IReadOnlyList<TelegramReplyButton>>? buttons,
         CancellationToken cancellationToken)
-        => SendMessageCoreAsync(conversation, text, buttons, cancellationToken);
+        => SendMessageReturningIdAsync(conversation, text, buttons, cancellationToken);
 
-    private async Task SendMessageCoreAsync(
+    private async Task<int> SendMessageReturningIdAsync(
         TelegramConversationScope conversation,
         string text,
         IReadOnlyList<IReadOnlyList<TelegramReplyButton>>? buttons,
         CancellationToken cancellationToken)
     {
-        await _client.Value.SendMessageAsync(
+        int messageId = await _client.Value.SendMessageAsync(
             conversation.ChatId,
             text,
             ToInlineKeyboardMarkup(buttons),
             conversation.MessageThreadId,
+            cancellationToken).ConfigureAwait(false);
+        await _messageContextStore.RecordAsync(
+            new TelegramMessageContextRecord(
+                conversation,
+                messageId,
+                TelegramMessageAuthor.Bot,
+                text,
+                DateTimeOffset.UtcNow),
             cancellationToken).ConfigureAwait(false);
 
         _logger.LogDebug(
@@ -206,6 +342,8 @@ internal sealed class TelegramBotClientMessageSender : ITelegramBotMessageSender
             conversation.MessageThreadId,
             text.Length,
             buttons?.Count ?? 0);
+
+        return messageId;
     }
 
     private static string RequireToken(TelegramBotOptions options)
@@ -250,7 +388,7 @@ internal sealed class TelegramBotClientMessageSender : ITelegramBotMessageSender
 
 internal interface ITelegramBotApiClient
 {
-    Task SendMessageAsync(
+    Task<int> SendMessageAsync(
         long chatId,
         string text,
         InlineKeyboardMarkup? replyMarkup,
@@ -265,6 +403,10 @@ internal interface ITelegramBotApiClient
         CancellationToken cancellationToken);
 
     Task AnswerCallbackQueryAsync(string callbackQueryId, string? text, CancellationToken cancellationToken);
+
+    Task SendChatActionAsync(long chatId, int? messageThreadId, CancellationToken cancellationToken);
+
+    Task ReadBusinessMessageAsync(string businessConnectionId, long chatId, int messageId, CancellationToken cancellationToken);
 }
 
 internal sealed class TelegramTopicSendException : Exception
@@ -284,18 +426,21 @@ internal sealed class TelegramBotApiClient : ITelegramBotApiClient
         _client = client;
     }
 
-    public Task SendMessageAsync(
+    public async Task<int> SendMessageAsync(
         long chatId,
         string text,
         InlineKeyboardMarkup? replyMarkup,
         int? messageThreadId,
         CancellationToken cancellationToken)
-        => _client.SendMessage(
+    {
+        global::Telegram.Bot.Types.Message message = await _client.SendMessage(
             chatId,
             text,
             replyMarkup: replyMarkup,
             messageThreadId: messageThreadId,
-            cancellationToken: cancellationToken);
+            cancellationToken: cancellationToken).ConfigureAwait(false);
+        return message.MessageId;
+    }
 
     public Task EditMessageTextAsync(
         long chatId,
@@ -313,4 +458,14 @@ internal sealed class TelegramBotApiClient : ITelegramBotApiClient
 
     public Task AnswerCallbackQueryAsync(string callbackQueryId, string? text, CancellationToken cancellationToken)
         => _client.AnswerCallbackQuery(callbackQueryId, text, cancellationToken: cancellationToken);
+
+    public Task SendChatActionAsync(long chatId, int? messageThreadId, CancellationToken cancellationToken)
+        => _client.SendChatAction(
+            chatId,
+            global::Telegram.Bot.Types.Enums.ChatAction.Typing,
+            messageThreadId: messageThreadId,
+            cancellationToken: cancellationToken);
+
+    public Task ReadBusinessMessageAsync(string businessConnectionId, long chatId, int messageId, CancellationToken cancellationToken)
+        => _client.ReadBusinessMessage(businessConnectionId, chatId, messageId, cancellationToken);
 }

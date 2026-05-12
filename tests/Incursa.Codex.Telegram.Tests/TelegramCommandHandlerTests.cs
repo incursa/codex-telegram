@@ -571,6 +571,28 @@ public sealed class TelegramCommandHandlerTests
     }
 
     [Fact]
+    public async Task HandleMessageAsync_TracksTypingWhileWaitingForCodexSendToStart()
+    {
+        using CommandHandlerHarness harness = CommandHandlerHarness.Create();
+        TelegramConversationScope conversation = new(5555, null);
+        harness.SessionManager.Sessions.Add(CreateSession("thread-1", "Demo session", harness.Temp.Path));
+        harness.SessionManager.PendingSend = new TaskCompletionSource<CodexThreadExecutionVm>(TaskCreationOptions.RunContinuationsAsynchronously);
+        await harness.StateStore.SetActiveSessionIdAsync(conversation, "thread-1", CancellationToken.None);
+
+        Task handleTask = harness.Handler.HandleMessageAsync(
+            new TelegramInboundMessage(1234, conversation.ChatId, "private", "please inspect the repo"),
+            harness.Sender,
+            CancellationToken.None);
+        await harness.SessionManager.SendStarted.Task.WaitAsync(TimeSpan.FromSeconds(1));
+
+        Assert.Contains(conversation, harness.TypingIndicatorRegistry.GetTargets());
+
+        harness.SessionManager.PendingSend.SetResult(new CodexThreadExecutionVm("thread-1", "turn-1", "running", null));
+        await handleTask.WaitAsync(TimeSpan.FromSeconds(1));
+        Assert.Empty(harness.TypingIndicatorRegistry.GetTargets());
+    }
+
+    [Fact]
     public async Task HandleMessageAsync_QueuesTextWhenSelectedSessionIsReportedRunning()
     {
         using CommandHandlerHarness harness = CommandHandlerHarness.Create();
@@ -592,6 +614,66 @@ public sealed class TelegramCommandHandlerTests
         Assert.Equal("thread-1", queued.SessionId);
         Assert.Equal("tell me about the goal", queued.Text);
         Assert.Contains("Queued for Goal session", Assert.Single(harness.Sender.Sent).Text);
+    }
+
+    [Fact]
+    public async Task HandleMessageAsync_ReplyPlainTextQueuesTelegramContextWhenSessionIsRunning()
+    {
+        using CommandHandlerHarness harness = CommandHandlerHarness.Create();
+        TelegramConversationScope conversation = new(5555, null);
+        harness.SessionManager.Sessions.Add(CreateSession(
+            "thread-1",
+            "Goal session",
+            harness.Temp.Path,
+            CodexSessionStatus.Running));
+        await harness.StateStore.SetActiveSessionIdAsync(conversation, "thread-1", CancellationToken.None);
+        TelegramReplyContext replyContext = new(
+            12,
+            TelegramMessageAuthor.Bot,
+            "I am going to delete the stale file.",
+            [
+                new TelegramMessageContextRecord(conversation, 10, TelegramMessageAuthor.Bot, "First progress update.", DateTimeOffset.Parse("2026-05-10T12:00:00Z")),
+                new TelegramMessageContextRecord(conversation, 11, TelegramMessageAuthor.Bot, "Second progress update.", DateTimeOffset.Parse("2026-05-10T12:01:00Z")),
+            ]);
+
+        await harness.Handler.HandleMessageAsync(
+            new TelegramInboundMessage(1234, conversation.ChatId, "private", "do not delete that", ReplyContext: replyContext),
+            harness.Sender,
+            CancellationToken.None);
+
+        TelegramQueuedPrompt queued = Assert.Single(await harness.StateStore.ListQueuedPromptsAsync(1234, conversation, CancellationToken.None));
+        Assert.Contains("Telegram reply context:", queued.Text);
+        Assert.Contains("First progress update.", queued.Text);
+        Assert.Contains("I am going to delete the stale file.", queued.Text);
+        Assert.Contains("Operator reply:", queued.Text);
+        Assert.Contains("do not delete that", queued.Text);
+    }
+
+    [Fact]
+    public async Task HandleMessageAsync_SteerReplyIncludesTelegramContext()
+    {
+        using CommandHandlerHarness harness = CommandHandlerHarness.Create();
+        TelegramConversationScope conversation = new(5555, null);
+        harness.SessionManager.Sessions.Add(CreateSession("thread-1", "Goal session", harness.Temp.Path));
+        await harness.StateStore.SetActiveSessionIdAsync(conversation, "thread-1", CancellationToken.None);
+        TelegramReplyContext replyContext = new(
+            12,
+            TelegramMessageAuthor.Bot,
+            "I am going to delete the stale file.",
+            []);
+
+        await harness.Handler.HandleMessageAsync(
+            new TelegramInboundMessage(1234, conversation.ChatId, "private", "/steer do not delete that", ReplyContext: replyContext),
+            harness.Sender,
+            CancellationToken.None);
+
+        (string sessionId, object input) = Assert.Single(harness.SessionManager.SteerRequests);
+        Assert.Equal("thread-1", sessionId);
+        string text = Assert.IsType<string>(input);
+        Assert.Contains("Telegram reply context:", text);
+        Assert.Contains("I am going to delete the stale file.", text);
+        Assert.Contains("Operator reply:", text);
+        Assert.Contains("do not delete that", text);
     }
 
     [Fact]
@@ -1786,6 +1868,7 @@ public sealed class TelegramCommandHandlerTests
             FakeProjectCatalogStore projectCatalog,
             TelegramBotStateStore stateStore,
             FakeOutboundTelegramQueue outboundQueue,
+            TelegramTypingIndicatorRegistry typingIndicatorRegistry,
             FakeTelegramForumTopicService topicService,
             FakeAudioTranscriptionService audioTranscription,
             TestTelegramBotMessageSender sender,
@@ -1797,6 +1880,7 @@ public sealed class TelegramCommandHandlerTests
             ProjectCatalog = projectCatalog;
             StateStore = stateStore;
             OutboundQueue = outboundQueue;
+            TypingIndicatorRegistry = typingIndicatorRegistry;
             TopicService = topicService;
             AudioTranscription = audioTranscription;
             Sender = sender;
@@ -1814,6 +1898,8 @@ public sealed class TelegramCommandHandlerTests
         public TelegramBotStateStore StateStore { get; }
 
         public FakeOutboundTelegramQueue OutboundQueue { get; }
+
+        public TelegramTypingIndicatorRegistry TypingIndicatorRegistry { get; }
 
         public FakeTelegramForumTopicService TopicService { get; }
 
@@ -1840,6 +1926,7 @@ public sealed class TelegramCommandHandlerTests
             FakeProjectCatalogStore projectCatalog = new();
             TelegramBotStateStore stateStore = new(codexOptions);
             FakeOutboundTelegramQueue outboundQueue = new();
+            TelegramTypingIndicatorRegistry typingIndicatorRegistry = new();
             FakeTelegramForumTopicService topicService = new();
             FakeAudioTranscriptionService audioTranscription = new();
             TestTelegramBotMessageSender sender = new();
@@ -1853,6 +1940,7 @@ public sealed class TelegramCommandHandlerTests
                 stateStore,
                 new FakeTurnExecutionCoordinator(),
                 new TelegramThreadFollowRegistry(),
+                typingIndicatorRegistry,
                 topicService,
                 audioTranscription,
                 outboundQueue,
@@ -1862,7 +1950,7 @@ public sealed class TelegramCommandHandlerTests
                 }),
                 NullLogger<TelegramCodexBotCommandHandler>.Instance);
 
-            return new CommandHandlerHarness(temp, sessionManager, accountUsage, projectCatalog, stateStore, outboundQueue, topicService, audioTranscription, sender, handler);
+            return new CommandHandlerHarness(temp, sessionManager, accountUsage, projectCatalog, stateStore, outboundQueue, typingIndicatorRegistry, topicService, audioTranscription, sender, handler);
         }
 
         public void Dispose()
@@ -1901,6 +1989,10 @@ public sealed class TelegramCommandHandlerTests
 
         public TaskCompletionSource<CodexSessionModelSettings>? UpdateModelSettingsCompletion { get; set; }
 
+        public TaskCompletionSource<CodexThreadExecutionVm>? PendingSend { get; set; }
+
+        public TaskCompletionSource<bool> SendStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
         public Task<IReadOnlyCollection<CodexSessionSummary>> ListSessionsAsync(CancellationToken cancellationToken)
             => Task.FromResult<IReadOnlyCollection<CodexSessionSummary>>(Sessions.ToArray());
 
@@ -1920,6 +2012,12 @@ public sealed class TelegramCommandHandlerTests
             ThrowNextSendExceptionIfPresent();
             SendSessionIds.Add(sessionId);
             SendRequests.Add(input);
+            SendStarted.TrySetResult(true);
+            if (PendingSend is not null)
+            {
+                return PendingSend.Task;
+            }
+
             return Task.FromResult(new CodexThreadExecutionVm(sessionId, "turn-1", "running", null));
         }
 
@@ -1928,6 +2026,12 @@ public sealed class TelegramCommandHandlerTests
             ThrowNextSendExceptionIfPresent();
             SendSessionIds.Add(sessionId);
             SendRequests.Add(input);
+            SendStarted.TrySetResult(true);
+            if (PendingSend is not null)
+            {
+                return PendingSend.Task;
+            }
+
             return Task.FromResult(new CodexThreadExecutionVm(sessionId, "turn-1", "running", null));
         }
 
@@ -2171,6 +2275,15 @@ public sealed class TelegramCommandHandlerTests
             return Task.CompletedTask;
         }
 
+        public Task<int?> SendStatusMessageAsync(
+            TelegramConversationScope conversation,
+            string text,
+            CancellationToken cancellationToken)
+        {
+            Sent.Add(new SentTelegramMessage(conversation, text, null));
+            return Task.FromResult<int?>(Sent.Count);
+        }
+
         public Task EditTextMessageAsync(
             TelegramConversationScope conversation,
             int messageId,
@@ -2187,6 +2300,12 @@ public sealed class TelegramCommandHandlerTests
             CallbackAnswers.Add(new CallbackAnswer(callbackQueryId, text));
             return Task.CompletedTask;
         }
+
+        public Task AcknowledgeMessageAsync(TelegramMessageAcknowledgement acknowledgement, CancellationToken cancellationToken)
+            => Task.CompletedTask;
+
+        public Task SendTypingActionAsync(TelegramConversationScope conversation, CancellationToken cancellationToken)
+            => Task.CompletedTask;
     }
 
     private sealed record SentTelegramMessage(

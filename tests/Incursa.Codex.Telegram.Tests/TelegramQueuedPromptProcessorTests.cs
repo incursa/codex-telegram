@@ -42,6 +42,25 @@ public sealed class TelegramQueuedPromptProcessorTests
     }
 
     [Fact]
+    public async Task ProcessNextAsync_AnnouncesQueuedPromptBeforeWaitingForTurnStart()
+    {
+        using ProcessorHarness harness = ProcessorHarness.Create();
+        TelegramQueuedPrompt prompt = CreatePrompt("prompt-1", "thread-1", "queued text");
+        harness.SessionManager.Sessions.Add(CreateSession("thread-1"));
+        harness.SessionManager.PendingTextSend = new TaskCompletionSource<CodexThreadExecutionVm>(TaskCreationOptions.RunContinuationsAsynchronously);
+        await EnqueueSelectedPromptAsync(harness, prompt);
+
+        Task<bool> processTask = harness.Processor.ProcessNextAsync(CancellationToken.None);
+        await harness.SessionManager.TextSendStarted.Task.WaitAsync(TimeSpan.FromSeconds(1));
+
+        SentTelegramMessage sent = Assert.Single(harness.Sender.Sent);
+        Assert.Contains("Starting queued message for thread-1", sent.Text);
+
+        harness.SessionManager.PendingTextSend.SetResult(new CodexThreadExecutionVm("thread-1", "turn-1", "running", null));
+        Assert.True(await processTask.WaitAsync(TimeSpan.FromSeconds(1)));
+    }
+
+    [Fact]
     public async Task ProcessNextAsync_FollowsReturnedExecutionThreadWhenCodexAliasesSessionId()
     {
         using ProcessorHarness harness = ProcessorHarness.Create();
@@ -290,7 +309,10 @@ public sealed class TelegramQueuedPromptProcessorTests
         bool processed = await harness.Processor.ProcessNextAsync(CancellationToken.None);
 
         Assert.False(processed);
-        Assert.Empty(harness.Sender.Sent);
+        Assert.Collection(
+            harness.Sender.Sent,
+            sent => Assert.Contains("Starting queued message for thread-1", sent.Text),
+            sent => Assert.Contains("still queued because another Codex turn started first", sent.Text));
         TelegramConversationState state = Assert.Single(await harness.StateStore.ListConversationStatesAsync(CancellationToken.None));
         Assert.Equal(1, state.QueuedPromptCount);
     }
@@ -316,9 +338,14 @@ public sealed class TelegramQueuedPromptProcessorTests
         bool processed = await harness.Processor.ProcessNextAsync(CancellationToken.None);
 
         Assert.True(processed);
-        SentTelegramMessage sent = Assert.Single(harness.Sender.Sent);
-        Assert.Contains("Queued message for Failing session failed to start", sent.Text);
-        Assert.Contains("codex unavailable", sent.Text);
+        Assert.Collection(
+            harness.Sender.Sent,
+            sent => Assert.Contains("Starting queued message for Failing session", sent.Text),
+            sent =>
+            {
+                Assert.Contains("Queued message for Failing session failed to start", sent.Text);
+                Assert.Contains("codex unavailable", sent.Text);
+            });
         TelegramConversationState state = Assert.Single(await harness.StateStore.ListConversationStatesAsync(CancellationToken.None));
         Assert.Equal(0, state.QueuedPromptCount);
         Assert.False(File.Exists(documentPath));
@@ -367,6 +394,7 @@ public sealed class TelegramQueuedPromptProcessorTests
             FakeCodexSessionManager sessionManager,
             FakeTurnExecutionCoordinator turnCoordinator,
             TelegramThreadFollowRegistry followRegistry,
+            TelegramTypingIndicatorRegistry typingIndicatorRegistry,
             FakeOutboundTelegramQueue outboundQueue,
             TestTelegramBotMessageSender sender,
             TelegramQueuedPromptProcessor processor)
@@ -376,6 +404,7 @@ public sealed class TelegramQueuedPromptProcessorTests
             SessionManager = sessionManager;
             TurnCoordinator = turnCoordinator;
             FollowRegistry = followRegistry;
+            TypingIndicatorRegistry = typingIndicatorRegistry;
             OutboundQueue = outboundQueue;
             Sender = sender;
             Processor = processor;
@@ -390,6 +419,8 @@ public sealed class TelegramQueuedPromptProcessorTests
         public FakeTurnExecutionCoordinator TurnCoordinator { get; }
 
         public TelegramThreadFollowRegistry FollowRegistry { get; }
+
+        public TelegramTypingIndicatorRegistry TypingIndicatorRegistry { get; }
 
         public FakeOutboundTelegramQueue OutboundQueue { get; }
 
@@ -411,6 +442,7 @@ public sealed class TelegramQueuedPromptProcessorTests
             FakeCodexSessionManager sessionManager = new();
             FakeTurnExecutionCoordinator turnCoordinator = new();
             TelegramThreadFollowRegistry followRegistry = new();
+            TelegramTypingIndicatorRegistry typingIndicatorRegistry = new();
             FakeOutboundTelegramQueue outboundQueue = new();
             TestTelegramBotMessageSender sender = new();
             TelegramQueuedPromptProcessor processor = new(
@@ -418,6 +450,7 @@ public sealed class TelegramQueuedPromptProcessorTests
                 sessionManager,
                 turnCoordinator,
                 followRegistry,
+                typingIndicatorRegistry,
                 outboundQueue,
                 sender,
                 NullLogger<TelegramQueuedPromptProcessor>.Instance);
@@ -428,6 +461,7 @@ public sealed class TelegramQueuedPromptProcessorTests
                 sessionManager,
                 turnCoordinator,
                 followRegistry,
+                typingIndicatorRegistry,
                 outboundQueue,
                 sender,
                 processor);
@@ -449,6 +483,10 @@ public sealed class TelegramQueuedPromptProcessorTests
 
         public string? ExecutionThreadId { get; set; }
 
+        public TaskCompletionSource<CodexThreadExecutionVm>? PendingTextSend { get; set; }
+
+        public TaskCompletionSource<bool> TextSendStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
         public Task<IReadOnlyCollection<CodexSessionSummary>> ListSessionsAsync(CancellationToken cancellationToken)
             => Task.FromResult<IReadOnlyCollection<CodexSessionSummary>>(Sessions.ToArray());
 
@@ -466,6 +504,12 @@ public sealed class TelegramQueuedPromptProcessorTests
             }
 
             TextSends.Add((sessionId, input));
+            TextSendStarted.TrySetResult(true);
+            if (PendingTextSend is not null)
+            {
+                return PendingTextSend.Task;
+            }
+
             return Task.FromResult(new CodexThreadExecutionVm(ExecutionThreadId ?? sessionId, "turn-1", "running", null));
         }
 
@@ -577,6 +621,15 @@ public sealed class TelegramQueuedPromptProcessorTests
             return Task.CompletedTask;
         }
 
+        public Task<int?> SendStatusMessageAsync(
+            TelegramConversationScope conversation,
+            string text,
+            CancellationToken cancellationToken)
+        {
+            Sent.Add(new SentTelegramMessage(conversation, text));
+            return Task.FromResult<int?>(Sent.Count);
+        }
+
         public Task EditTextMessageAsync(
             TelegramConversationScope conversation,
             int messageId,
@@ -586,6 +639,12 @@ public sealed class TelegramQueuedPromptProcessorTests
             => Task.CompletedTask;
 
         public Task AnswerCallbackQueryAsync(string callbackQueryId, string? text, CancellationToken cancellationToken)
+            => Task.CompletedTask;
+
+        public Task AcknowledgeMessageAsync(TelegramMessageAcknowledgement acknowledgement, CancellationToken cancellationToken)
+            => Task.CompletedTask;
+
+        public Task SendTypingActionAsync(TelegramConversationScope conversation, CancellationToken cancellationToken)
             => Task.CompletedTask;
     }
 

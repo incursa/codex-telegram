@@ -89,6 +89,51 @@ public sealed class TelegramBotClientMessageSenderTests
     }
 
     [Fact]
+    public async Task AcknowledgeMessageAsync_NormalMessageSendsTypingAction()
+    {
+        FakeTelegramBotApiClient client = new();
+        TelegramBotClientMessageSender sender = CreateSender(client);
+
+        await sender.AcknowledgeMessageAsync(
+            new TelegramMessageAcknowledgement(new TelegramConversationScope(1234, 55), 42, null),
+            CancellationToken.None);
+
+        TelegramChatAction action = Assert.Single(client.ChatActions);
+        Assert.Equal(1234, action.ChatId);
+        Assert.Equal(55, action.MessageThreadId);
+    }
+
+    [Fact]
+    public async Task AcknowledgeMessageAsync_BusinessMessageMarksMessageRead()
+    {
+        FakeTelegramBotApiClient client = new();
+        TelegramBotClientMessageSender sender = CreateSender(client);
+
+        await sender.AcknowledgeMessageAsync(
+            new TelegramMessageAcknowledgement(new TelegramConversationScope(1234, null), 42, "business-1"),
+            CancellationToken.None);
+
+        BusinessRead read = Assert.Single(client.BusinessReads);
+        Assert.Equal("business-1", read.BusinessConnectionId);
+        Assert.Equal(1234, read.ChatId);
+        Assert.Equal(42, read.MessageId);
+        Assert.Empty(client.ChatActions);
+    }
+
+    [Fact]
+    public async Task SendTypingActionAsync_NormalMessageSendsTypingAction()
+    {
+        FakeTelegramBotApiClient client = new();
+        TelegramBotClientMessageSender sender = CreateSender(client);
+
+        await sender.SendTypingActionAsync(new TelegramConversationScope(1234, 55), CancellationToken.None);
+
+        TelegramChatAction action = Assert.Single(client.ChatActions);
+        Assert.Equal(1234, action.ChatId);
+        Assert.Equal(55, action.MessageThreadId);
+    }
+
+    [Fact]
     public async Task SendTextMessageAsync_MainChatSendKeepsThreadNull()
     {
         FakeTelegramBotApiClient client = new();
@@ -104,6 +149,27 @@ public sealed class TelegramBotClientMessageSenderTests
         Assert.Equal(1234, sent.ChatId);
         Assert.Null(sent.MessageThreadId);
         Assert.Equal("main chat status", sent.Text);
+    }
+
+    [Fact]
+    public async Task SendTextMessageAsync_RecordsMessageContext()
+    {
+        FakeTelegramBotApiClient client = new();
+        TelegramMessageContextStore contextStore = new();
+        TelegramBotClientMessageSender sender = CreateSender(client, messageContextStore: contextStore);
+        TelegramConversationScope conversation = new(1234, null);
+
+        await sender.SendTextMessageAsync(conversation, "main chat status", null, CancellationToken.None);
+
+        TelegramReplyContext? context = await contextStore.ResolveReplyContextAsync(
+            conversation,
+            1001,
+            TelegramMessageAuthor.Bot,
+            null,
+            CancellationToken.None);
+        Assert.NotNull(context);
+        Assert.Equal("main chat status", context.Text);
+        Assert.Equal(TelegramMessageAuthor.Bot, context.Author);
     }
 
     [Fact]
@@ -464,7 +530,8 @@ public sealed class TelegramBotClientMessageSenderTests
 
     private static TelegramBotClientMessageSender CreateSender(
         FakeTelegramBotApiClient client,
-        ILogger<TelegramBotClientMessageSender>? logger = null)
+        ILogger<TelegramBotClientMessageSender>? logger = null,
+        ITelegramMessageContextStore? messageContextStore = null)
         => new(
             new TelegramBotOptions
             {
@@ -472,7 +539,8 @@ public sealed class TelegramBotClientMessageSenderTests
                 Token = "123:token",
             },
             logger ?? NullLogger<TelegramBotClientMessageSender>.Instance,
-            client);
+            client,
+            messageContextStore);
 
     private sealed class FakeTelegramBotApiClient : ITelegramBotApiClient
     {
@@ -482,26 +550,31 @@ public sealed class TelegramBotClientMessageSenderTests
 
         public List<CallbackAnswer> CallbackAnswers { get; } = [];
 
+        public List<TelegramChatAction> ChatActions { get; } = [];
+
+        public List<BusinessRead> BusinessReads { get; } = [];
+
         public Queue<Exception> SendFailures { get; } = new();
 
         public Queue<Exception> EditFailures { get; } = new();
 
         public Queue<Exception> AnswerFailures { get; } = new();
 
-        public Task SendMessageAsync(
+        public Task<int> SendMessageAsync(
             long chatId,
             string text,
             InlineKeyboardMarkup? replyMarkup,
             int? messageThreadId,
             CancellationToken cancellationToken)
         {
-            SentMessages.Add(new SentTelegramApiMessage(chatId, text, messageThreadId, replyMarkup));
+            int messageId = 1000 + SentMessages.Count + 1;
+            SentMessages.Add(new SentTelegramApiMessage(messageId, chatId, text, messageThreadId, replyMarkup));
             if (SendFailures.Count > 0)
             {
                 throw SendFailures.Dequeue();
             }
 
-            return Task.CompletedTask;
+            return Task.FromResult(messageId);
         }
 
         public Task EditMessageTextAsync(
@@ -530,9 +603,22 @@ public sealed class TelegramBotClientMessageSenderTests
 
             return Task.CompletedTask;
         }
+
+        public Task SendChatActionAsync(long chatId, int? messageThreadId, CancellationToken cancellationToken)
+        {
+            ChatActions.Add(new TelegramChatAction(chatId, messageThreadId));
+            return Task.CompletedTask;
+        }
+
+        public Task ReadBusinessMessageAsync(string businessConnectionId, long chatId, int messageId, CancellationToken cancellationToken)
+        {
+            BusinessReads.Add(new BusinessRead(businessConnectionId, chatId, messageId));
+            return Task.CompletedTask;
+        }
     }
 
     private sealed record SentTelegramApiMessage(
+        int MessageId,
         long ChatId,
         string Text,
         int? MessageThreadId,
@@ -541,6 +627,10 @@ public sealed class TelegramBotClientMessageSenderTests
     private sealed record EditedTelegramApiMessage(long ChatId, int MessageId, string Text, InlineKeyboardMarkup? ReplyMarkup);
 
     private sealed record CallbackAnswer(string CallbackQueryId, string? Text);
+
+    private sealed record TelegramChatAction(long ChatId, int? MessageThreadId);
+
+    private sealed record BusinessRead(string BusinessConnectionId, long ChatId, int MessageId);
 
     private sealed record LogEntry(LogLevel Level, string Message, Exception? Exception);
 

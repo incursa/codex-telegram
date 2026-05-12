@@ -15,6 +15,7 @@ internal sealed class TelegramQueuedPromptProcessor : ITelegramQueuedPromptProce
     private readonly ICodexSessionManager _sessionManager;
     private readonly ICodexTurnExecutionCoordinator _turnCoordinator;
     private readonly ITelegramThreadFollowRegistry _followRegistry;
+    private readonly ITelegramTypingIndicatorRegistry _typingIndicatorRegistry;
     private readonly IOutboundTelegramQueue _outboundQueue;
     private readonly ITelegramBotMessageSender _sender;
     private readonly ILogger<TelegramQueuedPromptProcessor> _logger;
@@ -24,6 +25,7 @@ internal sealed class TelegramQueuedPromptProcessor : ITelegramQueuedPromptProce
         ICodexSessionManager sessionManager,
         ICodexTurnExecutionCoordinator turnCoordinator,
         ITelegramThreadFollowRegistry followRegistry,
+        ITelegramTypingIndicatorRegistry typingIndicatorRegistry,
         IOutboundTelegramQueue outboundQueue,
         ITelegramBotMessageSender sender,
         ILogger<TelegramQueuedPromptProcessor> logger)
@@ -32,6 +34,7 @@ internal sealed class TelegramQueuedPromptProcessor : ITelegramQueuedPromptProce
         _sessionManager = sessionManager;
         _turnCoordinator = turnCoordinator;
         _followRegistry = followRegistry;
+        _typingIndicatorRegistry = typingIndicatorRegistry;
         _outboundQueue = outboundQueue;
         _sender = sender;
         _logger = logger;
@@ -84,6 +87,14 @@ internal sealed class TelegramQueuedPromptProcessor : ITelegramQueuedPromptProce
             }
 
             _followRegistry.FollowThread(prompt.ConversationScope, prompt.SessionId);
+            using IDisposable typingRegistration = _typingIndicatorRegistry.Track(prompt.ConversationScope);
+            await _sender.SendTextMessageAsync(
+                prompt.ConversationScope,
+                $"Starting queued message for {session.Name}. Live updates will stream here.",
+                null,
+                cancellationToken).ConfigureAwait(false);
+            await _sender.SendTypingActionAsync(prompt.ConversationScope, cancellationToken).ConfigureAwait(false);
+
             CodexThreadExecutionVm execution = prompt.Attachments is { Count: > 0 }
                 ? await _sessionManager.SendAsync(
                     prompt.SessionId,
@@ -91,11 +102,6 @@ internal sealed class TelegramQueuedPromptProcessor : ITelegramQueuedPromptProce
                     cancellationToken).ConfigureAwait(false)
                 : await _sessionManager.SendAsync(prompt.SessionId, prompt.Text, cancellationToken).ConfigureAwait(false);
             _followRegistry.FollowThread(prompt.ConversationScope, execution.ThreadId);
-            await _sender.SendTextMessageAsync(
-                prompt.ConversationScope,
-                $"Starting queued message for {session.Name}. Live updates will stream here.",
-                null,
-                cancellationToken).ConfigureAwait(false);
             // Codex may read local image paths after SendAsync returns.
             return true;
         }
@@ -103,6 +109,11 @@ internal sealed class TelegramQueuedPromptProcessor : ITelegramQueuedPromptProce
         {
             await _stateStore.EnqueueQueuedPromptAsync(prompt, cancellationToken).ConfigureAwait(false);
             _logger.LogDebug("Queued prompt {PromptId} for session {SessionId} was requeued because another turn started first.", prompt.Id, prompt.SessionId);
+            await _sender.SendTextMessageAsync(
+                prompt.ConversationScope,
+                $"Queued message for {session.Name} is still queued because another Codex turn started first.",
+                null,
+                cancellationToken).ConfigureAwait(false);
             return false;
         }
         catch (Exception exception)

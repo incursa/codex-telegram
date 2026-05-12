@@ -216,7 +216,9 @@ builder.Services.AddSingleton<CodexProjectCatalogStore>();
 builder.Services.AddSingleton<ICodexProjectCatalogStore>(sp => sp.GetRequiredService<CodexProjectCatalogStore>());
 builder.Services.AddSingleton<CodexWorkspaceBrowser>();
 builder.Services.AddSingleton<ITelegramThreadFollowRegistry, TelegramThreadFollowRegistry>();
+builder.Services.AddSingleton<ITelegramTypingIndicatorRegistry, TelegramTypingIndicatorRegistry>();
 builder.Services.AddSingleton<ITelegramForumTopicService, TelegramForumTopicService>();
+builder.Services.AddSingleton<ITelegramMessageContextStore, TelegramMessageContextStore>();
 builder.Services.AddSingleton<ITelegramBotMessageSender, TelegramBotClientMessageSender>();
 builder.Services.AddSingleton<IOutboundTelegramMessageSender>(sp => (TelegramBotClientMessageSender)sp.GetRequiredService<ITelegramBotMessageSender>());
 builder.Services.AddSingleton<OutboundTelegramScheduler>();
@@ -238,6 +240,7 @@ builder.Services.AddSingleton<ITelegramCodexBotUpdateHandler>(sp => sp.GetRequir
 builder.Services.AddHostedService<CodexWarmupHostedService>();
 builder.Services.AddHostedService<TelegramCodexBotHostedService>();
 builder.Services.AddHostedService<TelegramQueuedPromptProcessorHostedService>();
+builder.Services.AddHostedService<TelegramTypingHeartbeatHostedService>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<OutboundTelegramScheduler>());
 
 IHost host = builder.Build();
