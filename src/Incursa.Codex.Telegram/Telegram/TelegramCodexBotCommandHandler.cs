@@ -1081,12 +1081,6 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
                 message.MessageThreadId,
                 execution.TurnId,
                 execution.ThreadId);
-            await ReplyAsync(
-                sender,
-                message.ConversationScope,
-                $"Started turn for {session.Name}. Live updates will stream here.",
-                BuildSessionButtons([session], includeUse: false),
-                CancellationToken.None).ConfigureAwait(false);
         }
         catch (InvalidOperationException exception) when (exception.Message.Contains("already active", StringComparison.OrdinalIgnoreCase))
         {

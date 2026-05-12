@@ -84,6 +84,12 @@ internal sealed class TelegramQueuedPromptProcessor : ITelegramQueuedPromptProce
             }
 
             _followRegistry.FollowThread(prompt.ConversationScope, prompt.SessionId);
+            await _sender.SendTextMessageAsync(
+                prompt.ConversationScope,
+                $"Starting queued message for {session.Name}. Live updates will stream here.",
+                null,
+                cancellationToken).ConfigureAwait(false);
+
             CodexThreadExecutionVm execution = prompt.Attachments is { Count: > 0 }
                 ? await _sessionManager.SendAsync(
                     prompt.SessionId,
@@ -91,11 +97,6 @@ internal sealed class TelegramQueuedPromptProcessor : ITelegramQueuedPromptProce
                     cancellationToken).ConfigureAwait(false)
                 : await _sessionManager.SendAsync(prompt.SessionId, prompt.Text, cancellationToken).ConfigureAwait(false);
             _followRegistry.FollowThread(prompt.ConversationScope, execution.ThreadId);
-            await _sender.SendTextMessageAsync(
-                prompt.ConversationScope,
-                $"Starting queued message for {session.Name}. Live updates will stream here.",
-                null,
-                cancellationToken).ConfigureAwait(false);
             // Codex may read local image paths after SendAsync returns.
             return true;
         }
@@ -103,6 +104,11 @@ internal sealed class TelegramQueuedPromptProcessor : ITelegramQueuedPromptProce
         {
             await _stateStore.EnqueueQueuedPromptAsync(prompt, cancellationToken).ConfigureAwait(false);
             _logger.LogDebug("Queued prompt {PromptId} for session {SessionId} was requeued because another turn started first.", prompt.Id, prompt.SessionId);
+            await _sender.SendTextMessageAsync(
+                prompt.ConversationScope,
+                $"Queued message for {session.Name} is still queued because another Codex turn started first.",
+                null,
+                cancellationToken).ConfigureAwait(false);
             return false;
         }
         catch (Exception exception)
