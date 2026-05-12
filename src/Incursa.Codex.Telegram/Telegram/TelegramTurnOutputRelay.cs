@@ -30,7 +30,8 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
     private const string TurnStartedType = "turn.started";
     private const string TurnCompletedType = "turn.completed";
     private const string TurnFailedType = "turn.failed";
-    private const string TurnFinishedMarker = "~~ fin ~~";
+    private const string TurnCompletionMarker = "~~ turn complete ~~";
+    private const string LegacyTurnFinishedMarker = "~~ fin ~~";
     private const int InternalProgressMaxCharacters = 2000;
     private const long MaxTelegramPhotoBytes = 10L * 1024L * 1024L;
     private const long MaxTelegramDocumentBytes = 50L * 1024L * 1024L;
@@ -127,7 +128,7 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
 
         if (isTerminal && ShouldPublishFinishedMarker(entry, bufferedAgentMessage, publishedTerminalText))
         {
-            await PublishTextAsync(entry.ThreadId, entry.TurnId, entry.Type + ".finished", TurnFinishedMarker, CodexOutboundMessageKind.Completion, OutboundPriority.High, cancellationToken).ConfigureAwait(false);
+            await PublishTextAsync(entry.ThreadId, entry.TurnId, entry.Type + ".finished", TurnCompletionMarker, CodexOutboundMessageKind.Completion, OutboundPriority.High, cancellationToken).ConfigureAwait(false);
         }
 
         if (isTerminal)
@@ -444,9 +445,14 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
     private static string? RemoveTurnFinishedMarker(string? text)
     {
         string normalized = string.IsNullOrWhiteSpace(text) ? string.Empty : text.Trim();
-        if (normalized.EndsWith(TurnFinishedMarker, StringComparison.Ordinal))
+        if (normalized.EndsWith(TurnCompletionMarker, StringComparison.Ordinal))
         {
-            normalized = normalized[..^TurnFinishedMarker.Length].TrimEnd();
+            normalized = normalized[..^TurnCompletionMarker.Length].TrimEnd();
+        }
+
+        if (normalized.EndsWith(LegacyTurnFinishedMarker, StringComparison.Ordinal))
+        {
+            normalized = normalized[..^LegacyTurnFinishedMarker.Length].TrimEnd();
         }
 
         return string.IsNullOrWhiteSpace(normalized) ? null : normalized;

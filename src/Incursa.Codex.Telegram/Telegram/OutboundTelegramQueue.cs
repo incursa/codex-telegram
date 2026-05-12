@@ -294,7 +294,8 @@ internal sealed class OutboundTelegramScheduler : BackgroundService, IOutboundTe
     private const int GlobalSendBudgetWindowSeconds = 1;
     private const int DefaultRateLimitBackoffSeconds = 5;
     private const int SchedulerFailureDelaySeconds = 1;
-    private const string TurnFinishedMarker = "~~ fin ~~";
+    private const string TurnCompletionMarker = "~~ turn complete ~~";
+    private const string LegacyTurnFinishedMarker = "~~ fin ~~";
     private readonly ConcurrentDictionary<TelegramDestinationKey, DestinationBuffer> _buffers = new();
     private readonly ConcurrentDictionary<TelegramSendBudgetKey, BudgetState> _chatBudgets = new();
     private readonly Queue<DateTimeOffset> _globalSendTimestamps = new();
@@ -1051,7 +1052,8 @@ internal sealed class OutboundTelegramScheduler : BackgroundService, IOutboundTe
 
         private static bool IsStandaloneMessage(PendingOutboundItem message)
             => message.File is not null
-                || string.Equals(FormatBatchItem(message.Text), TurnFinishedMarker, StringComparison.Ordinal);
+                || string.Equals(FormatBatchItem(message.Text), TurnCompletionMarker, StringComparison.Ordinal)
+                || string.Equals(FormatBatchItem(message.Text), LegacyTurnFinishedMarker, StringComparison.Ordinal);
     }
 
     /// <summary>

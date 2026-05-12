@@ -434,7 +434,7 @@ public sealed class TelegramTurnOutputRelayTests
             {
                 Assert.Equal(CodexOutboundMessageKind.Completion, message.Kind);
                 Assert.Equal(OutboundPriority.High, message.Priority);
-                Assert.Equal("~~ fin ~~", message.Text);
+                Assert.Equal("~~ turn complete ~~", message.Text);
             });
     }
 
@@ -500,7 +500,7 @@ public sealed class TelegramTurnOutputRelayTests
         Assert.Collection(
             queue.Messages,
             message => Assert.Equal("short final", message.Text),
-            message => Assert.Equal("~~ fin ~~", message.Text));
+            message => Assert.Equal("~~ turn complete ~~", message.Text));
     }
 
     [Fact]
@@ -517,7 +517,7 @@ public sealed class TelegramTurnOutputRelayTests
         Assert.Collection(
             queue.Messages,
             message => Assert.Equal("Finished already", message.Text),
-            message => Assert.Equal("~~ fin ~~", message.Text));
+            message => Assert.Equal("~~ turn complete ~~", message.Text));
     }
 
     [Fact]
@@ -531,7 +531,7 @@ public sealed class TelegramTurnOutputRelayTests
             CreateEntry(type: "turn.completed", title: "Turn completed", body: null, severity: "success"),
             CancellationToken.None);
 
-        Assert.Equal("~~ fin ~~", Assert.Single(queue.Messages).Text);
+        Assert.Equal("~~ turn complete ~~", Assert.Single(queue.Messages).Text);
     }
 
     [Fact]
@@ -649,13 +649,13 @@ public sealed class TelegramTurnOutputRelayTests
                 Assert.Equal(OutboundPriority.Critical, message.Priority);
                 Assert.Contains("Turn failed", message.Text);
                 Assert.Contains("Codex crashed.", message.Text);
-                Assert.DoesNotContain("~~ fin ~~", message.Text);
+                Assert.DoesNotContain("~~ turn complete ~~", message.Text);
             },
             message =>
             {
                 Assert.Equal(CodexOutboundMessageKind.Completion, message.Kind);
                 Assert.Equal(OutboundPriority.High, message.Priority);
-                Assert.Equal("~~ fin ~~", message.Text);
+                Assert.Equal("~~ turn complete ~~", message.Text);
             });
     }
 

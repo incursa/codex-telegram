@@ -347,7 +347,7 @@ public sealed class OutboundTelegramQueueTests
 
         await scheduler.EnqueueAsync(CreateMessage(CodexOutboundMessageKind.Update, "first update"), CancellationToken.None);
         await scheduler.EnqueueAsync(CreateMessage(CodexOutboundMessageKind.Completion, "second update"), CancellationToken.None);
-        await scheduler.EnqueueAsync(CreateMessage(CodexOutboundMessageKind.Completion, "~~ fin ~~"), CancellationToken.None);
+        await scheduler.EnqueueAsync(CreateMessage(CodexOutboundMessageKind.Completion, "~~ turn complete ~~"), CancellationToken.None);
 
         Assert.True(await scheduler.ProcessNextAsync(CancellationToken.None));
         Assert.True(await scheduler.ProcessNextAsync(CancellationToken.None));
@@ -358,9 +358,9 @@ public sealed class OutboundTelegramQueueTests
             {
                 Assert.Contains("first update", message.Text);
                 Assert.Contains("second update", message.Text);
-                Assert.DoesNotContain("~~ fin ~~", message.Text);
+                Assert.DoesNotContain("~~ turn complete ~~", message.Text);
             },
-            message => Assert.Equal("~~ fin ~~", message.Text));
+            message => Assert.Equal("~~ turn complete ~~", message.Text));
     }
 
     [Fact]
