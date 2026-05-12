@@ -113,6 +113,8 @@ internal sealed class TelegramTypingIndicatorRegistry : ITelegramTypingIndicator
 internal sealed class TelegramTypingHeartbeatHostedService : BackgroundService
 {
     private static readonly TimeSpan HeartbeatInterval = TimeSpan.FromSeconds(3);
+    private static readonly TimeSpan VisibleStatusInitialDelay = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan VisibleStatusUpdateInterval = TimeSpan.FromSeconds(30);
 
     private readonly TelegramBotOptions _options;
     private readonly ICodexTurnExecutionCoordinator _turnCoordinator;
@@ -120,6 +122,7 @@ internal sealed class TelegramTypingHeartbeatHostedService : BackgroundService
     private readonly ITelegramTypingIndicatorRegistry _typingIndicatorRegistry;
     private readonly ITelegramBotMessageSender _sender;
     private readonly ILogger<TelegramTypingHeartbeatHostedService> _logger;
+    private readonly Dictionary<TelegramConversationScope, VisibleStatusState> _visibleStatuses = [];
 
     public TelegramTypingHeartbeatHostedService(
         IOptions<TelegramBotOptions> options,
@@ -155,8 +158,9 @@ internal sealed class TelegramTypingHeartbeatHostedService : BackgroundService
         {
             try
             {
+                DateTimeOffset now = DateTimeOffset.UtcNow;
                 long observedVersion = _typingIndicatorRegistry.ChangeVersion;
-                await SendHeartbeatAsync(stoppingToken).ConfigureAwait(false);
+                await SendHeartbeatAsync(now, stoppingToken).ConfigureAwait(false);
                 await _typingIndicatorRegistry.WaitForChangeAsync(
                     HeartbeatInterval,
                     observedVersion,
@@ -176,7 +180,10 @@ internal sealed class TelegramTypingHeartbeatHostedService : BackgroundService
         _logger.LogInformation("Telegram typing heartbeat stopped.");
     }
 
-    internal async Task<int> SendHeartbeatAsync(CancellationToken cancellationToken)
+    internal Task<int> SendHeartbeatAsync(CancellationToken cancellationToken)
+        => SendHeartbeatAsync(DateTimeOffset.UtcNow, cancellationToken);
+
+    internal async Task<int> SendHeartbeatAsync(DateTimeOffset now, CancellationToken cancellationToken)
     {
         if (!_options.Enabled)
         {
@@ -202,6 +209,100 @@ internal sealed class TelegramTypingHeartbeatHostedService : BackgroundService
             await _sender.SendTypingActionAsync(target, cancellationToken).ConfigureAwait(false);
         }
 
+        await UpdateVisibleStatusesAsync(targets, now, cancellationToken).ConfigureAwait(false);
         return targets.Count;
+    }
+
+    private async Task UpdateVisibleStatusesAsync(
+        HashSet<TelegramConversationScope> activeTargets,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        foreach (TelegramConversationScope target in activeTargets)
+        {
+            if (target.MessageThreadId is null)
+            {
+                continue;
+            }
+
+            if (!_visibleStatuses.TryGetValue(target, out VisibleStatusState? state))
+            {
+                state = new VisibleStatusState(now);
+                _visibleStatuses[target] = state;
+            }
+
+            TimeSpan elapsed = now - state.StartedAt;
+            if (state.MessageId is null)
+            {
+                if (elapsed < VisibleStatusInitialDelay)
+                {
+                    continue;
+                }
+
+                int? messageId = await _sender.SendStatusMessageAsync(
+                    target,
+                    FormatWorkingStatus(elapsed),
+                    cancellationToken).ConfigureAwait(false);
+                if (messageId is not null)
+                {
+                    state.MessageId = messageId.Value;
+                    state.LastUpdatedAt = now;
+                    await _sender.SendTypingActionAsync(target, cancellationToken).ConfigureAwait(false);
+                }
+
+                continue;
+            }
+
+            if (now - state.LastUpdatedAt >= VisibleStatusUpdateInterval)
+            {
+                await _sender.EditTextMessageAsync(
+                    target,
+                    state.MessageId.Value,
+                    FormatWorkingStatus(elapsed),
+                    null,
+                    cancellationToken).ConfigureAwait(false);
+                state.LastUpdatedAt = now;
+                await _sender.SendTypingActionAsync(target, cancellationToken).ConfigureAwait(false);
+            }
+        }
+
+        foreach ((TelegramConversationScope target, VisibleStatusState state) in _visibleStatuses.ToArray())
+        {
+            if (activeTargets.Contains(target))
+            {
+                continue;
+            }
+
+            _visibleStatuses.Remove(target);
+            if (state.MessageId is not null)
+            {
+                await _sender.EditTextMessageAsync(
+                    target,
+                    state.MessageId.Value,
+                    FormatFinishedStatus(now - state.StartedAt),
+                    null,
+                    cancellationToken).ConfigureAwait(false);
+            }
+        }
+    }
+
+    private static string FormatWorkingStatus(TimeSpan elapsed)
+        => $"Codex is still working...{Environment.NewLine}Elapsed: {FormatElapsed(elapsed)}";
+
+    private static string FormatFinishedStatus(TimeSpan elapsed)
+        => $"Codex activity finished.{Environment.NewLine}Elapsed: {FormatElapsed(elapsed)}";
+
+    private static string FormatElapsed(TimeSpan elapsed)
+        => elapsed.TotalHours >= 1
+            ? elapsed.ToString(@"h\:mm\:ss")
+            : elapsed.ToString(@"m\:ss");
+
+    private sealed class VisibleStatusState(DateTimeOffset startedAt)
+    {
+        public DateTimeOffset StartedAt { get; } = startedAt;
+
+        public DateTimeOffset LastUpdatedAt { get; set; } = startedAt;
+
+        public int? MessageId { get; set; }
     }
 }

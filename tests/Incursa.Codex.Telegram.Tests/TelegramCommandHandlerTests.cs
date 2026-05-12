@@ -2275,6 +2275,15 @@ public sealed class TelegramCommandHandlerTests
             return Task.CompletedTask;
         }
 
+        public Task<int?> SendStatusMessageAsync(
+            TelegramConversationScope conversation,
+            string text,
+            CancellationToken cancellationToken)
+        {
+            Sent.Add(new SentTelegramMessage(conversation, text, null));
+            return Task.FromResult<int?>(Sent.Count);
+        }
+
         public Task EditTextMessageAsync(
             TelegramConversationScope conversation,
             int messageId,
