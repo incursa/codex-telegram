@@ -571,6 +571,28 @@ public sealed class TelegramCommandHandlerTests
     }
 
     [Fact]
+    public async Task HandleMessageAsync_TracksTypingWhileWaitingForCodexSendToStart()
+    {
+        using CommandHandlerHarness harness = CommandHandlerHarness.Create();
+        TelegramConversationScope conversation = new(5555, null);
+        harness.SessionManager.Sessions.Add(CreateSession("thread-1", "Demo session", harness.Temp.Path));
+        harness.SessionManager.PendingSend = new TaskCompletionSource<CodexThreadExecutionVm>(TaskCreationOptions.RunContinuationsAsynchronously);
+        await harness.StateStore.SetActiveSessionIdAsync(conversation, "thread-1", CancellationToken.None);
+
+        Task handleTask = harness.Handler.HandleMessageAsync(
+            new TelegramInboundMessage(1234, conversation.ChatId, "private", "please inspect the repo"),
+            harness.Sender,
+            CancellationToken.None);
+        await harness.SessionManager.SendStarted.Task.WaitAsync(TimeSpan.FromSeconds(1));
+
+        Assert.Contains(conversation, harness.TypingIndicatorRegistry.GetTargets());
+
+        harness.SessionManager.PendingSend.SetResult(new CodexThreadExecutionVm("thread-1", "turn-1", "running", null));
+        await handleTask.WaitAsync(TimeSpan.FromSeconds(1));
+        Assert.Empty(harness.TypingIndicatorRegistry.GetTargets());
+    }
+
+    [Fact]
     public async Task HandleMessageAsync_QueuesTextWhenSelectedSessionIsReportedRunning()
     {
         using CommandHandlerHarness harness = CommandHandlerHarness.Create();
@@ -1846,6 +1868,7 @@ public sealed class TelegramCommandHandlerTests
             FakeProjectCatalogStore projectCatalog,
             TelegramBotStateStore stateStore,
             FakeOutboundTelegramQueue outboundQueue,
+            TelegramTypingIndicatorRegistry typingIndicatorRegistry,
             FakeTelegramForumTopicService topicService,
             FakeAudioTranscriptionService audioTranscription,
             TestTelegramBotMessageSender sender,
@@ -1857,6 +1880,7 @@ public sealed class TelegramCommandHandlerTests
             ProjectCatalog = projectCatalog;
             StateStore = stateStore;
             OutboundQueue = outboundQueue;
+            TypingIndicatorRegistry = typingIndicatorRegistry;
             TopicService = topicService;
             AudioTranscription = audioTranscription;
             Sender = sender;
@@ -1874,6 +1898,8 @@ public sealed class TelegramCommandHandlerTests
         public TelegramBotStateStore StateStore { get; }
 
         public FakeOutboundTelegramQueue OutboundQueue { get; }
+
+        public TelegramTypingIndicatorRegistry TypingIndicatorRegistry { get; }
 
         public FakeTelegramForumTopicService TopicService { get; }
 
@@ -1900,6 +1926,7 @@ public sealed class TelegramCommandHandlerTests
             FakeProjectCatalogStore projectCatalog = new();
             TelegramBotStateStore stateStore = new(codexOptions);
             FakeOutboundTelegramQueue outboundQueue = new();
+            TelegramTypingIndicatorRegistry typingIndicatorRegistry = new();
             FakeTelegramForumTopicService topicService = new();
             FakeAudioTranscriptionService audioTranscription = new();
             TestTelegramBotMessageSender sender = new();
@@ -1913,6 +1940,7 @@ public sealed class TelegramCommandHandlerTests
                 stateStore,
                 new FakeTurnExecutionCoordinator(),
                 new TelegramThreadFollowRegistry(),
+                typingIndicatorRegistry,
                 topicService,
                 audioTranscription,
                 outboundQueue,
@@ -1922,7 +1950,7 @@ public sealed class TelegramCommandHandlerTests
                 }),
                 NullLogger<TelegramCodexBotCommandHandler>.Instance);
 
-            return new CommandHandlerHarness(temp, sessionManager, accountUsage, projectCatalog, stateStore, outboundQueue, topicService, audioTranscription, sender, handler);
+            return new CommandHandlerHarness(temp, sessionManager, accountUsage, projectCatalog, stateStore, outboundQueue, typingIndicatorRegistry, topicService, audioTranscription, sender, handler);
         }
 
         public void Dispose()
@@ -1961,6 +1989,10 @@ public sealed class TelegramCommandHandlerTests
 
         public TaskCompletionSource<CodexSessionModelSettings>? UpdateModelSettingsCompletion { get; set; }
 
+        public TaskCompletionSource<CodexThreadExecutionVm>? PendingSend { get; set; }
+
+        public TaskCompletionSource<bool> SendStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
         public Task<IReadOnlyCollection<CodexSessionSummary>> ListSessionsAsync(CancellationToken cancellationToken)
             => Task.FromResult<IReadOnlyCollection<CodexSessionSummary>>(Sessions.ToArray());
 
@@ -1980,6 +2012,12 @@ public sealed class TelegramCommandHandlerTests
             ThrowNextSendExceptionIfPresent();
             SendSessionIds.Add(sessionId);
             SendRequests.Add(input);
+            SendStarted.TrySetResult(true);
+            if (PendingSend is not null)
+            {
+                return PendingSend.Task;
+            }
+
             return Task.FromResult(new CodexThreadExecutionVm(sessionId, "turn-1", "running", null));
         }
 
@@ -1988,6 +2026,12 @@ public sealed class TelegramCommandHandlerTests
             ThrowNextSendExceptionIfPresent();
             SendSessionIds.Add(sessionId);
             SendRequests.Add(input);
+            SendStarted.TrySetResult(true);
+            if (PendingSend is not null)
+            {
+                return PendingSend.Task;
+            }
+
             return Task.FromResult(new CodexThreadExecutionVm(sessionId, "turn-1", "running", null));
         }
 

@@ -101,6 +101,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
     private readonly ITelegramBotStateStore _stateStore;
     private readonly ICodexTurnExecutionCoordinator _turnCoordinator;
     private readonly ITelegramThreadFollowRegistry _followRegistry;
+    private readonly ITelegramTypingIndicatorRegistry _typingIndicatorRegistry;
     private readonly ITelegramForumTopicService _topicService;
     private readonly IAudioTranscriptionService _audioTranscriptionService;
     private readonly IOutboundTelegramQueue _outboundQueue;
@@ -121,6 +122,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         ITelegramBotStateStore stateStore,
         ICodexTurnExecutionCoordinator turnCoordinator,
         ITelegramThreadFollowRegistry followRegistry,
+        ITelegramTypingIndicatorRegistry typingIndicatorRegistry,
         ITelegramForumTopicService topicService,
         IAudioTranscriptionService audioTranscriptionService,
         IOutboundTelegramQueue outboundQueue,
@@ -136,6 +138,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         _stateStore = stateStore;
         _turnCoordinator = turnCoordinator;
         _followRegistry = followRegistry;
+        _typingIndicatorRegistry = typingIndicatorRegistry;
         _topicService = topicService;
         _audioTranscriptionService = audioTranscriptionService;
         _outboundQueue = outboundQueue;
@@ -957,6 +960,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         }
 
         _followRegistry.FollowThread(message.ConversationScope, session.Id);
+        IDisposable? typingRegistration = _typingIndicatorRegistry.Track(message.ConversationScope);
         try
         {
             _logger.LogDebug(
@@ -971,7 +975,8 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             Task completedTask = await Task.WhenAny(sendTask, timeoutTask).ConfigureAwait(false);
             if (!ReferenceEquals(completedTask, sendTask))
             {
-                _ = ObserveSlowTelegramSendAsync(sendTask, message, session, trimmed, sender);
+                _ = ObserveSlowTelegramSendAsync(sendTask, message, session, trimmed, sender, typingRegistration);
+                typingRegistration = null;
                 await ReplyAsync(
                     sender,
                     message.ConversationScope,
@@ -1012,6 +1017,10 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
                 exception,
                 sender,
                 cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            typingRegistration?.Dispose();
         }
     }
 
@@ -1071,7 +1080,8 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         TelegramInboundMessage message,
         CodexSessionSummary session,
         string text,
-        ITelegramBotMessageSender sender)
+        ITelegramBotMessageSender sender,
+        IDisposable typingRegistration)
     {
         try
         {
@@ -1109,6 +1119,10 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
                 $"Message for {session.Name} failed to start: {exception.Message}",
                 BuildSessionButtons([session], includeUse: false),
                 CancellationToken.None).ConfigureAwait(false);
+        }
+        finally
+        {
+            typingRegistration.Dispose();
         }
     }
 

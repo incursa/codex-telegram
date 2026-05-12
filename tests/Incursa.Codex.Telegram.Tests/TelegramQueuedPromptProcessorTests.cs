@@ -394,6 +394,7 @@ public sealed class TelegramQueuedPromptProcessorTests
             FakeCodexSessionManager sessionManager,
             FakeTurnExecutionCoordinator turnCoordinator,
             TelegramThreadFollowRegistry followRegistry,
+            TelegramTypingIndicatorRegistry typingIndicatorRegistry,
             FakeOutboundTelegramQueue outboundQueue,
             TestTelegramBotMessageSender sender,
             TelegramQueuedPromptProcessor processor)
@@ -403,6 +404,7 @@ public sealed class TelegramQueuedPromptProcessorTests
             SessionManager = sessionManager;
             TurnCoordinator = turnCoordinator;
             FollowRegistry = followRegistry;
+            TypingIndicatorRegistry = typingIndicatorRegistry;
             OutboundQueue = outboundQueue;
             Sender = sender;
             Processor = processor;
@@ -417,6 +419,8 @@ public sealed class TelegramQueuedPromptProcessorTests
         public FakeTurnExecutionCoordinator TurnCoordinator { get; }
 
         public TelegramThreadFollowRegistry FollowRegistry { get; }
+
+        public TelegramTypingIndicatorRegistry TypingIndicatorRegistry { get; }
 
         public FakeOutboundTelegramQueue OutboundQueue { get; }
 
@@ -438,6 +442,7 @@ public sealed class TelegramQueuedPromptProcessorTests
             FakeCodexSessionManager sessionManager = new();
             FakeTurnExecutionCoordinator turnCoordinator = new();
             TelegramThreadFollowRegistry followRegistry = new();
+            TelegramTypingIndicatorRegistry typingIndicatorRegistry = new();
             FakeOutboundTelegramQueue outboundQueue = new();
             TestTelegramBotMessageSender sender = new();
             TelegramQueuedPromptProcessor processor = new(
@@ -445,6 +450,7 @@ public sealed class TelegramQueuedPromptProcessorTests
                 sessionManager,
                 turnCoordinator,
                 followRegistry,
+                typingIndicatorRegistry,
                 outboundQueue,
                 sender,
                 NullLogger<TelegramQueuedPromptProcessor>.Instance);
@@ -455,6 +461,7 @@ public sealed class TelegramQueuedPromptProcessorTests
                 sessionManager,
                 turnCoordinator,
                 followRegistry,
+                typingIndicatorRegistry,
                 outboundQueue,
                 sender,
                 processor);

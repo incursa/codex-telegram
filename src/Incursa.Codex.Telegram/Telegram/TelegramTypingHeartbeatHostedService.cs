@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using Incursa.Codex.Telegram.Options;
 using Incursa.Codex.Telegram.Services;
 using Microsoft.Extensions.Hosting;
@@ -5,6 +6,98 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
 namespace Incursa.Codex.Telegram.Telegram;
+
+internal interface ITelegramTypingIndicatorRegistry
+{
+    IDisposable Track(TelegramConversationScope conversation);
+
+    IReadOnlyCollection<TelegramConversationScope> GetTargets();
+
+    Task WaitForChangeAsync(TimeSpan timeout, CancellationToken cancellationToken);
+}
+
+internal sealed class TelegramTypingIndicatorRegistry : ITelegramTypingIndicatorRegistry
+{
+    private readonly ConcurrentDictionary<TelegramConversationScope, int> _targetCounts = new();
+    private readonly object _wakeLock = new();
+    private TaskCompletionSource<bool> _wakeSignal = CreateWakeSignal();
+
+    public IDisposable Track(TelegramConversationScope conversation)
+    {
+        _targetCounts.AddOrUpdate(conversation, 1, static (_, count) => count + 1);
+        Wake();
+        return new Registration(this, conversation);
+    }
+
+    public IReadOnlyCollection<TelegramConversationScope> GetTargets()
+        => _targetCounts.Keys.ToArray();
+
+    public async Task WaitForChangeAsync(TimeSpan timeout, CancellationToken cancellationToken)
+    {
+        Task wakeTask;
+        lock (_wakeLock)
+        {
+            wakeTask = _wakeSignal.Task;
+        }
+
+        Task delayTask = Task.Delay(timeout, cancellationToken);
+        Task completed = await Task.WhenAny(wakeTask, delayTask).ConfigureAwait(false);
+        if (ReferenceEquals(completed, delayTask))
+        {
+            await delayTask.ConfigureAwait(false);
+        }
+    }
+
+    private static TaskCompletionSource<bool> CreateWakeSignal()
+        => new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    private void Release(TelegramConversationScope conversation)
+    {
+        _targetCounts.AddOrUpdate(
+            conversation,
+            0,
+            static (_, count) => Math.Max(0, count - 1));
+        if (_targetCounts.TryGetValue(conversation, out int count) && count == 0)
+        {
+            _targetCounts.TryRemove(conversation, out _);
+        }
+
+        Wake();
+    }
+
+    private void Wake()
+    {
+        TaskCompletionSource<bool> signal;
+        lock (_wakeLock)
+        {
+            signal = _wakeSignal;
+            if (!_wakeSignal.Task.IsCompleted)
+            {
+                _wakeSignal = CreateWakeSignal();
+            }
+        }
+
+        signal.TrySetResult(true);
+    }
+
+    private sealed class Registration : IDisposable
+    {
+        private TelegramTypingIndicatorRegistry? _owner;
+        private readonly TelegramConversationScope _conversation;
+
+        public Registration(TelegramTypingIndicatorRegistry owner, TelegramConversationScope conversation)
+        {
+            _owner = owner;
+            _conversation = conversation;
+        }
+
+        public void Dispose()
+        {
+            TelegramTypingIndicatorRegistry? owner = Interlocked.Exchange(ref _owner, null);
+            owner?.Release(_conversation);
+        }
+    }
+}
 
 /// <summary>
 /// Keeps Telegram's native typing indicator alive while followed Codex turns are running.
@@ -16,6 +109,7 @@ internal sealed class TelegramTypingHeartbeatHostedService : BackgroundService
     private readonly TelegramBotOptions _options;
     private readonly ICodexTurnExecutionCoordinator _turnCoordinator;
     private readonly ITelegramThreadFollowRegistry _followRegistry;
+    private readonly ITelegramTypingIndicatorRegistry _typingIndicatorRegistry;
     private readonly ITelegramBotMessageSender _sender;
     private readonly ILogger<TelegramTypingHeartbeatHostedService> _logger;
 
@@ -23,12 +117,14 @@ internal sealed class TelegramTypingHeartbeatHostedService : BackgroundService
         IOptions<TelegramBotOptions> options,
         ICodexTurnExecutionCoordinator turnCoordinator,
         ITelegramThreadFollowRegistry followRegistry,
+        ITelegramTypingIndicatorRegistry typingIndicatorRegistry,
         ITelegramBotMessageSender sender,
         ILogger<TelegramTypingHeartbeatHostedService> logger)
     {
         _options = options.Value;
         _turnCoordinator = turnCoordinator;
         _followRegistry = followRegistry;
+        _typingIndicatorRegistry = typingIndicatorRegistry;
         _sender = sender;
         _logger = logger;
     }
@@ -52,7 +148,7 @@ internal sealed class TelegramTypingHeartbeatHostedService : BackgroundService
             try
             {
                 await SendHeartbeatAsync(stoppingToken).ConfigureAwait(false);
-                await Task.Delay(HeartbeatInterval, stoppingToken).ConfigureAwait(false);
+                await _typingIndicatorRegistry.WaitForChangeAsync(HeartbeatInterval, stoppingToken).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
@@ -76,6 +172,11 @@ internal sealed class TelegramTypingHeartbeatHostedService : BackgroundService
         }
 
         HashSet<TelegramConversationScope> targets = [];
+        foreach (TelegramConversationScope target in _typingIndicatorRegistry.GetTargets())
+        {
+            targets.Add(target);
+        }
+
         foreach (string threadId in _turnCoordinator.GetActiveThreadIds())
         {
             foreach (TelegramConversationScope target in _followRegistry.GetTargets(threadId))

@@ -15,6 +15,7 @@ internal sealed class TelegramQueuedPromptProcessor : ITelegramQueuedPromptProce
     private readonly ICodexSessionManager _sessionManager;
     private readonly ICodexTurnExecutionCoordinator _turnCoordinator;
     private readonly ITelegramThreadFollowRegistry _followRegistry;
+    private readonly ITelegramTypingIndicatorRegistry _typingIndicatorRegistry;
     private readonly IOutboundTelegramQueue _outboundQueue;
     private readonly ITelegramBotMessageSender _sender;
     private readonly ILogger<TelegramQueuedPromptProcessor> _logger;
@@ -24,6 +25,7 @@ internal sealed class TelegramQueuedPromptProcessor : ITelegramQueuedPromptProce
         ICodexSessionManager sessionManager,
         ICodexTurnExecutionCoordinator turnCoordinator,
         ITelegramThreadFollowRegistry followRegistry,
+        ITelegramTypingIndicatorRegistry typingIndicatorRegistry,
         IOutboundTelegramQueue outboundQueue,
         ITelegramBotMessageSender sender,
         ILogger<TelegramQueuedPromptProcessor> logger)
@@ -32,6 +34,7 @@ internal sealed class TelegramQueuedPromptProcessor : ITelegramQueuedPromptProce
         _sessionManager = sessionManager;
         _turnCoordinator = turnCoordinator;
         _followRegistry = followRegistry;
+        _typingIndicatorRegistry = typingIndicatorRegistry;
         _outboundQueue = outboundQueue;
         _sender = sender;
         _logger = logger;
@@ -84,6 +87,7 @@ internal sealed class TelegramQueuedPromptProcessor : ITelegramQueuedPromptProce
             }
 
             _followRegistry.FollowThread(prompt.ConversationScope, prompt.SessionId);
+            using IDisposable typingRegistration = _typingIndicatorRegistry.Track(prompt.ConversationScope);
             await _sender.SendTextMessageAsync(
                 prompt.ConversationScope,
                 $"Starting queued message for {session.Name}. Live updates will stream here.",

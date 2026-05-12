@@ -19,8 +19,9 @@ public sealed class TelegramTypingHeartbeatHostedServiceTests
         TelegramConversationScope second = new(1234, 77);
         followRegistry.FollowThread(first, "thread-1");
         followRegistry.FollowThread(second, "thread-2");
+        TelegramTypingIndicatorRegistry typingIndicatorRegistry = new();
         TestTelegramBotMessageSender sender = new();
-        TelegramTypingHeartbeatHostedService service = CreateService(turnCoordinator, followRegistry, sender);
+        TelegramTypingHeartbeatHostedService service = CreateService(turnCoordinator, followRegistry, typingIndicatorRegistry, sender);
 
         int sent = await service.SendHeartbeatAsync(CancellationToken.None);
 
@@ -34,8 +35,9 @@ public sealed class TelegramTypingHeartbeatHostedServiceTests
     {
         FakeTurnCoordinator turnCoordinator = new("thread-1");
         TelegramThreadFollowRegistry followRegistry = new();
+        TelegramTypingIndicatorRegistry typingIndicatorRegistry = new();
         TestTelegramBotMessageSender sender = new();
-        TelegramTypingHeartbeatHostedService service = CreateService(turnCoordinator, followRegistry, sender);
+        TelegramTypingHeartbeatHostedService service = CreateService(turnCoordinator, followRegistry, typingIndicatorRegistry, sender);
 
         int sent = await service.SendHeartbeatAsync(CancellationToken.None);
 
@@ -44,16 +46,35 @@ public sealed class TelegramTypingHeartbeatHostedServiceTests
     }
 
     [Fact]
+    public async Task SendHeartbeatAsync_SendsTypingWhileWaitingForCodexBeforeActiveTurnExists()
+    {
+        FakeTurnCoordinator turnCoordinator = new();
+        TelegramThreadFollowRegistry followRegistry = new();
+        TelegramTypingIndicatorRegistry typingIndicatorRegistry = new();
+        TelegramConversationScope conversation = new(1234, 77);
+        using IDisposable registration = typingIndicatorRegistry.Track(conversation);
+        TestTelegramBotMessageSender sender = new();
+        TelegramTypingHeartbeatHostedService service = CreateService(turnCoordinator, followRegistry, typingIndicatorRegistry, sender);
+
+        int sent = await service.SendHeartbeatAsync(CancellationToken.None);
+
+        Assert.Equal(1, sent);
+        Assert.Equal([conversation], sender.TypingActions);
+    }
+
+    [Fact]
     public async Task SendHeartbeatAsync_WhenDisabledDoesNotSend()
     {
         FakeTurnCoordinator turnCoordinator = new("thread-1");
         TelegramThreadFollowRegistry followRegistry = new();
+        TelegramTypingIndicatorRegistry typingIndicatorRegistry = new();
         TelegramConversationScope conversation = new(1234, null);
         followRegistry.FollowThread(conversation, "thread-1");
         TestTelegramBotMessageSender sender = new();
         TelegramTypingHeartbeatHostedService service = CreateService(
             turnCoordinator,
             followRegistry,
+            typingIndicatorRegistry,
             sender,
             enabled: false);
 
@@ -66,12 +87,14 @@ public sealed class TelegramTypingHeartbeatHostedServiceTests
     private static TelegramTypingHeartbeatHostedService CreateService(
         FakeTurnCoordinator turnCoordinator,
         TelegramThreadFollowRegistry followRegistry,
+        TelegramTypingIndicatorRegistry? typingIndicatorRegistry,
         TestTelegramBotMessageSender sender,
         bool enabled = true)
         => new(
             Microsoft.Extensions.Options.Options.Create(new TelegramBotOptions { Enabled = enabled }),
             turnCoordinator,
             followRegistry,
+            typingIndicatorRegistry ?? new TelegramTypingIndicatorRegistry(),
             sender,
             NullLogger<TelegramTypingHeartbeatHostedService>.Instance);
 
