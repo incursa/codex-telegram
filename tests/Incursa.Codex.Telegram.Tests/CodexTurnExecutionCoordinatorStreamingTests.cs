@@ -83,6 +83,36 @@ public sealed class CodexTurnExecutionCoordinatorStreamingTests
     }
 
     [Fact]
+    public async Task StartAsync_DefersTerminalPublicationUntilLaterEventsDrain()
+    {
+        using ScriptedCodexRuntime runtime = new();
+        ScriptedCodexTurnScript script = runtime.QueueTurn("thread-1");
+        script.AddCommandProgress("echo before", CodexCommandExecutionStatus.Completed);
+        script.AddCompletionEvent("done");
+        script.AddCommandProgress("echo after", CodexCommandExecutionStatus.Completed);
+
+        ICodexThreadHandle thread = runtime.CreateThread("thread-1");
+        FakeOutboundTelegramQueue queue = new();
+        TelegramThreadFollowRegistry followRegistry = FollowThread();
+        TelegramTurnOutputRelay relay = CreateRelay(queue, followRegistry);
+        CodexTurnExecutionCoordinator coordinator = CreateCoordinator(relay);
+
+        await coordinator.StartAsync(thread, [], new CodexTurnOptions(), CancellationToken.None);
+        await script.Finished.Task.WaitAsync(TimeSpan.FromSeconds(1));
+
+        string[] messages = queue.Messages.Select(message => message.Text).ToArray();
+        int beforeIndex = Array.FindIndex(messages, text => text.Contains("Command finished: echo before", StringComparison.OrdinalIgnoreCase));
+        int afterIndex = Array.FindIndex(messages, text => text.Contains("Command finished: echo after", StringComparison.OrdinalIgnoreCase));
+        int completionIndex = Array.FindIndex(messages, text => string.Equals(text, "done", StringComparison.Ordinal));
+
+        Assert.True(beforeIndex >= 0, "Expected the pre-completion command progress to be published.");
+        Assert.True(afterIndex >= 0, "Expected the post-completion command progress to be published.");
+        Assert.True(completionIndex >= 0, "Expected the terminal completion message to be published.");
+        Assert.True(beforeIndex < completionIndex, "Expected completion to be published after earlier turn events.");
+        Assert.True(afterIndex < completionIndex, "Expected completion to be published after later turn events.");
+    }
+
+    [Fact]
     public async Task StartAsync_SuppressesContextCompactionNoise()
     {
         using ScriptedCodexRuntime runtime = new();

@@ -175,14 +175,42 @@ internal sealed class CodexTurnExecutionCoordinator
             return;
         }
 
+        CodexTimelineEntryVm? pendingTerminalEntry = null;
+        int lateEventCount = 0;
         try
         {
             await foreach (CodexThreadEvent evt in state.Turn.StreamAsync(_applicationLifetime.ApplicationStopping).ConfigureAwait(false))
             {
                 CodexTimelineEntryVm entry = CodexViewModelMapper.ToTimelineEntryVm(evt, state.ThreadId);
+
+                if (IsTerminalTurnEvent(entry))
+                {
+                    pendingTerminalEntry = entry;
+                    continue;
+                }
+
+                if (pendingTerminalEntry is not null)
+                {
+                    lateEventCount++;
+                }
+
                 UpdateActiveTurnState(state.ThreadId, state.TurnId, entry);
                 await _broadcaster.BroadcastThreadEventAsync(state.ThreadId, entry, _applicationLifetime.ApplicationStopping).ConfigureAwait(false);
                 await _telegramTurnOutputRelay.PublishTurnEventAsync(entry, _applicationLifetime.ApplicationStopping).ConfigureAwait(false);
+            }
+
+            if (pendingTerminalEntry is not null)
+            {
+                if (lateEventCount > 0)
+                {
+                    _logger.LogWarning(
+                        "Turn {TurnId} on thread {ThreadId} reported a terminal event before the stream ended; published completion after {LateEventCount} later event(s).",
+                        state.TurnId,
+                        state.ThreadId,
+                        lateEventCount);
+                }
+
+                await PublishTerminalEventAsync(state, pendingTerminalEntry).ConfigureAwait(false);
             }
         }
         catch (OperationCanceledException)
@@ -199,6 +227,28 @@ internal sealed class CodexTurnExecutionCoordinator
             TryClearActiveTurn(state.ThreadId, state.TurnId);
         }
     }
+
+    private async Task PublishTerminalEventAsync(ActiveTurnState state, CodexTimelineEntryVm entry)
+    {
+        UpdateActiveTurnState(state.ThreadId, state.TurnId, entry);
+
+        try
+        {
+            await _broadcaster.BroadcastThreadEventAsync(state.ThreadId, entry, _applicationLifetime.ApplicationStopping).ConfigureAwait(false);
+            await _telegramTurnOutputRelay.PublishTurnEventAsync(entry, _applicationLifetime.ApplicationStopping).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (_applicationLifetime.ApplicationStopping.IsCancellationRequested)
+        {
+        }
+        catch (Exception exception)
+        {
+            _logger.LogWarning(exception, "Failed to publish terminal event for turn {TurnId} on thread {ThreadId}.", state.TurnId, state.ThreadId);
+        }
+    }
+
+    private static bool IsTerminalTurnEvent(CodexTimelineEntryVm entry)
+        => string.Equals(entry.Type, "turn.completed", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(entry.Type, "turn.failed", StringComparison.OrdinalIgnoreCase);
 
     private async Task PublishFailureAsync(ActiveTurnState state, Exception exception)
     {

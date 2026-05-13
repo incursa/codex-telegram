@@ -170,7 +170,10 @@ internal sealed class ScriptedCodexTurnHandle : ICodexTurnHandle
                 throw _script.FaultException;
             }
 
-            yield return _script.ToCompletedEvent();
+            if (_script.EmitAutoCompletion)
+            {
+                yield return _script.ToCompletedEvent();
+            }
         }
         finally
         {
@@ -244,6 +247,7 @@ internal sealed class ScriptedCodexTurnScript
     private IReadOnlyList<CodexThreadItem>? _terminalItems;
     private CodexUsage? _usage;
     private int _interruptCount;
+    private bool _emitAutoCompletion = true;
 
     public ScriptedCodexTurnScript(string threadId, string turnId)
     {
@@ -272,6 +276,8 @@ internal sealed class ScriptedCodexTurnScript
 
     public Exception? UnhandledException { get; internal set; }
 
+    internal bool EmitAutoCompletion => _emitAutoCompletion;
+
     public IReadOnlyList<IReadOnlyList<CodexInputItem>> SteeredInputs => _steeredInputs;
 
     public int InterruptCount => _interruptCount;
@@ -279,6 +285,16 @@ internal sealed class ScriptedCodexTurnScript
     public ScriptedCodexTurnScript AddEvent(CodexThreadEvent evt)
     {
         _events.Add(evt);
+        return this;
+    }
+
+    public ScriptedCodexTurnScript AddCompletionEvent(
+        string? finalResponse = null,
+        IReadOnlyList<CodexThreadItem>? terminalItems = null,
+        CodexUsage? usage = null)
+    {
+        _events.Add(ScriptedCodexTurnEvents.TurnCompleted(ThreadId, TurnId, finalResponse, terminalItems, usage));
+        _emitAutoCompletion = false;
         return this;
     }
 

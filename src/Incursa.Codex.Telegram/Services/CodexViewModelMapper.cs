@@ -228,7 +228,13 @@ internal static class CodexViewModelMapper
             .OfType<CodexAgentMessageItem>()
             .LastOrDefault(item => item.Phase is null && !string.IsNullOrWhiteSpace(item.Text));
 
-        return RepairTextOrNull(phaseLess?.Text);
+        if (phaseLess is not null)
+        {
+            return RepairTextOrNull(phaseLess.Text);
+        }
+
+        CodexThreadItem? lastVisible = items.LastOrDefault(item => item is not CodexUserMessageItem);
+        return lastVisible is null ? null : DescribeItem(lastVisible);
     }
 
     private static CodexTimelineEntryVm ToTurnTerminalEventVm(

@@ -79,6 +79,30 @@ public sealed class CodexViewModelMapperTests
     }
 
     [Fact]
+    public void ToTurnVm_FallsBackToTheLastVisibleItemWhenNoFinalAnswerExists()
+    {
+        CodexTurnRecord turn = new()
+        {
+            Id = "turn-789",
+            Status = CodexTurnStatus.Completed,
+            Items =
+            [
+                new CodexCommandExecutionItem
+                {
+                    Id = "item-1",
+                    Type = "item.command",
+                    Command = "dotnet test",
+                    Status = CodexCommandExecutionStatus.Completed,
+                },
+            ],
+        };
+
+        CodexTurnVm vm = CodexViewModelMapper.ToTurnVm(turn);
+
+        Assert.Equal("dotnet test [Completed]", vm.FinalResponse);
+    }
+
+    [Fact]
     public void ToTurnItemVm_MarksExplicitImageViewMedia()
     {
         CodexTimelineEntryVm item = CodexViewModelMapper.ToTurnItemVm(new CodexImageViewItem
