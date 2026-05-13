@@ -19,7 +19,7 @@ internal interface ICodexTurnExecutionCoordinator
 
     CodexActiveTurnStateVm? TryGetActiveTurnState(string threadId);
 
-    void RegisterActiveTurn(string threadId, string turnId, CodexTurn? turn = null, CodexTimelineEntryVm? lastEvent = null);
+    void RegisterActiveTurn(string threadId, string turnId, ICodexTurnHandle? turn = null, CodexTimelineEntryVm? lastEvent = null);
 
     void UpdateActiveTurnState(string threadId, string turnId, CodexTimelineEntryVm? lastEvent = null);
 
@@ -78,7 +78,7 @@ internal sealed class CodexTurnExecutionCoordinator
         return state.ToViewModel();
     }
 
-    public void RegisterActiveTurn(string threadId, string turnId, CodexTurn? turn = null, CodexTimelineEntryVm? lastEvent = null)
+    public void RegisterActiveTurn(string threadId, string turnId, ICodexTurnHandle? turn = null, CodexTimelineEntryVm? lastEvent = null)
     {
         ActiveTurnState state = new(threadId, turnId, turn, lastEvent);
         if (!_activeTurns.TryAdd(threadId, state))
@@ -109,7 +109,7 @@ internal sealed class CodexTurnExecutionCoordinator
     }
 
     public async Task<CodexThreadExecutionVm> StartAsync(
-        CodexThread thread,
+        ICodexThreadHandle thread,
         IReadOnlyList<CodexInputItem> input,
         CodexTurnOptions turnOptions,
         CancellationToken cancellationToken)
@@ -128,7 +128,7 @@ internal sealed class CodexTurnExecutionCoordinator
 
         try
         {
-            CodexTurn turn = await thread.StartTurnAsync(input, turnOptions, cancellationToken).ConfigureAwait(false);
+            ICodexTurnHandle turn = await thread.StartTurnAsync(input, turnOptions, cancellationToken).ConfigureAwait(false);
             string threadId = string.IsNullOrWhiteSpace(turn.ThreadId) ? thread.Id ?? string.Empty : turn.ThreadId;
             RegisterActiveTurn(threadId, turn.Id, turn);
             ActiveTurnState state = GetRequiredState(threadId, turn.Id);
@@ -264,7 +264,7 @@ internal sealed class CodexTurnExecutionCoordinator
 
     private sealed class ActiveTurnState
     {
-        public ActiveTurnState(string threadId, string turnId, CodexTurn? turn, CodexTimelineEntryVm? lastEvent)
+        public ActiveTurnState(string threadId, string turnId, ICodexTurnHandle? turn, CodexTimelineEntryVm? lastEvent)
         {
             ThreadId = threadId;
             TurnId = turnId;
@@ -278,7 +278,7 @@ internal sealed class CodexTurnExecutionCoordinator
 
         public string TurnId { get; private set; }
 
-        public CodexTurn? Turn { get; }
+        public ICodexTurnHandle? Turn { get; }
 
         public DateTimeOffset StartedAt { get; }
 

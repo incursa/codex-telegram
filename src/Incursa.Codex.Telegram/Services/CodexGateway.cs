@@ -128,19 +128,19 @@ internal sealed class CodexGateway : ICodexGateway
 
         submission.ThreadName = CodexTextFormatting.InferThreadName(submission.ThreadName, submission.Prompt);
         CodexThreadOptions threadOptions = CodexOptionMapper.BuildThreadOptions(_options, submission);
-        CodexThread thread = await runtime.Client.StartThreadAsync(threadOptions, cancellationToken).ConfigureAwait(false);
-        string threadId = GetThreadIdOrThrow(thread);
+        ICodexThreadHandle threadHandle = await runtime.Client.StartThreadAsync(threadOptions, cancellationToken).ConfigureAwait(false);
+        string threadId = GetThreadIdOrThrow(threadHandle);
         _runtimeRegistry.BindThread(threadId, runtime);
         await _manifestStore.SetContextAsync(threadId, submission, cancellationToken).ConfigureAwait(false);
         await _manifestStore.SetSelectedFilesAsync(threadId, submission.SelectedFileIds, cancellationToken).ConfigureAwait(false);
 
         if (!string.IsNullOrWhiteSpace(submission.ThreadName))
         {
-            await thread.SetNameAsync(submission.ThreadName, cancellationToken).ConfigureAwait(false);
+            await threadHandle.SetNameAsync(submission.ThreadName, cancellationToken).ConfigureAwait(false);
         }
 
         CodexThreadManifestRecord updatedManifest = await _manifestStore.GetOrCreateAsync(threadId, cancellationToken).ConfigureAwait(false);
-        return await StartTurnAsync(runtime, thread, threadId, submission, updatedManifest, cancellationToken).ConfigureAwait(false);
+        return await StartTurnAsync(runtime, threadHandle, threadId, submission, updatedManifest, cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<CodexThreadListItemVm> CreateThreadShellAsync(
@@ -151,14 +151,14 @@ internal sealed class CodexGateway : ICodexGateway
 
         submission.ThreadName = CodexTextFormatting.InferThreadName(submission.ThreadName, null);
         CodexThreadOptions threadOptions = CodexOptionMapper.BuildThreadOptions(_options, submission);
-        CodexThread thread = await runtime.Client.StartThreadAsync(threadOptions, cancellationToken).ConfigureAwait(false);
-        string threadId = GetThreadIdOrThrow(thread);
+        ICodexThreadHandle threadHandle = await runtime.Client.StartThreadAsync(threadOptions, cancellationToken).ConfigureAwait(false);
+        string threadId = GetThreadIdOrThrow(threadHandle);
         _runtimeRegistry.BindThread(threadId, runtime);
         await _manifestStore.SetContextAsync(threadId, submission, cancellationToken).ConfigureAwait(false);
 
         if (!string.IsNullOrWhiteSpace(submission.ThreadName))
         {
-            await thread.SetNameAsync(submission.ThreadName, cancellationToken).ConfigureAwait(false);
+            await threadHandle.SetNameAsync(submission.ThreadName, cancellationToken).ConfigureAwait(false);
         }
 
         CodexThreadManifestRecord manifest = await _manifestStore.GetOrCreateAsync(threadId, cancellationToken).ConfigureAwait(false);
@@ -191,7 +191,7 @@ internal sealed class CodexGateway : ICodexGateway
         manifest = await _manifestStore.SetSelectedFilesAsync(threadId, submission.SelectedFileIds, cancellationToken).ConfigureAwait(false);
 
         CodexThreadOptions threadOptions = CodexOptionMapper.BuildThreadOptions(_options, submission, manifest);
-        CodexThread thread = await runtime.Client.ResumeThreadAsync(threadId, threadOptions, cancellationToken).ConfigureAwait(false);
+        ICodexThreadHandle thread = await runtime.Client.ResumeThreadAsync(threadId, threadOptions, cancellationToken).ConfigureAwait(false);
         return await StartTurnAsync(runtime, thread, threadId, submission, manifest, cancellationToken).ConfigureAwait(false);
     }
 
@@ -204,7 +204,7 @@ internal sealed class CodexGateway : ICodexGateway
 
         CodexThreadManifestRecord manifest = await _manifestStore.GetOrCreateAsync(threadId, cancellationToken).ConfigureAwait(false);
         CodexThreadOptions threadOptions = CodexOptionMapper.BuildThreadOptions(_options, new CodexThreadContextSubmission(), manifest);
-        CodexThread thread = await runtime.Client.ResumeThreadAsync(threadId, threadOptions, cancellationToken).ConfigureAwait(false);
+        ICodexThreadHandle thread = await runtime.Client.ResumeThreadAsync(threadId, threadOptions, cancellationToken).ConfigureAwait(false);
         CodexTurnOptions turnOptions = CodexOptionMapper.BuildTurnOptions(_options, new CodexTurnSubmission(), manifest);
 
         CodexThreadExecutionVm execution = await runtime.TurnCoordinator.StartAsync(thread, input, turnOptions, cancellationToken).ConfigureAwait(false);
@@ -229,26 +229,26 @@ internal sealed class CodexGateway : ICodexGateway
         CodexThreadOptions sourceOptions = CodexOptionMapper.BuildThreadOptions(_options, submission, sourceManifest);
         CodexThreadForkOptions forkOptions = ToForkOptions(sourceOptions);
         CodexRuntimeSlot sourceRuntime = await _runtimeRegistry.GetBestForThreadAsync(threadId, cancellationToken).ConfigureAwait(false);
-        CodexThread forkedThread = await sourceRuntime.Client.ForkThreadAsync(threadId, forkOptions, cancellationToken).ConfigureAwait(false);
-        string forkedThreadId = GetThreadIdOrThrow(forkedThread);
+        ICodexThreadHandle forkedThreadHandle = await sourceRuntime.Client.ForkThreadAsync(threadId, forkOptions, cancellationToken).ConfigureAwait(false);
+        string forkedThreadId = GetThreadIdOrThrow(forkedThreadHandle);
         _runtimeRegistry.BindThread(forkedThreadId, runtime);
-        forkedThread = await runtime.Client.ResumeThreadAsync(forkedThreadId, sourceOptions, cancellationToken).ConfigureAwait(false);
+        forkedThreadHandle = await runtime.Client.ResumeThreadAsync(forkedThreadId, sourceOptions, cancellationToken).ConfigureAwait(false);
         await _manifestStore.SetContextAsync(forkedThreadId, submission, cancellationToken).ConfigureAwait(false);
         await _manifestStore.SetSelectedFilesAsync(forkedThreadId, submission.SelectedFileIds, cancellationToken).ConfigureAwait(false);
 
         if (!string.IsNullOrWhiteSpace(submission.ThreadName))
         {
-            await forkedThread.SetNameAsync(submission.ThreadName, cancellationToken).ConfigureAwait(false);
+            await forkedThreadHandle.SetNameAsync(submission.ThreadName, cancellationToken).ConfigureAwait(false);
         }
 
         CodexThreadManifestRecord updatedManifest = await _manifestStore.GetOrCreateAsync(forkedThreadId, cancellationToken).ConfigureAwait(false);
-        return await StartTurnAsync(runtime, forkedThread, forkedThreadId, submission, updatedManifest, cancellationToken).ConfigureAwait(false);
+        return await StartTurnAsync(runtime, forkedThreadHandle, forkedThreadId, submission, updatedManifest, cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<CodexThreadDetailVm> RenameThreadAsync(string threadId, string name, CancellationToken cancellationToken = default)
     {
         CodexRuntimeSlot runtime = await _runtimeRegistry.GetBestForThreadAsync(threadId, cancellationToken).ConfigureAwait(false);
-        CodexThread thread = await runtime.Client.ResumeThreadAsync(threadId, null, cancellationToken).ConfigureAwait(false);
+        ICodexThreadHandle thread = await runtime.Client.ResumeThreadAsync(threadId, null, cancellationToken).ConfigureAwait(false);
         await thread.SetNameAsync(name, cancellationToken).ConfigureAwait(false);
         await _manifestStore.SetThreadNameAsync(threadId, name, cancellationToken).ConfigureAwait(false);
         return await GetThreadAsync(threadId, cancellationToken: cancellationToken).ConfigureAwait(false);
@@ -274,7 +274,7 @@ internal sealed class CodexGateway : ICodexGateway
     public async Task<CodexThreadDetailVm> CompactThreadAsync(string threadId, CancellationToken cancellationToken = default)
     {
         CodexRuntimeSlot runtime = await _runtimeRegistry.GetBestForThreadAsync(threadId, cancellationToken).ConfigureAwait(false);
-        CodexThread thread = await runtime.Client.ResumeThreadAsync(threadId, null, cancellationToken).ConfigureAwait(false);
+        ICodexThreadHandle thread = await runtime.Client.ResumeThreadAsync(threadId, null, cancellationToken).ConfigureAwait(false);
         await thread.CompactAsync(cancellationToken).ConfigureAwait(false);
         return await GetThreadAsync(threadId, cancellationToken: cancellationToken).ConfigureAwait(false);
     }
@@ -282,7 +282,7 @@ internal sealed class CodexGateway : ICodexGateway
     public async Task<CodexThreadGoalVm?> GetThreadGoalAsync(string threadId, CancellationToken cancellationToken = default)
     {
         CodexRuntimeSlot runtime = await _runtimeRegistry.GetBestForThreadAsync(threadId, cancellationToken).ConfigureAwait(false);
-        CodexThread thread = await runtime.Client.ResumeThreadAsync(threadId, null, cancellationToken).ConfigureAwait(false);
+        ICodexThreadHandle thread = await runtime.Client.ResumeThreadAsync(threadId, null, cancellationToken).ConfigureAwait(false);
         CodexThreadGoal? goal = await thread.GetGoalAsync(cancellationToken).ConfigureAwait(false);
         return goal is null ? null : CodexViewModelMapper.ToThreadGoalVm(goal);
     }
@@ -294,7 +294,7 @@ internal sealed class CodexGateway : ICodexGateway
         CancellationToken cancellationToken = default)
     {
         CodexRuntimeSlot runtime = await _runtimeRegistry.GetBestForThreadAsync(threadId, cancellationToken).ConfigureAwait(false);
-        CodexThread thread = await runtime.Client.ResumeThreadAsync(threadId, null, cancellationToken).ConfigureAwait(false);
+        ICodexThreadHandle thread = await runtime.Client.ResumeThreadAsync(threadId, null, cancellationToken).ConfigureAwait(false);
         CodexThreadGoal goal = await thread.SetGoalAsync(objective, tokenBudget, cancellationToken).ConfigureAwait(false);
         return CodexViewModelMapper.ToThreadGoalVm(goal);
     }
@@ -305,7 +305,7 @@ internal sealed class CodexGateway : ICodexGateway
         CancellationToken cancellationToken = default)
     {
         CodexRuntimeSlot runtime = await _runtimeRegistry.GetBestForThreadAsync(threadId, cancellationToken).ConfigureAwait(false);
-        CodexThread thread = await runtime.Client.ResumeThreadAsync(threadId, null, cancellationToken).ConfigureAwait(false);
+        ICodexThreadHandle thread = await runtime.Client.ResumeThreadAsync(threadId, null, cancellationToken).ConfigureAwait(false);
         CodexThreadGoal goal = await thread.SetGoalStatusAsync(status, cancellationToken).ConfigureAwait(false);
         return CodexViewModelMapper.ToThreadGoalVm(goal);
     }
@@ -313,7 +313,7 @@ internal sealed class CodexGateway : ICodexGateway
     public async Task<bool> ClearThreadGoalAsync(string threadId, CancellationToken cancellationToken = default)
     {
         CodexRuntimeSlot runtime = await _runtimeRegistry.GetBestForThreadAsync(threadId, cancellationToken).ConfigureAwait(false);
-        CodexThread thread = await runtime.Client.ResumeThreadAsync(threadId, null, cancellationToken).ConfigureAwait(false);
+        ICodexThreadHandle thread = await runtime.Client.ResumeThreadAsync(threadId, null, cancellationToken).ConfigureAwait(false);
         return await thread.ClearGoalAsync(cancellationToken).ConfigureAwait(false);
     }
 
@@ -342,7 +342,7 @@ internal sealed class CodexGateway : ICodexGateway
 
     private async Task<CodexThreadExecutionVm> StartTurnAsync(
         CodexRuntimeSlot runtime,
-        CodexThread thread,
+        ICodexThreadHandle thread,
         string threadId,
         CodexTurnSubmission submission,
         CodexThreadManifestRecord manifest,
@@ -388,6 +388,6 @@ internal sealed class CodexGateway : ICodexGateway
             AdditionalDirectories = options.AdditionalDirectories,
         };
 
-    private static string GetThreadIdOrThrow(CodexThread thread)
+    private static string GetThreadIdOrThrow(ICodexThreadHandle thread)
         => string.IsNullOrWhiteSpace(thread.Id) ? throw new InvalidOperationException("Codex thread id was not populated.") : thread.Id;
 }

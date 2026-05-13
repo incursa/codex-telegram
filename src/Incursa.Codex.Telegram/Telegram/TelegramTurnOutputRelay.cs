@@ -119,16 +119,9 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
             ? FormatInternalProgressEntry(entry)
             : FormatEntry(entry, bufferedAgentMessage);
 
-        bool publishedTerminalText = false;
         if (!string.IsNullOrWhiteSpace(text))
         {
-            publishedTerminalText = true;
             await PublishTextAsync(entry.ThreadId, entry.TurnId, entry.Type, text, kind, ResolvePriority(kind), cancellationToken).ConfigureAwait(false);
-        }
-
-        if (isTerminal && ShouldPublishFinishedMarker(entry, bufferedAgentMessage, publishedTerminalText))
-        {
-            await PublishTextAsync(entry.ThreadId, entry.TurnId, entry.Type + ".finished", TurnCompletionMarker, CodexOutboundMessageKind.Completion, OutboundPriority.High, cancellationToken).ConfigureAwait(false);
         }
 
         if (isTerminal)
@@ -400,21 +393,6 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
     private static bool IsTerminalTurnEvent(CodexTimelineEntryVm entry)
         => string.Equals(entry.Type, TurnCompletedType, StringComparison.OrdinalIgnoreCase)
             || string.Equals(entry.Type, TurnFailedType, StringComparison.OrdinalIgnoreCase);
-
-    private static bool ShouldPublishFinishedMarker(CodexTimelineEntryVm entry, AgentMessageFlush? bufferedAgentMessage, bool publishedTerminalText)
-    {
-        if (!string.Equals(entry.Type, TurnCompletedType, StringComparison.OrdinalIgnoreCase))
-        {
-            return true;
-        }
-
-        if (publishedTerminalText)
-        {
-            return true;
-        }
-
-        return bufferedAgentMessage?.PublishedAny != true;
-    }
 
     private static bool IsItemProgressEntry(CodexTimelineEntryVm entry)
         => entry.Type.StartsWith("item.", StringComparison.OrdinalIgnoreCase);

@@ -132,7 +132,7 @@ public sealed class TelegramTypingHeartbeatHostedServiceTests
 
         public CodexActiveTurnStateVm? TryGetActiveTurnState(string threadId) => null;
 
-        public void RegisterActiveTurn(string threadId, string turnId, CodexTurn? turn = null, CodexTimelineEntryVm? lastEvent = null)
+        public void RegisterActiveTurn(string threadId, string turnId, ICodexTurnHandle? turn = null, CodexTimelineEntryVm? lastEvent = null)
         {
         }
 

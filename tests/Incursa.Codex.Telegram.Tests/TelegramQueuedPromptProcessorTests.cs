@@ -597,7 +597,7 @@ public sealed class TelegramQueuedPromptProcessorTests
 
         public CodexActiveTurnStateVm? TryGetActiveTurnState(string threadId) => null;
 
-        public void RegisterActiveTurn(string threadId, string turnId, CodexTurn? turn = null, CodexTimelineEntryVm? lastEvent = null)
+        public void RegisterActiveTurn(string threadId, string turnId, ICodexTurnHandle? turn = null, CodexTimelineEntryVm? lastEvent = null)
         {
             ActiveThreadIds.Add(threadId);
         }

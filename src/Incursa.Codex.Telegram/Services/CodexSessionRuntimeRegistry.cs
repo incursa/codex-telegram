@@ -19,6 +19,7 @@ internal sealed class CodexSessionRuntimeRegistry : ICodexTurnExecutionCoordinat
     private readonly ITelegramTurnOutputRelay _telegramTurnOutputRelay;
     private readonly IHostApplicationLifetime _applicationLifetime;
     private readonly ILoggerFactory _loggerFactory;
+    private readonly ICodexRuntimeClientFactory _runtimeClientFactory;
 
     public CodexSessionRuntimeRegistry(
         IOptions<CodexClientOptions> clientOptions,
@@ -26,7 +27,8 @@ internal sealed class CodexSessionRuntimeRegistry : ICodexTurnExecutionCoordinat
         ICodexRealtimeBroadcaster broadcaster,
         ITelegramTurnOutputRelay telegramTurnOutputRelay,
         IHostApplicationLifetime applicationLifetime,
-        ILoggerFactory loggerFactory)
+        ILoggerFactory loggerFactory,
+        ICodexRuntimeClientFactory runtimeClientFactory)
     {
         _clientOptions = clientOptions;
         _planInputCoordinator = planInputCoordinator;
@@ -34,6 +36,7 @@ internal sealed class CodexSessionRuntimeRegistry : ICodexTurnExecutionCoordinat
         _telegramTurnOutputRelay = telegramTurnOutputRelay;
         _applicationLifetime = applicationLifetime;
         _loggerFactory = loggerFactory;
+        _runtimeClientFactory = runtimeClientFactory;
         _defaultSlot = CreateSlot(broadcastRuntimeState: true);
     }
 
@@ -109,7 +112,7 @@ internal sealed class CodexSessionRuntimeRegistry : ICodexTurnExecutionCoordinat
             .Select(slot => slot.TurnCoordinator.TryGetActiveTurnState(threadId))
             .FirstOrDefault(state => state is not null);
 
-    public void RegisterActiveTurn(string threadId, string turnId, CodexTurn? turn = null, CodexTimelineEntryVm? lastEvent = null)
+    public void RegisterActiveTurn(string threadId, string turnId, ICodexTurnHandle? turn = null, CodexTimelineEntryVm? lastEvent = null)
     {
         CodexRuntimeSlot slot = GetKnownSlotForThread(threadId);
         slot.TurnCoordinator.RegisterActiveTurn(threadId, turnId, turn, lastEvent);
@@ -146,7 +149,7 @@ internal sealed class CodexSessionRuntimeRegistry : ICodexTurnExecutionCoordinat
 
     private CodexRuntimeSlot CreateSlot(bool broadcastRuntimeState)
         => new(
-            new CodexClient(CreateClientOptions()),
+            _runtimeClientFactory.Create(CreateClientOptions()),
             new CodexRuntimeState(),
             new CodexTurnExecutionCoordinator(
                 _broadcaster,
@@ -224,7 +227,7 @@ internal sealed class CodexRuntimeSlot : IAsyncDisposable
     private readonly SemaphoreSlim _runtimeInitGate = new(1, 1);
 
     public CodexRuntimeSlot(
-        CodexClient client,
+        ICodexRuntimeClient client,
         CodexRuntimeState runtimeState,
         CodexTurnExecutionCoordinator turnCoordinator,
         ICodexRealtimeBroadcaster broadcaster,
@@ -237,7 +240,7 @@ internal sealed class CodexRuntimeSlot : IAsyncDisposable
         _broadcastRuntimeState = broadcastRuntimeState;
     }
 
-    public CodexClient Client { get; }
+    public ICodexRuntimeClient Client { get; }
 
     public CodexRuntimeState RuntimeState { get; }
 
