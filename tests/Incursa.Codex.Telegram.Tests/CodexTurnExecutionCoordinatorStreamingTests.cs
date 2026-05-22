@@ -103,7 +103,10 @@ public sealed class CodexTurnExecutionCoordinatorStreamingTests
         await coordinator.StartAsync(thread, [], new CodexTurnOptions(), CancellationToken.None);
         await firstScript.Finished.Task.WaitAsync(TimeSpan.FromSeconds(1));
         await retryScript.Finished.Task.WaitAsync(TimeSpan.FromSeconds(1));
-        await WaitForConditionAsync(() => queue.Messages.Any(message => message.Text == "retry worked"));
+        await WaitForConditionAsync(
+            () => queue.Messages.Any(message => message.Text == "retry worked"),
+            () => $"Messages: {string.Join(" | ", queue.Messages.Select(message => message.Text))}",
+            TimeSpan.FromSeconds(5));
 
         Assert.Contains(queue.Messages, message =>
             message.Text.Contains("Selected model is at capacity", StringComparison.OrdinalIgnoreCase)
@@ -135,9 +138,11 @@ public sealed class CodexTurnExecutionCoordinatorStreamingTests
             capacityRetryDelays: [TimeSpan.Zero, TimeSpan.Zero, TimeSpan.Zero]);
 
         await coordinator.StartAsync(thread, [], new CodexTurnOptions(), CancellationToken.None);
-        await WaitForConditionAsync(() =>
-            queue.Messages.Any(message =>
-                message.Text.Contains("Selected model is still at capacity", StringComparison.OrdinalIgnoreCase)));
+        await WaitForConditionAsync(
+            () => queue.Messages.Any(message =>
+                message.Text.Contains("Selected model is still at capacity", StringComparison.OrdinalIgnoreCase)),
+            () => $"Messages: {string.Join(" | ", queue.Messages.Select(message => message.Text))}",
+            TimeSpan.FromSeconds(5));
 
         Assert.Equal(
             3,
