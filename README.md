@@ -362,7 +362,7 @@ Practical rules:
 3. Use `/usage` when you need current five-hour and weekly Codex usage percentages and reset times.
 4. Batched messages are concatenated with simple spacing and preserve multi-line content, including numbered lists and headings.
 5. If the local outbound buffer is compacted, the bot sends an explicit compaction notice.
-6. A final `~~ fin ~~` marker means the turn reached a terminal event.
+6. Terminal turn events are tracked internally; the bot no longer emits a standalone completion marker into the chat.
 
 ## Local State And Safety
 

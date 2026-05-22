@@ -15,6 +15,8 @@ public sealed class CodexTurnExecutionCoordinatorTests
             new NullCodexRealtimeBroadcaster(),
             new NoopTelegramTurnOutputRelay(),
             new TestApplicationLifetime(),
+            TimeProvider.System,
+            TimeSpan.FromSeconds(3),
             NullLogger<CodexTurnExecutionCoordinator>.Instance);
 
         coordinator.RegisterActiveTurn("thread-1", "turn-original");

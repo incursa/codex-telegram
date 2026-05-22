@@ -294,7 +294,8 @@ internal sealed class OutboundTelegramScheduler : BackgroundService, IOutboundTe
     private const int GlobalSendBudgetWindowSeconds = 1;
     private const int DefaultRateLimitBackoffSeconds = 5;
     private const int SchedulerFailureDelaySeconds = 1;
-    private const string TurnFinishedMarker = "~~ fin ~~";
+    private const string TurnCompletionMarker = "~~ turn complete ~~";
+    private const string LegacyTurnFinishedMarker = "~~ fin ~~";
     private readonly ConcurrentDictionary<TelegramDestinationKey, DestinationBuffer> _buffers = new();
     private readonly ConcurrentDictionary<TelegramSendBudgetKey, BudgetState> _chatBudgets = new();
     private readonly Queue<DateTimeOffset> _globalSendTimestamps = new();
@@ -926,6 +927,7 @@ internal sealed class OutboundTelegramScheduler : BackgroundService, IOutboundTe
         /// <returns>Number of messages removed and summarized.</returns>
         public int Compact(int maxChars, int maxMessages)
         {
+            List<PendingOutboundItem> compactedItems = [];
             int compacted = 0;
             while ((_messages.Count > maxMessages || PendingCharacterCount > maxChars) && _messages.Count > 1)
             {
@@ -940,26 +942,37 @@ internal sealed class OutboundTelegramScheduler : BackgroundService, IOutboundTe
                     break;
                 }
 
-                // Prefer dropping progress and ordinary updates; high-priority errors/completions are the
+                // Prefer compacting progress and ordinary updates; high-priority errors/completions are the
                 // most important evidence when a Telegram destination is overloaded.
+                compactedItems.Add(_messages[index]);
                 _messages.RemoveAt(index);
                 compacted++;
             }
 
             if (compacted > 0)
             {
+                string compactedText = BuildCompactedText(compactedItems, compacted);
                 _messages.Insert(0, new PendingOutboundItem(
                     "compacted-" + Guid.NewGuid().ToString("n"),
                     SessionId,
-                    null,
+                    ResolveSingleValue(compactedItems.Select(message => message.TurnId)),
                     CodexOutboundMessageKind.System,
-                    $"... {compacted} older outbound updates compacted to protect local memory.",
+                    compactedText,
                     null,
                     FirstPendingUtc ?? DateTimeOffset.UtcNow,
-                    OutboundPriority.Normal));
+                    OutboundPriority.High));
             }
 
             return compacted;
+        }
+
+        private static string BuildCompactedText(IReadOnlyList<PendingOutboundItem> compactedItems, int compactedCount)
+        {
+            string compactedBody = FormatBatch(compactedItems);
+            return string.Join(
+                Environment.NewLine + Environment.NewLine,
+                $"... {compactedCount} older outbound updates compacted to protect local memory.",
+                compactedBody);
         }
 
         private PreparedOutboundSend FormatNextSend()
@@ -1051,7 +1064,8 @@ internal sealed class OutboundTelegramScheduler : BackgroundService, IOutboundTe
 
         private static bool IsStandaloneMessage(PendingOutboundItem message)
             => message.File is not null
-                || string.Equals(FormatBatchItem(message.Text), TurnFinishedMarker, StringComparison.Ordinal);
+                || string.Equals(FormatBatchItem(message.Text), TurnCompletionMarker, StringComparison.Ordinal)
+                || string.Equals(FormatBatchItem(message.Text), LegacyTurnFinishedMarker, StringComparison.Ordinal);
     }
 
     /// <summary>

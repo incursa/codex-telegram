@@ -30,6 +30,21 @@ public sealed class CodexOptionMapperTests
     }
 
     [Fact]
+    public void BuildThreadOptions_EnablesRequestUserInputFeatureForPlanModeTurns()
+    {
+        CodexTelegramOptions options = new();
+        CodexTurnSubmission submission = new()
+        {
+            PlanMode = true,
+        };
+
+        CodexThreadOptions mapped = CodexOptionMapper.BuildThreadOptions(options, submission);
+
+        CodexConfigObject features = GetConfigObject(mapped.Config, "features");
+        Assert.True(GetConfigBoolean(features, "default_mode_request_user_input"));
+    }
+
+    [Fact]
     public void BuildTurnOptions_MapsTurnLevelAndFallsBackToManifestAndDefaults()
     {
         using TemporaryDirectory temp = TemporaryDirectory.Create();
@@ -93,5 +108,19 @@ public sealed class CodexOptionMapperTests
         Assert.True(config.Values.TryGetValue(key, out CodexConfigValue? value));
         CodexConfigStringValue stringValue = Assert.IsType<CodexConfigStringValue>(value);
         return stringValue.Value;
+    }
+
+    private static CodexConfigObject GetConfigObject(CodexConfigObject? config, string key)
+    {
+        Assert.NotNull(config);
+        Assert.True(config.Values.TryGetValue(key, out CodexConfigValue? value));
+        return Assert.IsType<CodexConfigObject>(value);
+    }
+
+    private static bool GetConfigBoolean(CodexConfigObject config, string key)
+    {
+        Assert.True(config.Values.TryGetValue(key, out CodexConfigValue? value));
+        CodexConfigBooleanValue booleanValue = Assert.IsType<CodexConfigBooleanValue>(value);
+        return booleanValue.Value;
     }
 }

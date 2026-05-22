@@ -92,7 +92,9 @@ internal sealed class TelegramQueuedPromptProcessor : ITelegramQueuedPromptProce
             using IDisposable typingRegistration = _typingIndicatorRegistry.Track(prompt.ConversationScope);
             await _sender.SendTextMessageAsync(
                 prompt.ConversationScope,
-                $"Starting queued message for {session.Name}. Live updates will stream here.",
+                prompt.PlanMode
+                    ? $"Starting queued Plan mode request for {session.Name}. Live updates will stream here."
+                    : $"Starting queued message for {session.Name}. Live updates will stream here.",
                 null,
                 cancellationToken,
                 CreateDebugContext("queued-worker", prompt.SessionId, kind: "start")).ConfigureAwait(false);
@@ -103,6 +105,8 @@ internal sealed class TelegramQueuedPromptProcessor : ITelegramQueuedPromptProce
                     prompt.SessionId,
                     TelegramAttachmentInputBuilder.BuildInputItems(prompt.Text, prompt.Attachments),
                     cancellationToken).ConfigureAwait(false)
+                : prompt.PlanMode
+                    ? await _sessionManager.SendPlanAsync(prompt.SessionId, prompt.Text, cancellationToken).ConfigureAwait(false)
                 : await _sessionManager.SendAsync(prompt.SessionId, prompt.Text, cancellationToken).ConfigureAwait(false);
             _followRegistry.FollowThread(prompt.ConversationScope, execution.ThreadId);
             // Codex may read local image paths after SendAsync returns.

@@ -107,7 +107,7 @@ Expect these behaviors:
 4. If the local outbound buffer is compacted, the bot sends an explicit compaction notice instead of silently pretending older updates are still present.
 5. `/tail` is the best source when you suspect scrollback is incomplete.
 6. `/outbound` shows delayed outbound Telegram messages and chunks.
-7. A final `~~ fin ~~` marker means the turn reached a terminal event.
+7. Terminal turn events are tracked internally; the bot no longer emits a standalone completion marker into the chat.
 
 If output looks incomplete, send `/tail` first. If `/tail` has the missing text, the issue is Telegram delivery or batching. If `/tail` is missing it too, inspect the Codex session itself.
 Do not use Telegram scrollback alone as evidence that Codex lost content.

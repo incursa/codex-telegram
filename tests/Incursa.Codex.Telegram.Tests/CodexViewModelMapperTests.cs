@@ -79,6 +79,30 @@ public sealed class CodexViewModelMapperTests
     }
 
     [Fact]
+    public void ToTurnVm_FallsBackToTheLastVisibleItemWhenNoFinalAnswerExists()
+    {
+        CodexTurnRecord turn = new()
+        {
+            Id = "turn-789",
+            Status = CodexTurnStatus.Completed,
+            Items =
+            [
+                new CodexCommandExecutionItem
+                {
+                    Id = "item-1",
+                    Type = "item.command",
+                    Command = "dotnet test",
+                    Status = CodexCommandExecutionStatus.Completed,
+                },
+            ],
+        };
+
+        CodexTurnVm vm = CodexViewModelMapper.ToTurnVm(turn);
+
+        Assert.Equal("dotnet test [Completed]", vm.FinalResponse);
+    }
+
+    [Fact]
     public void ToTurnItemVm_MarksExplicitImageViewMedia()
     {
         CodexTimelineEntryVm item = CodexViewModelMapper.ToTurnItemVm(new CodexImageViewItem
@@ -112,5 +136,32 @@ public sealed class CodexViewModelMapperTests
         Assert.Equal("completed", item.Metadata["status"]);
         Assert.Equal("ig-test", item.Metadata["id"]);
         Assert.Equal("image/png", item.Metadata["contentType"]);
+    }
+
+    [Fact]
+    public void ToTimelineEntryVm_MapsPlanUpdatedEventsAsVisiblePlanModeUpdates()
+    {
+        CodexTimelineEntryVm entry = CodexViewModelMapper.ToTimelineEntryVm(
+            new CodexTurnPlanUpdatedEvent
+            {
+                ThreadId = "thread-plan",
+                TurnId = "turn-plan",
+                Explanation = "Need to confirm scope.",
+                Plan =
+                [
+                    new CodexTurnPlanStep { Step = "Inspect repo", Status = CodexTurnPlanStepStatus.Completed },
+                    new CodexTurnPlanStep { Step = "Ask clarifying question", Status = CodexTurnPlanStepStatus.InProgress },
+                    new CodexTurnPlanStep { Step = "Draft implementation", Status = CodexTurnPlanStepStatus.Pending },
+                ],
+            });
+
+        Assert.False(entry.IsInternal);
+        Assert.Equal("Plan mode update", entry.Title);
+        Assert.Equal("thread-plan", entry.ThreadId);
+        Assert.Equal("turn-plan", entry.TurnId);
+        Assert.Equal("plan", entry.Metadata["mode"]);
+        Assert.Contains("[x] Inspect repo", entry.Body);
+        Assert.Contains("[>] Ask clarifying question", entry.Body);
+        Assert.Contains("[ ] Draft implementation", entry.Body);
     }
 }

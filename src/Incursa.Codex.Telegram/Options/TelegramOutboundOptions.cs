@@ -32,12 +32,12 @@ public static class TelegramOutboundDefaults
     /// <summary>
     /// Default maximum buffered text per destination before local compaction begins.
     /// </summary>
-    public const int MaxBufferedCharsPerDestination = 25000;
+    public const int MaxBufferedCharsPerDestination = 250000;
 
     /// <summary>
     /// Default maximum buffered update count per destination before local compaction begins.
     /// </summary>
-    public const int MaxBufferedMessagesPerDestination = 100;
+    public const int MaxBufferedMessagesPerDestination = 1000;
 
     /// <summary>
     /// Default scheduler wake-up interval while checking for ready outbound work.
@@ -52,7 +52,7 @@ public static class TelegramOutboundDefaults
     /// <summary>
     /// Default minimum accumulated assistant-message characters before live progress is published.
     /// </summary>
-    public const int AgentMessageUpdateMinChars = 40;
+    public const int AgentMessageUpdateMinChars = 12;
 
     /// <summary>
     /// Default maximum live assistant-message chunk size before a progress update is published.
@@ -62,7 +62,7 @@ public static class TelegramOutboundDefaults
     /// <summary>
     /// Default amount of time to collect normal-priority updates before batching and sending them.
     /// </summary>
-    public const int BatchWindowSeconds = 5;
+    public const int BatchWindowSeconds = 0;
 
     /// <summary>
     /// Default compaction policy name used in configuration and diagnostics.

@@ -1,0 +1,116 @@
+{
+  "artifact_id": "SPEC-CTG-TEST",
+  "artifact_type": "specification",
+  "title": "Codex Testability and Validation",
+  "domain": "codex-telegram",
+  "capability": "codex-testability",
+  "status": "draft",
+  "owner": "codex-telegram-maintainers",
+  "tags": [
+    "codex",
+    "telegram",
+    "testing",
+    "simulation",
+    "fuzz",
+    "mutation"
+  ],
+  "purpose": "Define the test seams and validation expectations that let unit tests exercise short, long, delayed, failing, and fuzzed Codex behaviors without the live service.",
+  "scope": "This specification covers the replaceable Codex seam, reusable scripted simulator behavior, and the validation expectations for queue, relay, handler, and prompt-dispatch tests.",
+  "context": "The repository already separates Codex calls behind gateway, session-manager, and turn-coordinator interfaces, and it already uses separate fuzz and mutation gates for release readiness. This specification makes that testability contract explicit so future tests can be traced to stable requirement IDs.",
+  "requirements": [
+    {
+      "id": "REQ-CTG-TEST-0001",
+      "title": "Keep Codex-dependent behavior behind a test seam",
+      "statement": "The repository MUST keep Codex-dependent behavior behind a replaceable test seam so unit tests can run without contacting the live Codex service.",
+      "trace": {
+        "upstream_refs": [
+          "`src/Incursa.Codex.Telegram/Services/CodexGateway.cs`",
+          "`src/Incursa.Codex.Telegram/Services/CodexSessionManager.cs`",
+          "`src/Incursa.Codex.Telegram/Services/CodexTurnExecutionCoordinator.cs`"
+        ]
+      }
+    },
+    {
+      "id": "REQ-CTG-TEST-0002",
+      "title": "Support scripted Codex turn sequences",
+      "statement": "The replaceable Codex test seam MUST support scripted turn sequences that can produce short responses, long responses, streaming deltas, delayed completion that can be held until the test releases it, empty completion, terminal failure, internal progress notices, and user-input request events.",
+      "coverage": {
+        "positive": "required",
+        "negative": "required",
+        "edge": "required",
+        "fuzz": "required"
+      },
+      "trace": {
+        "upstream_refs": [
+          "`src/Incursa.Codex.Telegram/Telegram/TelegramTurnOutputRelay.cs`",
+          "`src/Incursa.Codex.Telegram/Telegram/TelegramQueuedPromptProcessor.cs`",
+          "`src/Incursa.Codex.Telegram/Telegram/TelegramPlanInputCoordinator.cs`",
+          "`src/Incursa.Codex.Telegram/Services/CodexViewModelMapper.cs`"
+        ]
+      },
+      "notes": [
+        "The scripted sequences are meant to let tests hold a turn open, drive large payloads, and trigger terminal behavior without sleeping against a live backend."
+      ]
+    },
+    {
+      "id": "REQ-CTG-TEST-0003",
+      "title": "Reuse the scripted simulator across tests",
+      "statement": "The scripted Codex test seam MUST be reusable across unit tests so scenarios can be composed without duplicating ad hoc fakes.",
+      "trace": {
+        "upstream_refs": [
+          "`tests/Incursa.Codex.Telegram.Tests/TelegramQueuedPromptProcessorTests.cs`",
+          "`tests/Incursa.Codex.Telegram.Tests/TelegramCommandHandlerTests.cs`"
+        ]
+      }
+    },
+    {
+      "id": "REQ-CTG-TEST-0004",
+      "title": "Trace behavioral tests to requirement IDs",
+      "statement": "Behavioral tests that exercise Codex-dependent behavior MUST be traceable to specific requirement IDs.",
+      "trace": {
+        "upstream_refs": [
+          "`docs/testing.md`",
+          "`tests/Incursa.Codex.Telegram.Tests/TelegramFuzzCorpusTests.cs`",
+          "`tests/Incursa.Codex.Telegram.Tests/TelegramTurnOutputRelayTests.cs`",
+          "`tests/Incursa.Codex.Telegram.Tests/OutboundTelegramQueueTests.cs`"
+        ]
+      },
+      "notes": [
+        "This requirement is about test traceability, not a request to keep live Codex integration in the test suite."
+      ]
+    },
+    {
+      "id": "REQ-CTG-TEST-0005",
+      "title": "Cover observable Codex behavior with breadth",
+      "statement": "Behavioral tests that exercise Codex-dependent behavior MUST cover positive, negative, edge, and fuzz cases for the observable Codex-to-Telegram behaviors they cover.",
+      "coverage": {
+        "positive": "required",
+        "negative": "required",
+        "edge": "required",
+        "fuzz": "required"
+      },
+      "trace": {
+        "upstream_refs": [
+          "`docs/testing.md`",
+          "`tests/Incursa.Codex.Telegram.Tests/TelegramFuzzCorpusTests.cs`",
+          "`tests/Incursa.Codex.Telegram.Tests/TelegramTurnOutputRelayTests.cs`",
+          "`tests/Incursa.Codex.Telegram.Tests/OutboundTelegramQueueTests.cs`"
+        ]
+      }
+    },
+    {
+      "id": "REQ-CTG-TEST-0006",
+      "title": "Use mutation evidence for major behavior changes",
+      "statement": "Behavior changes in the queue, relay, handler, or prompt-dispatch surfaces SHOULD be checked with mutation testing or equivalent mutation evidence.",
+      "trace": {
+        "upstream_refs": [
+          "`docs/testing.md`",
+          "`scripts/Test-TelegramMutation.ps1`",
+          "`tests/Incursa.Codex.Telegram.Tests/TelegramTurnOutputRelayTests.cs`",
+          "`tests/Incursa.Codex.Telegram.Tests/TelegramQueuedPromptProcessorTests.cs`",
+          "`tests/Incursa.Codex.Telegram.Tests/TelegramCommandHandlerTests.cs`"
+        ]
+      }
+    }
+  ]
+}

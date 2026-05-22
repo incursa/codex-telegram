@@ -477,6 +477,8 @@ public sealed class TelegramQueuedPromptProcessorTests
 
         public List<(string SessionId, string Text)> TextSends { get; } = [];
 
+        public List<(string SessionId, string Text)> PlanSends { get; } = [];
+
         public List<(string SessionId, IReadOnlyList<CodexInputItem> Input)> AttachmentSends { get; } = [];
 
         public Exception? SendException { get; set; }
@@ -504,6 +506,23 @@ public sealed class TelegramQueuedPromptProcessorTests
             }
 
             TextSends.Add((sessionId, input));
+            TextSendStarted.TrySetResult(true);
+            if (PendingTextSend is not null)
+            {
+                return PendingTextSend.Task;
+            }
+
+            return Task.FromResult(new CodexThreadExecutionVm(ExecutionThreadId ?? sessionId, "turn-1", "running", null));
+        }
+
+        public Task<CodexThreadExecutionVm> SendPlanAsync(string sessionId, string input, CancellationToken cancellationToken)
+        {
+            if (SendException is not null)
+            {
+                throw SendException;
+            }
+
+            PlanSends.Add((sessionId, input));
             TextSendStarted.TrySetResult(true);
             if (PendingTextSend is not null)
             {
@@ -578,7 +597,7 @@ public sealed class TelegramQueuedPromptProcessorTests
 
         public CodexActiveTurnStateVm? TryGetActiveTurnState(string threadId) => null;
 
-        public void RegisterActiveTurn(string threadId, string turnId, CodexTurn? turn = null, CodexTimelineEntryVm? lastEvent = null)
+        public void RegisterActiveTurn(string threadId, string turnId, ICodexTurnHandle? turn = null, CodexTimelineEntryVm? lastEvent = null)
         {
             ActiveThreadIds.Add(threadId);
         }

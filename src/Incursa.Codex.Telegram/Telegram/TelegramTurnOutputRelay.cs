@@ -30,7 +30,8 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
     private const string TurnStartedType = "turn.started";
     private const string TurnCompletedType = "turn.completed";
     private const string TurnFailedType = "turn.failed";
-    private const string TurnFinishedMarker = "~~ fin ~~";
+    private const string TurnCompletionMarker = "~~ turn complete ~~";
+    private const string LegacyTurnFinishedMarker = "~~ fin ~~";
     private const int InternalProgressMaxCharacters = 2000;
     private const long MaxTelegramPhotoBytes = 10L * 1024L * 1024L;
     private const long MaxTelegramDocumentBytes = 50L * 1024L * 1024L;
@@ -118,16 +119,9 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
             ? FormatInternalProgressEntry(entry)
             : FormatEntry(entry, bufferedAgentMessage);
 
-        bool publishedTerminalText = false;
         if (!string.IsNullOrWhiteSpace(text))
         {
-            publishedTerminalText = true;
             await PublishTextAsync(entry.ThreadId, entry.TurnId, entry.Type, text, kind, ResolvePriority(kind), cancellationToken).ConfigureAwait(false);
-        }
-
-        if (isTerminal && ShouldPublishFinishedMarker(entry, bufferedAgentMessage, publishedTerminalText))
-        {
-            await PublishTextAsync(entry.ThreadId, entry.TurnId, entry.Type + ".finished", TurnFinishedMarker, CodexOutboundMessageKind.Completion, OutboundPriority.High, cancellationToken).ConfigureAwait(false);
         }
 
         if (isTerminal)
@@ -297,7 +291,13 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
     {
         if (string.Equals(entry.Type, TurnCompletedType, StringComparison.OrdinalIgnoreCase))
         {
-            return RemoveTurnFinishedMarker(ResolveFinalResponseText(entry, bufferedAgentMessage));
+            string? finalResponse = RemoveTurnFinishedMarker(ResolveFinalResponseText(entry, bufferedAgentMessage));
+            if (!string.IsNullOrWhiteSpace(finalResponse))
+            {
+                return finalResponse;
+            }
+
+            return entry.Title;
         }
 
         List<string> lines = [entry.Title];
@@ -400,21 +400,6 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
         => string.Equals(entry.Type, TurnCompletedType, StringComparison.OrdinalIgnoreCase)
             || string.Equals(entry.Type, TurnFailedType, StringComparison.OrdinalIgnoreCase);
 
-    private static bool ShouldPublishFinishedMarker(CodexTimelineEntryVm entry, AgentMessageFlush? bufferedAgentMessage, bool publishedTerminalText)
-    {
-        if (!string.Equals(entry.Type, TurnCompletedType, StringComparison.OrdinalIgnoreCase))
-        {
-            return true;
-        }
-
-        if (publishedTerminalText)
-        {
-            return true;
-        }
-
-        return bufferedAgentMessage?.PublishedAny != true;
-    }
-
     private static bool IsItemProgressEntry(CodexTimelineEntryVm entry)
         => entry.Type.StartsWith("item.", StringComparison.OrdinalIgnoreCase);
 
@@ -444,9 +429,14 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
     private static string? RemoveTurnFinishedMarker(string? text)
     {
         string normalized = string.IsNullOrWhiteSpace(text) ? string.Empty : text.Trim();
-        if (normalized.EndsWith(TurnFinishedMarker, StringComparison.Ordinal))
+        if (normalized.EndsWith(TurnCompletionMarker, StringComparison.Ordinal))
         {
-            normalized = normalized[..^TurnFinishedMarker.Length].TrimEnd();
+            normalized = normalized[..^TurnCompletionMarker.Length].TrimEnd();
+        }
+
+        if (normalized.EndsWith(LegacyTurnFinishedMarker, StringComparison.Ordinal))
+        {
+            normalized = normalized[..^LegacyTurnFinishedMarker.Length].TrimEnd();
         }
 
         return string.IsNullOrWhiteSpace(normalized) ? null : normalized;
@@ -780,7 +770,7 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
         {
             lock (_gate)
             {
-                _text += delta;
+                _text += NormalizeDeltaForAppend(_text, delta);
 
                 int boundary = FindPublishBoundary(_text, _publishedLength, minChars, maxChars);
                 if (boundary <= _publishedLength)
@@ -793,6 +783,79 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
                 return FormatLiveAgentProgress(segment);
             }
         }
+
+        private static string NormalizeDeltaForAppend(string existingText, string delta)
+        {
+            if (!ShouldInsertSentenceSeparator(existingText, delta))
+            {
+                return delta;
+            }
+
+            return " " + delta;
+        }
+
+        private static bool ShouldInsertSentenceSeparator(string existingText, string delta)
+        {
+            if (string.IsNullOrEmpty(existingText) || string.IsNullOrEmpty(delta))
+            {
+                return false;
+            }
+
+            if (char.IsWhiteSpace(existingText[^1]) || char.IsWhiteSpace(delta[0]))
+            {
+                return false;
+            }
+
+            if (existingText[^1] is not ('.' or '!' or '?'))
+            {
+                return false;
+            }
+
+            return StartsLikeSentence(delta);
+        }
+
+        private static bool StartsLikeSentence(string value)
+        {
+            int index = 0;
+            while (index < value.Length && IsLeadingPunctuation(value[index]))
+            {
+                index++;
+            }
+
+            if (index >= value.Length)
+            {
+                return false;
+            }
+
+            if (!char.IsUpper(value[index]))
+            {
+                return false;
+            }
+
+            if (index + 1 >= value.Length)
+            {
+                return true;
+            }
+
+            char next = value[index + 1];
+            return char.IsLower(next)
+                || next is '\''
+                || next is '\u2018'
+                || next is '\u2019'
+                || next is '\u201c'
+                || next is '\u201d';
+        }
+
+        private static bool IsLeadingPunctuation(char ch)
+            => ch is '\''
+                or '"'
+                or '\u2018'
+                or '\u2019'
+                or '\u201c'
+                or '\u201d'
+                or '('
+                or '['
+                or '{';
 
         public AgentMessageFlush Flush()
         {
@@ -851,11 +914,39 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
                 }
 
                 int boundary = index + 1;
-                if (boundary >= minimumBoundary
-                    && (!requireFollowingWhitespace || (boundary < text.Length && char.IsWhiteSpace(text[boundary]))))
+                if (boundary < minimumBoundary)
+                {
+                    continue;
+                }
+
+                if (!requireFollowingWhitespace)
                 {
                     return boundary;
                 }
+
+                if (boundary < text.Length)
+                {
+                    if (char.IsWhiteSpace(text[boundary]))
+                    {
+                        return boundary;
+                    }
+
+                    continue;
+                }
+
+                char punctuation = text[boundary - 1];
+                char preceding = boundary >= 2 ? text[boundary - 2] : '\0';
+                if (char.IsWhiteSpace(preceding))
+                {
+                    continue;
+                }
+
+                if (punctuation == '.' && char.IsDigit(preceding))
+                {
+                    continue;
+                }
+
+                return boundary;
             }
 
             return -1;

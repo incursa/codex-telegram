@@ -109,6 +109,10 @@ builder.Services.PostConfigure<CodexTelegramOptions>(options =>
         options.Context.WorkingDirectory = Environment.CurrentDirectory;
     }
 
+    options.TerminalEventHoldMilliseconds = Math.Clamp(
+        options.TerminalEventHoldMilliseconds,
+        CodexTurnStreamingDefaults.MinTerminalEventHoldMilliseconds,
+        CodexTurnStreamingDefaults.MaxTerminalEventHoldMilliseconds);
     options.Workspace.DataRoot = Path.GetFullPath(options.Workspace.DataRoot);
     options.Workspace.WorkspaceRoots = NormalizeDistinctPaths(options.Workspace.WorkspaceRoots).ToList();
     options.Context.AdditionalDirectories = NormalizeDistinctPaths(options.Context.AdditionalDirectories).ToList();
@@ -223,11 +227,13 @@ builder.Services.AddSingleton<ITelegramForumTopicService, TelegramForumTopicServ
 builder.Services.AddSingleton<ITelegramMessageContextStore, TelegramMessageContextStore>();
 builder.Services.AddSingleton<ITelegramBotMessageSender, TelegramBotClientMessageSender>();
 builder.Services.AddSingleton<IOutboundTelegramMessageSender>(sp => (TelegramBotClientMessageSender)sp.GetRequiredService<ITelegramBotMessageSender>());
+builder.Services.AddSingleton<ITelegramPlanInputCoordinator, TelegramPlanInputCoordinator>();
 builder.Services.AddSingleton<OutboundTelegramScheduler>();
 builder.Services.AddSingleton<IOutboundTelegramQueue>(sp => sp.GetRequiredService<OutboundTelegramScheduler>());
 builder.Services.AddSingleton<ITelegramTurnOutputRelay, TelegramTurnOutputRelay>();
 builder.Services.AddHttpClient<OpenAiSpeechToTextService>();
 builder.Services.AddSingleton<IAudioTranscriptionService>(sp => sp.GetRequiredService<OpenAiSpeechToTextService>());
+builder.Services.AddSingleton<ICodexRuntimeClientFactory, CodexRuntimeClientFactory>();
 builder.Services.AddSingleton<CodexSessionRuntimeRegistry>();
 builder.Services.AddSingleton<ICodexTurnExecutionCoordinator>(sp => sp.GetRequiredService<CodexSessionRuntimeRegistry>());
 builder.Services.AddSingleton<ICodexGateway, CodexGateway>();

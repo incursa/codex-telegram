@@ -33,9 +33,10 @@ internal static class CodexOptionMapper
         CodexContextOptions defaults = options.Context;
         string? approvalMode = submission.ApprovalMode ?? manifest?.ApprovalMode ?? defaults.ApprovalMode;
         string? sandbox = submission.Sandbox ?? manifest?.Sandbox ?? defaults.Sandbox;
+        bool enableDefaultModeRequestUserInput = submission is CodexTurnSubmission { PlanMode: true };
         return new CodexThreadOptions
         {
-            Config = BuildConfigOverrides(sandbox, approvalMode),
+            Config = BuildConfigOverrides(sandbox, approvalMode, enableDefaultModeRequestUserInput),
             ApprovalsReviewer = ParseEnum<CodexApprovalsReviewer>(submission.ApprovalsReviewer ?? manifest?.ApprovalsReviewer ?? defaults.ApprovalsReviewer),
             BaseInstructions = submission.BaseInstructions ?? manifest?.BaseInstructions ?? defaults.BaseInstructions,
             DeveloperInstructions = submission.DeveloperInstructions ?? manifest?.DeveloperInstructions ?? defaults.DeveloperInstructions,
@@ -125,7 +126,7 @@ internal static class CodexOptionMapper
         return items;
     }
 
-    private static CodexConfigObject? BuildConfigOverrides(string? sandbox, string? approvalMode)
+    private static CodexConfigObject? BuildConfigOverrides(string? sandbox, string? approvalMode, bool enableDefaultModeRequestUserInput)
     {
         Dictionary<string, CodexConfigValue> values = new(StringComparer.Ordinal);
         if (ParseEnum<CodexSandboxMode>(sandbox) is { } sandboxMode)
@@ -136,6 +137,17 @@ internal static class CodexOptionMapper
         if (ParseEnum<CodexApprovalMode>(approvalMode) is { } mode)
         {
             values["approval_policy"] = new CodexConfigStringValue(ToKebabCase(mode));
+        }
+
+        if (enableDefaultModeRequestUserInput)
+        {
+            values["features"] = new CodexConfigObject
+            {
+                Values = new Dictionary<string, CodexConfigValue>(StringComparer.Ordinal)
+                {
+                    ["default_mode_request_user_input"] = new CodexConfigBooleanValue(true),
+                },
+            };
         }
 
         return values.Count == 0
