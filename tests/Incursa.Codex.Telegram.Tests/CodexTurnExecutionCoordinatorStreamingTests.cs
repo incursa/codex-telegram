@@ -7,6 +7,7 @@ using Incursa.OpenAI.Codex;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using System.Reflection;
 
 namespace Incursa.Codex.Telegram.Tests;
 
@@ -83,6 +84,220 @@ public sealed class CodexTurnExecutionCoordinatorStreamingTests
     }
 
     [Fact]
+    public async Task StartAsync_RetriesCapacityThreadErrorsAndSuppressesRawError()
+    {
+        using ScriptedCodexRuntime runtime = new();
+        ScriptedCodexTurnScript firstScript = runtime.QueueTurn("thread-1");
+        firstScript.AddThreadError("Selected model is at capacity. Please try a different model.");
+        ScriptedCodexTurnScript retryScript = runtime.QueueTurn("thread-1");
+        retryScript.AddDelta("retry worked").Complete("retry worked");
+
+        ICodexThreadHandle thread = runtime.CreateThread("thread-1");
+        FakeOutboundTelegramQueue queue = new();
+        TelegramThreadFollowRegistry followRegistry = FollowThread();
+        TelegramTurnOutputRelay relay = CreateRelay(queue, followRegistry);
+        CodexTurnExecutionCoordinator coordinator = CreateCoordinator(
+            relay,
+            capacityRetryDelays: [TimeSpan.Zero, TimeSpan.Zero, TimeSpan.Zero]);
+
+        await coordinator.StartAsync(thread, [], new CodexTurnOptions(), CancellationToken.None);
+        await firstScript.Finished.Task.WaitAsync(TimeSpan.FromSeconds(1));
+        await retryScript.Finished.Task.WaitAsync(TimeSpan.FromSeconds(1));
+        await WaitForConditionAsync(() => queue.Messages.Any(message => message.Text == "retry worked"));
+
+        Assert.Contains(queue.Messages, message =>
+            message.Text.Contains("Selected model is at capacity", StringComparison.OrdinalIgnoreCase)
+            && message.Text.Contains("(1/3)", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(queue.Messages, message => message.Text == "retry worked");
+        Assert.DoesNotContain(queue.Messages, message => message.Text.StartsWith("Thread error", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(queue.Messages, message => message.Text.Contains("Please try a different model", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public async Task StartAsync_StopsCapacityThreadErrorRetryAfterThreeAttempts()
+    {
+        using ScriptedCodexRuntime runtime = new();
+        ScriptedCodexTurnScript firstScript = runtime.QueueTurn("thread-1");
+        firstScript.AddThreadError("Selected model is at capacity. Please try a different model.");
+        ScriptedCodexTurnScript secondScript = runtime.QueueTurn("thread-1");
+        secondScript.AddThreadError("Selected model is at capacity. Please try a different model.");
+        ScriptedCodexTurnScript thirdScript = runtime.QueueTurn("thread-1");
+        thirdScript.AddThreadError("Selected model is at capacity. Please try a different model.");
+        ScriptedCodexTurnScript fourthScript = runtime.QueueTurn("thread-1");
+        fourthScript.AddThreadError("Selected model is at capacity. Please try a different model.");
+
+        ICodexThreadHandle thread = runtime.CreateThread("thread-1");
+        FakeOutboundTelegramQueue queue = new();
+        TelegramThreadFollowRegistry followRegistry = FollowThread();
+        TelegramTurnOutputRelay relay = CreateRelay(queue, followRegistry);
+        CodexTurnExecutionCoordinator coordinator = CreateCoordinator(
+            relay,
+            capacityRetryDelays: [TimeSpan.Zero, TimeSpan.Zero, TimeSpan.Zero]);
+
+        await coordinator.StartAsync(thread, [], new CodexTurnOptions(), CancellationToken.None);
+        await WaitForConditionAsync(() =>
+            queue.Messages.Any(message =>
+                message.Text.Contains("Selected model is still at capacity", StringComparison.OrdinalIgnoreCase)));
+
+        Assert.Equal(
+            3,
+            queue.Messages.Count(message => message.Text.Contains("Selected model is at capacity", StringComparison.OrdinalIgnoreCase)));
+        Assert.Contains(queue.Messages, message =>
+            message.Kind == CodexOutboundMessageKind.Error
+            && message.Text.Contains("Stopped after 3 retries", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(queue.Messages, message => message.Text.StartsWith("Thread error", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public async Task StartAsync_RetriesCompletionWithoutVisibleOutput()
+    {
+        using ScriptedCodexRuntime runtime = new();
+        ScriptedCodexTurnScript firstScript = runtime.QueueTurn("thread-1");
+        ScriptedCodexTurnScript retryScript = runtime.QueueTurn("thread-1");
+        retryScript.AddDelta("done").Complete("done");
+
+        ICodexThreadHandle thread = runtime.CreateThread("thread-1");
+        FakeOutboundTelegramQueue queue = new();
+        TelegramThreadFollowRegistry followRegistry = FollowThread();
+        TelegramTurnOutputRelay relay = CreateRelay(queue, followRegistry);
+        CodexTurnExecutionCoordinator coordinator = CreateCoordinator(
+            relay,
+            capacityRetryDelays: [TimeSpan.Zero, TimeSpan.Zero, TimeSpan.Zero]);
+
+        await coordinator.StartAsync(thread, [], new CodexTurnOptions(), CancellationToken.None);
+        await firstScript.Finished.Task.WaitAsync(TimeSpan.FromSeconds(1));
+        await retryScript.Finished.Task.WaitAsync(TimeSpan.FromSeconds(1));
+        await WaitForConditionAsync(() => queue.Messages.Any(message => message.Text == "done"));
+
+        Assert.Contains(queue.Messages, message =>
+            message.Text.Contains("Codex completed without visible output", StringComparison.OrdinalIgnoreCase)
+            && message.Text.Contains("(1/3)", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(queue.Messages, message => message.Text == "done");
+        Assert.DoesNotContain(queue.Messages, message => string.Equals(message.Text, "Turn completed", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task StartAsync_StopsCompletionWithoutVisibleOutputAfterThreeAttempts()
+    {
+        using ScriptedCodexRuntime runtime = new();
+        ScriptedCodexTurnScript firstScript = runtime.QueueTurn("thread-1");
+        ScriptedCodexTurnScript secondScript = runtime.QueueTurn("thread-1");
+        ScriptedCodexTurnScript thirdScript = runtime.QueueTurn("thread-1");
+        ScriptedCodexTurnScript fourthScript = runtime.QueueTurn("thread-1");
+
+        ICodexThreadHandle thread = runtime.CreateThread("thread-1");
+        FakeOutboundTelegramQueue queue = new();
+        TelegramThreadFollowRegistry followRegistry = FollowThread();
+        TelegramTurnOutputRelay relay = CreateRelay(queue, followRegistry);
+        CodexTurnExecutionCoordinator coordinator = CreateCoordinator(
+            relay,
+            capacityRetryDelays: [TimeSpan.Zero, TimeSpan.Zero, TimeSpan.Zero]);
+
+        await coordinator.StartAsync(thread, [], new CodexTurnOptions(), CancellationToken.None);
+        await WaitForConditionAsync(() =>
+            queue.Messages.Any(message =>
+                message.Kind == CodexOutboundMessageKind.Error
+                && message.Text.Contains("Codex completed without visible output", StringComparison.OrdinalIgnoreCase)));
+
+        Assert.Equal(
+            3,
+            queue.Messages.Count(message =>
+                message.Kind == CodexOutboundMessageKind.Update
+                && message.Text.Contains("Codex completed without visible output", StringComparison.OrdinalIgnoreCase)));
+        Assert.Contains(queue.Messages, message =>
+            message.Kind == CodexOutboundMessageKind.Error
+            && message.Text.Contains("Stopped after 3 retries", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(queue.Messages, message => string.Equals(message.Text, "Turn completed", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task StartAsync_FlushesBufferedAssistantTextWhenStreamEndsWithoutTerminalEvent()
+    {
+        using ScriptedCodexRuntime runtime = new();
+        ScriptedCodexTurnScript script = runtime.QueueTurn("thread-1");
+        script.AddDelta("abcd");
+        DisableAutoCompletion(script);
+
+        ICodexThreadHandle thread = runtime.CreateThread("thread-1");
+        FakeOutboundTelegramQueue queue = new();
+        TelegramThreadFollowRegistry followRegistry = FollowThread();
+        TelegramTurnOutputRelay relay = CreateRelay(queue, followRegistry);
+        CodexTurnExecutionCoordinator coordinator = CreateCoordinator(relay);
+
+        await coordinator.StartAsync(thread, [], new CodexTurnOptions(), CancellationToken.None);
+        await script.Finished.Task.WaitAsync(TimeSpan.FromSeconds(1));
+        await WaitForConditionAsync(
+            () => queue.Messages.Any(message => string.Equals(message.Text, "abcd", StringComparison.Ordinal)),
+            () => $"Count={queue.Messages.Count}; messages={string.Join(" || ", queue.Messages.Select(message => $"{message.Kind}:{message.Text}"))}");
+
+        OutboundTelegramMessage message = queue.Messages.Single(message => string.Equals(message.Text, "abcd", StringComparison.Ordinal));
+        Assert.Equal(CodexOutboundMessageKind.Completion, message.Kind);
+    }
+
+    [Fact]
+    public async Task StartAsync_PublishesCompletionTitleWhenStreamEndsWithoutTerminalEventAfterLiveProgress()
+    {
+        using ScriptedCodexRuntime runtime = new();
+        ScriptedCodexTurnScript script = runtime.QueueTurn("thread-1");
+        script.AddDelta("hello world.\n");
+        DisableAutoCompletion(script);
+
+        ICodexThreadHandle thread = runtime.CreateThread("thread-1");
+        FakeOutboundTelegramQueue queue = new();
+        TelegramThreadFollowRegistry followRegistry = FollowThread();
+        TelegramTurnOutputRelay relay = CreateRelay(queue, followRegistry);
+        CodexTurnExecutionCoordinator coordinator = CreateCoordinator(relay);
+
+        await coordinator.StartAsync(thread, [], new CodexTurnOptions(), CancellationToken.None);
+        await script.Finished.Task.WaitAsync(TimeSpan.FromSeconds(1));
+        await WaitForConditionAsync(
+            () => queue.Messages.Any(message => string.Equals(message.Text, "Turn completed", StringComparison.Ordinal)),
+            () => $"Count={queue.Messages.Count}; messages={string.Join(" || ", queue.Messages.Select(message => $"{message.Kind}:{message.Text}"))}");
+
+        Assert.Contains(queue.Messages, message => string.Equals(message.Text, "Turn completed", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task StartAsync_DoesNotCarryBufferedAssistantTextIntoTheNextTurnOnTheSameThread()
+    {
+        using ScriptedCodexRuntime runtime = new();
+        ScriptedCodexTurnScript firstScript = runtime.QueueTurn("thread-1");
+        firstScript.AddDelta("repro.");
+        DisableAutoCompletion(firstScript);
+
+        ScriptedCodexTurnScript secondScript = runtime.QueueTurn("thread-1");
+        string secondText = "The queue itself has a wake signal and a periodic loop, so I am checking the relay heuristics next.";
+        secondScript.AddDelta(secondText);
+        DisableAutoCompletion(secondScript);
+
+        ICodexThreadHandle thread = runtime.CreateThread("thread-1");
+        FakeOutboundTelegramQueue queue = new();
+        TelegramThreadFollowRegistry followRegistry = FollowThread();
+        TelegramTurnOutputRelay relay = CreateRelay(queue, followRegistry);
+        CodexTurnExecutionCoordinator coordinator = CreateCoordinator(relay);
+
+        await coordinator.StartAsync(thread, [], new CodexTurnOptions(), CancellationToken.None);
+        await firstScript.Finished.Task.WaitAsync(TimeSpan.FromSeconds(1));
+        await WaitForConditionAsync(
+            () => queue.Messages.Any(message => string.Equals(message.Text, "repro.", StringComparison.Ordinal)),
+            () => $"First turn did not flush cleanly. Count={queue.Messages.Count}; messages={string.Join(" || ", queue.Messages.Select(message => $"{message.Kind}:{message.Text}"))}");
+        await WaitForConditionAsync(
+            () => queue.Messages.Any(message => string.Equals(message.Text, "Turn completed", StringComparison.Ordinal)),
+            () => $"First turn did not publish its terminal marker. Count={queue.Messages.Count}; messages={string.Join(" || ", queue.Messages.Select(message => $"{message.Kind}:{message.Text}"))}");
+
+        int firstTurnMessageCount = queue.Messages.Count;
+
+        await coordinator.StartAsync(thread, [], new CodexTurnOptions(), CancellationToken.None);
+        await secondScript.Finished.Task.WaitAsync(TimeSpan.FromSeconds(1));
+        await WaitForConditionAsync(
+            () => queue.Messages.Count(message => message.Kind == CodexOutboundMessageKind.Completion) == 2,
+            () => $"Second turn did not publish its terminal marker. Count={queue.Messages.Count}; messages={string.Join(" || ", queue.Messages.Select(message => $"{message.Kind}:{message.Text}"))}");
+
+        IReadOnlyList<OutboundTelegramMessage> secondTurnMessages = queue.Messages.Skip(firstTurnMessageCount).ToArray();
+        Assert.DoesNotContain(secondTurnMessages, message => message.Text.Contains("repro.", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task StartAsync_DefersTerminalPublicationUntilLaterEventsDrain()
     {
         using ScriptedCodexRuntime runtime = new();
@@ -131,12 +346,47 @@ public sealed class CodexTurnExecutionCoordinatorStreamingTests
         Assert.DoesNotContain(queue.Messages, message => message.Text.Contains("Context compaction", StringComparison.OrdinalIgnoreCase));
     }
 
-    private static CodexTurnExecutionCoordinator CreateCoordinator(TelegramTurnOutputRelay relay)
+    [Fact]
+    public async Task StartAsync_PublishesCompletionTitleAfterTheHoldExpiresEvenIfTheStreamStaysOpen()
+    {
+        using ScriptedCodexRuntime runtime = new();
+        ScriptedCodexTurnScript script = runtime.QueueTurn("thread-1");
+        script.AddDelta("visible progress");
+        script.AddCompletionEvent().HoldCompletion();
+
+        ICodexThreadHandle thread = runtime.CreateThread("thread-1");
+        FakeOutboundTelegramQueue queue = new();
+        TelegramThreadFollowRegistry followRegistry = FollowThread();
+        TelegramTurnOutputRelay relay = CreateRelay(queue, followRegistry);
+        CodexTurnExecutionCoordinator coordinator = CreateCoordinator(relay, terminalHoldDuration: TimeSpan.FromMilliseconds(50));
+
+        await coordinator.StartAsync(thread, [], new CodexTurnOptions(), CancellationToken.None);
+        await script.Started.Task.WaitAsync(TimeSpan.FromSeconds(1));
+
+        Assert.True(coordinator.HasActiveTurnForThread("thread-1"));
+
+        await WaitForConditionAsync(() =>
+            queue.Messages.Any(message => message.Kind == CodexOutboundMessageKind.Completion),
+            () => $"Count={queue.Messages.Count}; messages={string.Join(" || ", queue.Messages.Select(message => $"{message.Kind}:{message.Text}"))}");
+        await script.Finished.Task.WaitAsync(TimeSpan.FromSeconds(1));
+
+        Assert.False(coordinator.HasActiveTurnForThread("thread-1"));
+        Assert.Contains(queue.Messages, message => message.Kind == CodexOutboundMessageKind.Completion);
+    }
+
+    private static CodexTurnExecutionCoordinator CreateCoordinator(
+        TelegramTurnOutputRelay relay,
+        TimeProvider? timeProvider = null,
+        TimeSpan? terminalHoldDuration = null,
+        IReadOnlyList<TimeSpan>? capacityRetryDelays = null)
         => new(
             new NullCodexRealtimeBroadcaster(),
             relay,
             new TestApplicationLifetime(),
-            NullLogger<CodexTurnExecutionCoordinator>.Instance);
+            timeProvider ?? TimeProvider.System,
+            terminalHoldDuration ?? TimeSpan.FromSeconds(3),
+            NullLogger<CodexTurnExecutionCoordinator>.Instance,
+            capacityRetryDelays);
 
     private static TelegramTurnOutputRelay CreateRelay(
         FakeOutboundTelegramQueue queue,
@@ -162,6 +412,7 @@ public sealed class CodexTurnExecutionCoordinatorStreamingTests
 
     private static async Task WaitForConditionAsync(
         Func<bool> condition,
+        Func<string>? failureMessageFactory = null,
         TimeSpan? timeout = null,
         TimeSpan? pollInterval = null)
     {
@@ -179,7 +430,7 @@ public sealed class CodexTurnExecutionCoordinatorStreamingTests
             await Task.Delay(effectivePollInterval);
         }
 
-        Assert.True(condition(), "Timed out waiting for the expected condition.");
+        Assert.True(condition(), failureMessageFactory?.Invoke() ?? "Timed out waiting for the expected condition.");
     }
 
     private sealed class FakeOutboundTelegramQueue : IOutboundTelegramQueue
@@ -255,5 +506,23 @@ public sealed class CodexTurnExecutionCoordinatorStreamingTests
         public void StopApplication()
         {
         }
+    }
+
+    private sealed class TestTimeProvider(DateTimeOffset utcNow) : TimeProvider
+    {
+        private DateTimeOffset _utcNow = utcNow;
+
+        public override DateTimeOffset GetUtcNow()
+            => _utcNow;
+
+        public void Advance(TimeSpan value)
+            => _utcNow += value;
+    }
+
+    private static void DisableAutoCompletion(ScriptedCodexTurnScript script)
+    {
+        FieldInfo emitAutoCompletionField = typeof(ScriptedCodexTurnScript).GetField("_emitAutoCompletion", BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new InvalidOperationException("ScriptedCodexTurnScript auto-completion flag was not found.");
+        emitAutoCompletionField.SetValue(script, false);
     }
 }

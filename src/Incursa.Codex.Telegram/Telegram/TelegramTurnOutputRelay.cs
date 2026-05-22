@@ -291,7 +291,13 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
     {
         if (string.Equals(entry.Type, TurnCompletedType, StringComparison.OrdinalIgnoreCase))
         {
-            return RemoveTurnFinishedMarker(ResolveFinalResponseText(entry, bufferedAgentMessage));
+            string? finalResponse = RemoveTurnFinishedMarker(ResolveFinalResponseText(entry, bufferedAgentMessage));
+            if (!string.IsNullOrWhiteSpace(finalResponse))
+            {
+                return finalResponse;
+            }
+
+            return entry.Title;
         }
 
         List<string> lines = [entry.Title];
@@ -764,7 +770,7 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
         {
             lock (_gate)
             {
-                _text += delta;
+                _text += NormalizeDeltaForAppend(_text, delta);
 
                 int boundary = FindPublishBoundary(_text, _publishedLength, minChars, maxChars);
                 if (boundary <= _publishedLength)
@@ -777,6 +783,79 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
                 return FormatLiveAgentProgress(segment);
             }
         }
+
+        private static string NormalizeDeltaForAppend(string existingText, string delta)
+        {
+            if (!ShouldInsertSentenceSeparator(existingText, delta))
+            {
+                return delta;
+            }
+
+            return " " + delta;
+        }
+
+        private static bool ShouldInsertSentenceSeparator(string existingText, string delta)
+        {
+            if (string.IsNullOrEmpty(existingText) || string.IsNullOrEmpty(delta))
+            {
+                return false;
+            }
+
+            if (char.IsWhiteSpace(existingText[^1]) || char.IsWhiteSpace(delta[0]))
+            {
+                return false;
+            }
+
+            if (existingText[^1] is not ('.' or '!' or '?'))
+            {
+                return false;
+            }
+
+            return StartsLikeSentence(delta);
+        }
+
+        private static bool StartsLikeSentence(string value)
+        {
+            int index = 0;
+            while (index < value.Length && IsLeadingPunctuation(value[index]))
+            {
+                index++;
+            }
+
+            if (index >= value.Length)
+            {
+                return false;
+            }
+
+            if (!char.IsUpper(value[index]))
+            {
+                return false;
+            }
+
+            if (index + 1 >= value.Length)
+            {
+                return true;
+            }
+
+            char next = value[index + 1];
+            return char.IsLower(next)
+                || next is '\''
+                || next is '\u2018'
+                || next is '\u2019'
+                || next is '\u201c'
+                || next is '\u201d';
+        }
+
+        private static bool IsLeadingPunctuation(char ch)
+            => ch is '\''
+                or '"'
+                or '\u2018'
+                or '\u2019'
+                or '\u201c'
+                or '\u201d'
+                or '('
+                or '['
+                or '{';
 
         public AgentMessageFlush Flush()
         {
@@ -835,11 +914,39 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
                 }
 
                 int boundary = index + 1;
-                if (boundary >= minimumBoundary
-                    && (!requireFollowingWhitespace || (boundary < text.Length && char.IsWhiteSpace(text[boundary]))))
+                if (boundary < minimumBoundary)
+                {
+                    continue;
+                }
+
+                if (!requireFollowingWhitespace)
                 {
                     return boundary;
                 }
+
+                if (boundary < text.Length)
+                {
+                    if (char.IsWhiteSpace(text[boundary]))
+                    {
+                        return boundary;
+                    }
+
+                    continue;
+                }
+
+                char punctuation = text[boundary - 1];
+                char preceding = boundary >= 2 ? text[boundary - 2] : '\0';
+                if (char.IsWhiteSpace(preceding))
+                {
+                    continue;
+                }
+
+                if (punctuation == '.' && char.IsDigit(preceding))
+                {
+                    continue;
+                }
+
+                return boundary;
             }
 
             return -1;

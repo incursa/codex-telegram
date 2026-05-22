@@ -160,6 +160,23 @@ public sealed class OutboundTelegramQueueTests
     }
 
     [Fact]
+    public async Task ProcessNextAsync_SendsNormalUpdateWithDefaultBatchWindow()
+    {
+        TestTimeProvider timeProvider = new(TestNow);
+        TestTelegramSender sender = new();
+        OutboundTelegramScheduler scheduler = CreateScheduler(sender, new TelegramOutboundOptions
+        {
+            PrivateMinimumSendIntervalSeconds = 0,
+            GroupMinimumSendIntervalSeconds = 0,
+        }, timeProvider);
+
+        await scheduler.EnqueueAsync(CreateMessage(CodexOutboundMessageKind.Update, "ready now"), CancellationToken.None);
+
+        Assert.True(await scheduler.ProcessNextAsync(CancellationToken.None));
+        Assert.Equal("ready now", Assert.Single(sender.Sent).Text);
+    }
+
+    [Fact]
     public async Task ProcessNextAsync_RespectsBatchWindowAfterWakeSignal()
     {
         TestTelegramSender sender = new();
@@ -718,7 +735,7 @@ public sealed class OutboundTelegramQueueTests
     }
 
     [Fact]
-    public async Task EnqueueAsync_CompactsOlderNormalUpdatesBeforeHighPriorityUpdates()
+    public async Task EnqueueAsync_CompactsOlderNormalUpdatesWithoutDroppingTheirText()
     {
         TestTelegramSender sender = new();
         OutboundTelegramScheduler scheduler = CreateScheduler(sender, new TelegramOutboundOptions
@@ -737,13 +754,13 @@ public sealed class OutboundTelegramQueueTests
 
         string text = Assert.Single(sender.Sent).Text;
         Assert.Contains("older outbound updates compacted", text);
-        Assert.DoesNotContain("normal update", text);
+        Assert.Contains("normal update", text);
         Assert.Contains("high update", text);
         Assert.Contains("critical update", text);
     }
 
     [Fact]
-    public async Task EnqueueAsync_CompactsOlderProgressBeforeSendingCriticalUpdates()
+    public async Task EnqueueAsync_CompactsOlderProgressWithoutDroppingTheirText()
     {
         TestTelegramSender sender = new();
         OutboundTelegramScheduler scheduler = CreateScheduler(sender, new TelegramOutboundOptions
@@ -763,13 +780,13 @@ public sealed class OutboundTelegramQueueTests
 
         string text = Assert.Single(sender.Sent).Text;
         Assert.Contains("older outbound updates compacted", text);
-        Assert.DoesNotContain("progress one", text);
+        Assert.Contains("progress one", text);
         Assert.Contains("useful update", text);
         Assert.Contains("critical update", text);
     }
 
     [Fact]
-    public async Task EnqueueAsync_CompactsByCharacterBudget()
+    public async Task EnqueueAsync_CompactsByCharacterBudgetWithoutDroppingContent()
     {
         TestTelegramSender sender = new();
         OutboundTelegramScheduler scheduler = CreateScheduler(sender, new TelegramOutboundOptions
@@ -788,6 +805,8 @@ public sealed class OutboundTelegramQueueTests
 
         string text = Assert.Single(sender.Sent).Text;
         Assert.Contains("older outbound updates compacted", text);
+        Assert.Contains("normal update one", text);
+        Assert.Contains("normal update two", text);
         Assert.Contains("critical update", text);
     }
 

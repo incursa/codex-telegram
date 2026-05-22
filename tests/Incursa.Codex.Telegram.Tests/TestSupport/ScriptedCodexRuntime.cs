@@ -313,6 +313,9 @@ internal sealed class ScriptedCodexTurnScript
     public ScriptedCodexTurnScript AddUserInputRequest(string prompt, string? threadId = null)
         => AddEvent(ScriptedCodexTurnEvents.UserInputRequest(threadId ?? ThreadId, TurnId, prompt));
 
+    public ScriptedCodexTurnScript AddThreadError(string message, bool willRetry = false, string? threadId = null)
+        => AddEvent(ScriptedCodexTurnEvents.ThreadError(threadId ?? ThreadId, TurnId, message, willRetry));
+
     public ScriptedCodexTurnScript AddCommandProgress(
         string command,
         CodexCommandExecutionStatus status,
@@ -451,6 +454,19 @@ internal static class ScriptedCodexTurnEvents
                 ["threadId"] = threadId,
                 ["turnId"] = turnId,
                 ["prompt"] = prompt,
+            },
+        };
+
+    public static CodexThreadErrorEvent ThreadError(string threadId, string turnId, string message, bool willRetry)
+        => new()
+        {
+            Type = "thread.error",
+            ThreadId = threadId,
+            TurnId = turnId,
+            WillRetry = willRetry,
+            Error = new CodexTurnError
+            {
+                Message = message,
             },
         };
 

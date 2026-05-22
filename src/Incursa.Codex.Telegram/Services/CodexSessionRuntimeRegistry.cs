@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Text.Json.Nodes;
 using Incursa.Codex.Telegram.Models;
+using Incursa.Codex.Telegram.Options;
 using Incursa.Codex.Telegram.Telegram;
 using Incursa.OpenAI.Codex;
 using Microsoft.Extensions.Hosting;
@@ -18,15 +19,19 @@ internal sealed class CodexSessionRuntimeRegistry : ICodexTurnExecutionCoordinat
     private readonly ICodexRealtimeBroadcaster _broadcaster;
     private readonly ITelegramTurnOutputRelay _telegramTurnOutputRelay;
     private readonly IHostApplicationLifetime _applicationLifetime;
+    private readonly TimeProvider _timeProvider;
     private readonly ILoggerFactory _loggerFactory;
     private readonly ICodexRuntimeClientFactory _runtimeClientFactory;
+    private readonly TimeSpan _terminalEventHoldDuration;
 
     public CodexSessionRuntimeRegistry(
         IOptions<CodexClientOptions> clientOptions,
+        IOptions<CodexTelegramOptions> telegramOptions,
         ITelegramPlanInputCoordinator planInputCoordinator,
         ICodexRealtimeBroadcaster broadcaster,
         ITelegramTurnOutputRelay telegramTurnOutputRelay,
         IHostApplicationLifetime applicationLifetime,
+        TimeProvider timeProvider,
         ILoggerFactory loggerFactory,
         ICodexRuntimeClientFactory runtimeClientFactory)
     {
@@ -35,8 +40,14 @@ internal sealed class CodexSessionRuntimeRegistry : ICodexTurnExecutionCoordinat
         _broadcaster = broadcaster;
         _telegramTurnOutputRelay = telegramTurnOutputRelay;
         _applicationLifetime = applicationLifetime;
+        _timeProvider = timeProvider;
         _loggerFactory = loggerFactory;
         _runtimeClientFactory = runtimeClientFactory;
+        int holdMilliseconds = Math.Clamp(
+            telegramOptions.Value.TerminalEventHoldMilliseconds,
+            CodexTurnStreamingDefaults.MinTerminalEventHoldMilliseconds,
+            CodexTurnStreamingDefaults.MaxTerminalEventHoldMilliseconds);
+        _terminalEventHoldDuration = TimeSpan.FromMilliseconds(holdMilliseconds);
         _defaultSlot = CreateSlot(broadcastRuntimeState: true);
     }
 
@@ -155,6 +166,8 @@ internal sealed class CodexSessionRuntimeRegistry : ICodexTurnExecutionCoordinat
                 _broadcaster,
                 _telegramTurnOutputRelay,
                 _applicationLifetime,
+                _timeProvider,
+                _terminalEventHoldDuration,
                 _loggerFactory.CreateLogger<CodexTurnExecutionCoordinator>()),
             _broadcaster,
             broadcastRuntimeState);

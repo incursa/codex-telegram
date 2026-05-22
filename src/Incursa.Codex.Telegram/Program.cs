@@ -109,6 +109,10 @@ builder.Services.PostConfigure<CodexTelegramOptions>(options =>
         options.Context.WorkingDirectory = Environment.CurrentDirectory;
     }
 
+    options.TerminalEventHoldMilliseconds = Math.Clamp(
+        options.TerminalEventHoldMilliseconds,
+        CodexTurnStreamingDefaults.MinTerminalEventHoldMilliseconds,
+        CodexTurnStreamingDefaults.MaxTerminalEventHoldMilliseconds);
     options.Workspace.DataRoot = Path.GetFullPath(options.Workspace.DataRoot);
     options.Workspace.WorkspaceRoots = NormalizeDistinctPaths(options.Workspace.WorkspaceRoots).ToList();
     options.Context.AdditionalDirectories = NormalizeDistinctPaths(options.Context.AdditionalDirectories).ToList();

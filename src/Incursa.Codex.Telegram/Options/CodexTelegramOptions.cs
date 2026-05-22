@@ -22,6 +22,27 @@ public static class CodexWorkspaceDefaults
 }
 
 /// <summary>
+/// Default timing values used while streaming Codex turn output.
+/// </summary>
+public static class CodexTurnStreamingDefaults
+{
+    /// <summary>
+    /// Default grace period for delaying terminal turn publication while late events arrive.
+    /// </summary>
+    public const int TerminalEventHoldMilliseconds = 3000;
+
+    /// <summary>
+    /// Minimum supported grace period for delaying terminal turn publication.
+    /// </summary>
+    public const int MinTerminalEventHoldMilliseconds = 0;
+
+    /// <summary>
+    /// Maximum supported grace period for delaying terminal turn publication.
+    /// </summary>
+    public const int MaxTerminalEventHoldMilliseconds = 30000;
+}
+
+/// <summary>
 /// Root configuration for the local Codex host integration.
 /// </summary>
 public sealed class CodexTelegramOptions
@@ -35,6 +56,11 @@ public sealed class CodexTelegramOptions
     /// Gets or sets the default Codex session context applied to new sessions.
     /// </summary>
     public CodexContextOptions Context { get; set; } = new();
+
+    /// <summary>
+    /// Gets or sets how long Codex terminal turn events may be held before the bot publishes them.
+    /// </summary>
+    public int TerminalEventHoldMilliseconds { get; set; } = CodexTurnStreamingDefaults.TerminalEventHoldMilliseconds;
 
     /// <summary>
     /// Gets or sets local workspace and state-storage options.

@@ -33,22 +33,40 @@ internal interface ICodexTurnExecutionCoordinator
 internal sealed class CodexTurnExecutionCoordinator
     : ICodexTurnExecutionCoordinator
 {
+    private static readonly TimeSpan[] DefaultCapacityRetryDelays =
+    [
+        TimeSpan.FromSeconds(5),
+        TimeSpan.FromSeconds(15),
+        TimeSpan.FromSeconds(30),
+    ];
+
     private readonly ConcurrentDictionary<string, ActiveTurnState> _activeTurns = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, byte> _startingThreads = new(StringComparer.Ordinal);
     private readonly ICodexRealtimeBroadcaster _broadcaster;
     private readonly ITelegramTurnOutputRelay _telegramTurnOutputRelay;
     private readonly IHostApplicationLifetime _applicationLifetime;
+    private readonly TimeProvider _timeProvider;
+    private readonly TimeSpan _terminalEventHoldDuration;
+    private readonly IReadOnlyList<TimeSpan> _capacityRetryDelays;
     private readonly ILogger<CodexTurnExecutionCoordinator> _logger;
 
     public CodexTurnExecutionCoordinator(
         ICodexRealtimeBroadcaster broadcaster,
         ITelegramTurnOutputRelay telegramTurnOutputRelay,
         IHostApplicationLifetime applicationLifetime,
-        ILogger<CodexTurnExecutionCoordinator> logger)
+        TimeProvider timeProvider,
+        TimeSpan terminalEventHoldDuration,
+        ILogger<CodexTurnExecutionCoordinator> logger,
+        IReadOnlyList<TimeSpan>? capacityRetryDelays = null)
     {
         _broadcaster = broadcaster;
         _telegramTurnOutputRelay = telegramTurnOutputRelay;
         _applicationLifetime = applicationLifetime;
+        _timeProvider = timeProvider;
+        _terminalEventHoldDuration = terminalEventHoldDuration < TimeSpan.Zero ? TimeSpan.Zero : terminalEventHoldDuration;
+        _capacityRetryDelays = capacityRetryDelays is { Count: > 0 }
+            ? capacityRetryDelays.Select(delay => delay < TimeSpan.Zero ? TimeSpan.Zero : delay).ToArray()
+            : DefaultCapacityRetryDelays;
         _logger = logger;
     }
 
@@ -128,10 +146,27 @@ internal sealed class CodexTurnExecutionCoordinator
 
         try
         {
-            ICodexTurnHandle turn = await thread.StartTurnAsync(input, turnOptions, cancellationToken).ConfigureAwait(false);
+            TurnStartResult startResult = await StartTurnWithCapacityRetriesAsync(
+                thread,
+                input,
+                turnOptions,
+                startingThreadId,
+                cancellationToken).ConfigureAwait(false);
+            ICodexTurnHandle turn = startResult.Turn;
             string threadId = string.IsNullOrWhiteSpace(turn.ThreadId) ? thread.Id ?? string.Empty : turn.ThreadId;
-            RegisterActiveTurn(threadId, turn.Id, turn);
-            ActiveTurnState state = GetRequiredState(threadId, turn.Id);
+            ActiveTurnState state = new(
+                threadId,
+                turn.Id,
+                turn,
+                lastEvent: null,
+                thread,
+                input,
+                turnOptions,
+                startResult.CapacityRetryAttempts);
+            if (!_activeTurns.TryAdd(threadId, state))
+            {
+                throw new InvalidOperationException($"A Codex turn is already active for thread '{threadId}'.");
+            }
 
             _ = Task.Run(() => ConsumeTurnAsync(state), _applicationLifetime.ApplicationStopping);
             return new CodexThreadExecutionVm(threadId, turn.Id, "running", null);
@@ -177,31 +212,141 @@ internal sealed class CodexTurnExecutionCoordinator
 
         CodexTimelineEntryVm? pendingTerminalEntry = null;
         int lateEventCount = 0;
+        bool terminalHoldTimedOut = false;
+        bool terminalFailurePublished = false;
+        bool retryScheduled = false;
+        Task terminalHoldTask = Task.CompletedTask;
+        CancellationTokenSource? terminalHoldCancellation = null;
+        using CancellationTokenSource streamCancellation = CancellationTokenSource.CreateLinkedTokenSource(_applicationLifetime.ApplicationStopping);
         try
         {
-            await foreach (CodexThreadEvent evt in state.Turn.StreamAsync(_applicationLifetime.ApplicationStopping).ConfigureAwait(false))
-            {
-                CodexTimelineEntryVm entry = CodexViewModelMapper.ToTimelineEntryVm(evt, state.ThreadId);
+            await using IAsyncEnumerator<CodexThreadEvent> enumerator = state.Turn
+                .StreamAsync(streamCancellation.Token)
+                .GetAsyncEnumerator(streamCancellation.Token);
 
-                if (IsTerminalTurnEvent(entry))
+            while (true)
+            {
+                if (pendingTerminalEntry is null)
                 {
-                    pendingTerminalEntry = entry;
+                    if (!await enumerator.MoveNextAsync().ConfigureAwait(false))
+                    {
+                        break;
+                    }
+
+                    CodexTimelineEntryVm streamEntry = CodexViewModelMapper.ToTimelineEntryVm(enumerator.Current, state.ThreadId);
+                    CapacityRetryResult capacityRetryResult = await TryHandleCapacityRetryAsync(state, streamEntry, streamCancellation.Token).ConfigureAwait(false);
+                    if (capacityRetryResult == CapacityRetryResult.Scheduled)
+                    {
+                        retryScheduled = true;
+                        return;
+                    }
+
+                    if (capacityRetryResult == CapacityRetryResult.Exhausted)
+                    {
+                        terminalFailurePublished = true;
+                        return;
+                    }
+
+                    if (IsTerminalTurnEvent(streamEntry))
+                    {
+                        pendingTerminalEntry = streamEntry;
+                        if (_terminalEventHoldDuration <= TimeSpan.Zero)
+                        {
+                            terminalHoldTask = Task.CompletedTask;
+                        }
+                        else
+                        {
+                            terminalHoldCancellation ??= new CancellationTokenSource();
+                            terminalHoldTask = Task.Delay(_terminalEventHoldDuration, _timeProvider, terminalHoldCancellation.Token);
+                        }
+                        continue;
+                    }
+
+                    state.RecordVisibleOutputIfNeeded(streamEntry);
+                    UpdateActiveTurnState(state.ThreadId, state.TurnId, streamEntry);
+                    await _broadcaster.BroadcastThreadEventAsync(state.ThreadId, streamEntry, _applicationLifetime.ApplicationStopping).ConfigureAwait(false);
+                    await _telegramTurnOutputRelay.PublishTurnEventAsync(streamEntry, _applicationLifetime.ApplicationStopping).ConfigureAwait(false);
                     continue;
                 }
 
-                if (pendingTerminalEntry is not null)
+                Task<bool> moveNextTask = enumerator.MoveNextAsync().AsTask();
+                Task completedTask = await Task.WhenAny(moveNextTask, terminalHoldTask).ConfigureAwait(false);
+                if (completedTask == terminalHoldTask)
                 {
-                    lateEventCount++;
+                    terminalHoldTimedOut = true;
+                    terminalHoldCancellation?.Cancel();
+                    streamCancellation.Cancel();
+                    break;
                 }
 
-                UpdateActiveTurnState(state.ThreadId, state.TurnId, entry);
-                await _broadcaster.BroadcastThreadEventAsync(state.ThreadId, entry, _applicationLifetime.ApplicationStopping).ConfigureAwait(false);
-                await _telegramTurnOutputRelay.PublishTurnEventAsync(entry, _applicationLifetime.ApplicationStopping).ConfigureAwait(false);
+                if (!await moveNextTask.ConfigureAwait(false))
+                {
+                    break;
+                }
+
+                CodexTimelineEntryVm postTerminalEntry = CodexViewModelMapper.ToTimelineEntryVm(enumerator.Current, state.ThreadId);
+                CapacityRetryResult postTerminalCapacityRetryResult = await TryHandleCapacityRetryAsync(state, postTerminalEntry, streamCancellation.Token).ConfigureAwait(false);
+                if (postTerminalCapacityRetryResult == CapacityRetryResult.Scheduled)
+                {
+                    retryScheduled = true;
+                    return;
+                }
+
+                if (postTerminalCapacityRetryResult == CapacityRetryResult.Exhausted)
+                {
+                    terminalFailurePublished = true;
+                    return;
+                }
+
+                if (IsTerminalTurnEvent(postTerminalEntry))
+                {
+                    pendingTerminalEntry = postTerminalEntry;
+                    continue;
+                }
+
+                lateEventCount++;
+                state.RecordVisibleOutputIfNeeded(postTerminalEntry);
+                UpdateActiveTurnState(state.ThreadId, state.TurnId, postTerminalEntry);
+                await _broadcaster.BroadcastThreadEventAsync(state.ThreadId, postTerminalEntry, _applicationLifetime.ApplicationStopping).ConfigureAwait(false);
+                await _telegramTurnOutputRelay.PublishTurnEventAsync(postTerminalEntry, _applicationLifetime.ApplicationStopping).ConfigureAwait(false);
             }
 
             if (pendingTerminalEntry is not null)
             {
-                if (lateEventCount > 0)
+                EmptyOutputRetryResult emptyOutputRetryResult = await TryHandleEmptyOutputRetryAsync(state, pendingTerminalEntry, streamCancellation.Token).ConfigureAwait(false);
+                if (emptyOutputRetryResult == EmptyOutputRetryResult.Scheduled)
+                {
+                    retryScheduled = true;
+                    return;
+                }
+
+                if (emptyOutputRetryResult == EmptyOutputRetryResult.Exhausted)
+                {
+                    terminalFailurePublished = true;
+                    return;
+                }
+
+                if (terminalHoldTimedOut)
+                {
+                    if (lateEventCount > 0)
+                    {
+                        _logger.LogWarning(
+                            "Turn {TurnId} on thread {ThreadId} reported a terminal event and the {TerminalHoldDuration} hold elapsed after {LateEventCount} later event(s); published completion.",
+                            state.TurnId,
+                            state.ThreadId,
+                            _terminalEventHoldDuration,
+                            lateEventCount);
+                    }
+                    else
+                    {
+                        _logger.LogWarning(
+                            "Turn {TurnId} on thread {ThreadId} reported a terminal event and the {TerminalHoldDuration} hold elapsed before the stream ended; published completion.",
+                            state.TurnId,
+                            state.ThreadId,
+                            _terminalEventHoldDuration);
+                    }
+                }
+                else if (lateEventCount > 0)
                 {
                     _logger.LogWarning(
                         "Turn {TurnId} on thread {ThreadId} reported a terminal event before the stream ended; published completion after {LateEventCount} later event(s).",
@@ -212,19 +357,297 @@ internal sealed class CodexTurnExecutionCoordinator
 
                 await PublishTerminalEventAsync(state, pendingTerminalEntry).ConfigureAwait(false);
             }
+
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (!_applicationLifetime.ApplicationStopping.IsCancellationRequested && !streamCancellation.IsCancellationRequested)
         {
             _logger.LogDebug("Turn {TurnId} on thread {ThreadId} was cancelled.", state.TurnId, state.ThreadId);
         }
+        catch (OperationCanceledException)
+        {
+        }
         catch (Exception exception)
         {
+            terminalFailurePublished = true;
             _logger.LogError(exception, "Turn {TurnId} on thread {ThreadId} failed during stream consumption.", state.TurnId, state.ThreadId);
             await PublishFailureAsync(state, exception).ConfigureAwait(false);
         }
+
         finally
         {
-            TryClearActiveTurn(state.ThreadId, state.TurnId);
+            terminalHoldCancellation?.Cancel();
+            terminalHoldCancellation?.Dispose();
+
+            if (pendingTerminalEntry is null && !terminalFailurePublished && !_applicationLifetime.ApplicationStopping.IsCancellationRequested)
+            {
+                pendingTerminalEntry = new CodexTimelineEntryVm(
+                    "turn.completed",
+                    "Turn completed",
+                    null,
+                    null,
+                    "success",
+                    _timeProvider.GetUtcNow(),
+                    state.ThreadId,
+                    state.TurnId,
+                    new Dictionary<string, string?>(),
+                    false);
+
+                EmptyOutputRetryResult emptyOutputRetryResult = await TryHandleEmptyOutputRetryAsync(state, pendingTerminalEntry, _applicationLifetime.ApplicationStopping).ConfigureAwait(false);
+                if (emptyOutputRetryResult == EmptyOutputRetryResult.Scheduled)
+                {
+                    retryScheduled = true;
+                }
+                else if (emptyOutputRetryResult == EmptyOutputRetryResult.Exhausted)
+                {
+                    terminalFailurePublished = true;
+                }
+                else
+                {
+                    await PublishTerminalEventAsync(state, pendingTerminalEntry).ConfigureAwait(false);
+                }
+            }
+
+            if (!retryScheduled)
+            {
+                TryClearActiveTurn(state.ThreadId, state.TurnId);
+            }
+        }
+    }
+
+    private async Task<TurnStartResult> StartTurnWithCapacityRetriesAsync(
+        ICodexThreadHandle thread,
+        IReadOnlyList<CodexInputItem> input,
+        CodexTurnOptions turnOptions,
+        string threadId,
+        CancellationToken cancellationToken)
+    {
+        int capacityRetryAttempts = 0;
+        while (true)
+        {
+            try
+            {
+                ICodexTurnHandle turn = await thread.StartTurnAsync(input, turnOptions, cancellationToken).ConfigureAwait(false);
+                return new TurnStartResult(turn, capacityRetryAttempts);
+            }
+            catch (Exception exception) when (IsCapacityException(exception) && capacityRetryAttempts < _capacityRetryDelays.Count)
+            {
+                capacityRetryAttempts++;
+                TimeSpan delay = _capacityRetryDelays[capacityRetryAttempts - 1];
+                await PublishCapacityRetryNoticeAsync(threadId, null, capacityRetryAttempts, delay).ConfigureAwait(false);
+                await DelayCapacityRetryAsync(delay, cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception exception) when (IsCapacityException(exception))
+            {
+                throw new InvalidOperationException(CreateCapacityExhaustedMessage(), exception);
+            }
+        }
+    }
+
+    private async Task<CapacityRetryResult> TryHandleCapacityRetryAsync(
+        ActiveTurnState state,
+        CodexTimelineEntryVm entry,
+        CancellationToken cancellationToken)
+    {
+        if (!IsCapacityThreadError(entry))
+        {
+            return CapacityRetryResult.NotHandled;
+        }
+
+        if (state.Thread is null || state.Input is null || state.TurnOptions is null)
+        {
+            return CapacityRetryResult.NotHandled;
+        }
+
+        while (state.CapacityRetryAttempts < _capacityRetryDelays.Count)
+        {
+            int retryAttempt = state.IncrementCapacityRetryAttempts();
+            TimeSpan delay = _capacityRetryDelays[retryAttempt - 1];
+            await PublishCapacityRetryNoticeAsync(state.ThreadId, state.TurnId, retryAttempt, delay).ConfigureAwait(false);
+            await DelayCapacityRetryAsync(delay, cancellationToken).ConfigureAwait(false);
+
+            try
+            {
+                ICodexTurnHandle retryTurn = await state.Thread
+                    .StartTurnAsync(state.Input, state.TurnOptions, cancellationToken)
+                    .ConfigureAwait(false);
+                state.ReplaceTurn(retryTurn);
+                _ = Task.Run(() => ConsumeTurnAsync(state), _applicationLifetime.ApplicationStopping);
+                return CapacityRetryResult.Scheduled;
+            }
+            catch (Exception exception) when (IsCapacityException(exception))
+            {
+                _logger.LogWarning(
+                    exception,
+                    "Capacity retry {RetryAttempt}/{RetryCount} failed to start for thread {ThreadId}.",
+                    retryAttempt,
+                    _capacityRetryDelays.Count,
+                    state.ThreadId);
+            }
+        }
+
+        await PublishCapacityExhaustedAsync(state).ConfigureAwait(false);
+        return CapacityRetryResult.Exhausted;
+    }
+
+    private async Task<EmptyOutputRetryResult> TryHandleEmptyOutputRetryAsync(
+        ActiveTurnState state,
+        CodexTimelineEntryVm terminalEntry,
+        CancellationToken cancellationToken)
+    {
+        if (!IsEmptySuccessfulCompletion(state, terminalEntry))
+        {
+            return EmptyOutputRetryResult.NotHandled;
+        }
+
+        if (state.Thread is null || state.Input is null || state.TurnOptions is null)
+        {
+            return EmptyOutputRetryResult.NotHandled;
+        }
+
+        while (state.EmptyOutputRetryAttempts < _capacityRetryDelays.Count)
+        {
+            int retryAttempt = state.IncrementEmptyOutputRetryAttempts();
+            TimeSpan delay = _capacityRetryDelays[retryAttempt - 1];
+            await PublishEmptyOutputRetryNoticeAsync(state.ThreadId, state.TurnId, retryAttempt, delay).ConfigureAwait(false);
+            await DelayCapacityRetryAsync(delay, cancellationToken).ConfigureAwait(false);
+
+            try
+            {
+                ICodexTurnHandle retryTurn = await state.Thread
+                    .StartTurnAsync(state.Input, state.TurnOptions, cancellationToken)
+                    .ConfigureAwait(false);
+                state.ReplaceTurn(retryTurn);
+                _ = Task.Run(() => ConsumeTurnAsync(state), _applicationLifetime.ApplicationStopping);
+                return EmptyOutputRetryResult.Scheduled;
+            }
+            catch (Exception exception) when (IsCapacityException(exception))
+            {
+                _logger.LogWarning(
+                    exception,
+                    "Empty-output retry {RetryAttempt}/{RetryCount} hit capacity while starting for thread {ThreadId}.",
+                    retryAttempt,
+                    _capacityRetryDelays.Count,
+                    state.ThreadId);
+            }
+        }
+
+        await PublishEmptyOutputExhaustedAsync(state).ConfigureAwait(false);
+        return EmptyOutputRetryResult.Exhausted;
+    }
+
+    private async Task DelayCapacityRetryAsync(TimeSpan delay, CancellationToken cancellationToken)
+    {
+        if (delay <= TimeSpan.Zero)
+        {
+            return;
+        }
+
+        await Task.Delay(delay, _timeProvider, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task PublishCapacityRetryNoticeAsync(string threadId, string? turnId, int retryAttempt, TimeSpan delay)
+    {
+        CodexTimelineEntryVm entry = new(
+            "turn.retry",
+            "Selected model is at capacity",
+            $"Retrying in {FormatDelay(delay)} ({retryAttempt}/{_capacityRetryDelays.Count}).",
+            "The original message is still pending.",
+            "warning",
+            _timeProvider.GetUtcNow(),
+            threadId,
+            turnId,
+            new Dictionary<string, string?>
+            {
+                ["retryAttempt"] = retryAttempt.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                ["retryCount"] = _capacityRetryDelays.Count.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                ["reason"] = "capacity",
+            },
+            false);
+
+        await PublishNonTerminalEventAsync(entry).ConfigureAwait(false);
+    }
+
+    private async Task PublishEmptyOutputRetryNoticeAsync(string threadId, string? turnId, int retryAttempt, TimeSpan delay)
+    {
+        CodexTimelineEntryVm entry = new(
+            "turn.retry",
+            "Codex completed without visible output",
+            $"Retrying in {FormatDelay(delay)} ({retryAttempt}/{_capacityRetryDelays.Count}).",
+            "The original message is still pending.",
+            "warning",
+            _timeProvider.GetUtcNow(),
+            threadId,
+            turnId,
+            new Dictionary<string, string?>
+            {
+                ["retryAttempt"] = retryAttempt.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                ["retryCount"] = _capacityRetryDelays.Count.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                ["reason"] = "empty-output",
+            },
+            false);
+
+        await PublishNonTerminalEventAsync(entry).ConfigureAwait(false);
+    }
+
+    private async Task PublishCapacityExhaustedAsync(ActiveTurnState state)
+    {
+        CodexTimelineEntryVm entry = new(
+            "turn.failed",
+            "Selected model is still at capacity",
+            $"Stopped after {_capacityRetryDelays.Count} retries.",
+            "Please try again later or choose another model.",
+            "danger",
+            _timeProvider.GetUtcNow(),
+            state.ThreadId,
+            state.TurnId,
+            new Dictionary<string, string?>
+            {
+                ["reason"] = "capacity",
+                ["retryCount"] = _capacityRetryDelays.Count.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            },
+            false);
+
+        await PublishTerminalEventAsync(state, entry).ConfigureAwait(false);
+    }
+
+    private async Task PublishEmptyOutputExhaustedAsync(ActiveTurnState state)
+    {
+        CodexTimelineEntryVm entry = new(
+            "turn.failed",
+            "Codex completed without visible output",
+            $"Stopped after {_capacityRetryDelays.Count} retries.",
+            "No assistant text was received. Please try again or choose another model.",
+            "danger",
+            _timeProvider.GetUtcNow(),
+            state.ThreadId,
+            state.TurnId,
+            new Dictionary<string, string?>
+            {
+                ["reason"] = "empty-output",
+                ["retryCount"] = _capacityRetryDelays.Count.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            },
+            false);
+
+        await PublishTerminalEventAsync(state, entry).ConfigureAwait(false);
+    }
+
+    private async Task PublishNonTerminalEventAsync(CodexTimelineEntryVm entry)
+    {
+        try
+        {
+            if (!string.IsNullOrWhiteSpace(entry.ThreadId))
+            {
+                await _broadcaster.BroadcastThreadEventAsync(entry.ThreadId, entry, _applicationLifetime.ApplicationStopping).ConfigureAwait(false);
+            }
+
+            await _telegramTurnOutputRelay.PublishTurnEventAsync(entry, _applicationLifetime.ApplicationStopping).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (_applicationLifetime.ApplicationStopping.IsCancellationRequested)
+        {
+        }
+        catch (Exception exception)
+        {
+            _logger.LogWarning(exception, "Failed to publish Codex capacity retry notice for thread {ThreadId}.", entry.ThreadId);
         }
     }
 
@@ -249,6 +672,66 @@ internal sealed class CodexTurnExecutionCoordinator
     private static bool IsTerminalTurnEvent(CodexTimelineEntryVm entry)
         => string.Equals(entry.Type, "turn.completed", StringComparison.OrdinalIgnoreCase)
             || string.Equals(entry.Type, "turn.failed", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsEmptySuccessfulCompletion(ActiveTurnState state, CodexTimelineEntryVm entry)
+        => string.Equals(entry.Type, "turn.completed", StringComparison.OrdinalIgnoreCase)
+            && !state.HasVisibleCodexOutput
+            && string.IsNullOrWhiteSpace(entry.Body);
+
+    private static bool IsVisibleCodexOutput(CodexTimelineEntryVm entry)
+    {
+        if (IsTerminalTurnEvent(entry))
+        {
+            return !string.IsNullOrWhiteSpace(entry.Body);
+        }
+
+        if (string.Equals(entry.Type, "item.agentMessage.delta", StringComparison.OrdinalIgnoreCase))
+        {
+            return !string.IsNullOrWhiteSpace(entry.Body);
+        }
+
+        return !entry.IsInternal
+            && (!string.IsNullOrWhiteSpace(entry.Body) || !string.IsNullOrWhiteSpace(entry.Subtitle));
+    }
+
+    private static bool IsCapacityThreadError(CodexTimelineEntryVm entry)
+        => string.Equals(entry.Type, "thread.error", StringComparison.OrdinalIgnoreCase)
+            && (IsCapacityMessage(entry.Subtitle) || IsCapacityMessage(entry.Body));
+
+    private static bool IsCapacityException(Exception exception)
+    {
+        if (IsCapacityMessage(exception.Message))
+        {
+            return true;
+        }
+
+        return exception is AggregateException aggregateException
+            ? aggregateException.Flatten().InnerExceptions.Any(IsCapacityException)
+            : exception.InnerException is not null && IsCapacityException(exception.InnerException);
+    }
+
+    private static bool IsCapacityMessage(string? message)
+        => !string.IsNullOrWhiteSpace(message)
+            && message.Contains("model", StringComparison.OrdinalIgnoreCase)
+            && message.Contains("at capacity", StringComparison.OrdinalIgnoreCase);
+
+    private string CreateCapacityExhaustedMessage()
+        => $"Selected model is still at capacity after {_capacityRetryDelays.Count} retries. Please try again later or choose another model.";
+
+    private static string FormatDelay(TimeSpan delay)
+    {
+        if (delay <= TimeSpan.Zero)
+        {
+            return "now";
+        }
+
+        if (delay.TotalSeconds < 60)
+        {
+            return $"{Math.Ceiling(delay.TotalSeconds).ToString(System.Globalization.CultureInfo.InvariantCulture)}s";
+        }
+
+        return $"{Math.Ceiling(delay.TotalMinutes).ToString(System.Globalization.CultureInfo.InvariantCulture)}m";
+    }
 
     private async Task PublishFailureAsync(ActiveTurnState state, Exception exception)
     {
@@ -314,11 +797,23 @@ internal sealed class CodexTurnExecutionCoordinator
 
     private sealed class ActiveTurnState
     {
-        public ActiveTurnState(string threadId, string turnId, ICodexTurnHandle? turn, CodexTimelineEntryVm? lastEvent)
+        public ActiveTurnState(
+            string threadId,
+            string turnId,
+            ICodexTurnHandle? turn,
+            CodexTimelineEntryVm? lastEvent,
+            ICodexThreadHandle? thread = null,
+            IReadOnlyList<CodexInputItem>? input = null,
+            CodexTurnOptions? turnOptions = null,
+            int capacityRetryAttempts = 0)
         {
             ThreadId = threadId;
             TurnId = turnId;
             Turn = turn;
+            Thread = thread;
+            Input = input;
+            TurnOptions = turnOptions;
+            CapacityRetryAttempts = capacityRetryAttempts;
             StartedAt = DateTimeOffset.UtcNow;
             UpdatedAt = lastEvent?.Timestamp ?? StartedAt;
             LastEvent = lastEvent;
@@ -328,7 +823,19 @@ internal sealed class CodexTurnExecutionCoordinator
 
         public string TurnId { get; private set; }
 
-        public ICodexTurnHandle? Turn { get; }
+        public ICodexTurnHandle? Turn { get; private set; }
+
+        public ICodexThreadHandle? Thread { get; }
+
+        public IReadOnlyList<CodexInputItem>? Input { get; }
+
+        public CodexTurnOptions? TurnOptions { get; }
+
+        public int CapacityRetryAttempts { get; private set; }
+
+        public int EmptyOutputRetryAttempts { get; private set; }
+
+        public bool HasVisibleCodexOutput { get; private set; }
 
         public DateTimeOffset StartedAt { get; }
 
@@ -347,6 +854,28 @@ internal sealed class CodexTurnExecutionCoordinator
             UpdatedAt = entry?.Timestamp ?? DateTimeOffset.UtcNow;
         }
 
+        public int IncrementCapacityRetryAttempts()
+            => ++CapacityRetryAttempts;
+
+        public int IncrementEmptyOutputRetryAttempts()
+            => ++EmptyOutputRetryAttempts;
+
+        public void RecordVisibleOutputIfNeeded(CodexTimelineEntryVm entry)
+        {
+            if (IsVisibleCodexOutput(entry))
+            {
+                HasVisibleCodexOutput = true;
+            }
+        }
+
+        public void ReplaceTurn(ICodexTurnHandle turn)
+        {
+            Turn = turn;
+            TurnId = turn.Id;
+            HasVisibleCodexOutput = false;
+            UpdatedAt = DateTimeOffset.UtcNow;
+        }
+
         public CodexActiveTurnStateVm ToViewModel()
         {
             return new CodexActiveTurnStateVm(
@@ -356,5 +885,21 @@ internal sealed class CodexTurnExecutionCoordinator
                 UpdatedAt,
                 LastEvent);
         }
+    }
+
+    private sealed record TurnStartResult(ICodexTurnHandle Turn, int CapacityRetryAttempts);
+
+    private enum CapacityRetryResult
+    {
+        NotHandled,
+        Scheduled,
+        Exhausted,
+    }
+
+    private enum EmptyOutputRetryResult
+    {
+        NotHandled,
+        Scheduled,
+        Exhausted,
     }
 }

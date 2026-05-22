@@ -927,6 +927,7 @@ internal sealed class OutboundTelegramScheduler : BackgroundService, IOutboundTe
         /// <returns>Number of messages removed and summarized.</returns>
         public int Compact(int maxChars, int maxMessages)
         {
+            List<PendingOutboundItem> compactedItems = [];
             int compacted = 0;
             while ((_messages.Count > maxMessages || PendingCharacterCount > maxChars) && _messages.Count > 1)
             {
@@ -941,26 +942,37 @@ internal sealed class OutboundTelegramScheduler : BackgroundService, IOutboundTe
                     break;
                 }
 
-                // Prefer dropping progress and ordinary updates; high-priority errors/completions are the
+                // Prefer compacting progress and ordinary updates; high-priority errors/completions are the
                 // most important evidence when a Telegram destination is overloaded.
+                compactedItems.Add(_messages[index]);
                 _messages.RemoveAt(index);
                 compacted++;
             }
 
             if (compacted > 0)
             {
+                string compactedText = BuildCompactedText(compactedItems, compacted);
                 _messages.Insert(0, new PendingOutboundItem(
                     "compacted-" + Guid.NewGuid().ToString("n"),
                     SessionId,
-                    null,
+                    ResolveSingleValue(compactedItems.Select(message => message.TurnId)),
                     CodexOutboundMessageKind.System,
-                    $"... {compacted} older outbound updates compacted to protect local memory.",
+                    compactedText,
                     null,
                     FirstPendingUtc ?? DateTimeOffset.UtcNow,
-                    OutboundPriority.Normal));
+                    OutboundPriority.High));
             }
 
             return compacted;
+        }
+
+        private static string BuildCompactedText(IReadOnlyList<PendingOutboundItem> compactedItems, int compactedCount)
+        {
+            string compactedBody = FormatBatch(compactedItems);
+            return string.Join(
+                Environment.NewLine + Environment.NewLine,
+                $"... {compactedCount} older outbound updates compacted to protect local memory.",
+                compactedBody);
         }
 
         private PreparedOutboundSend FormatNextSend()

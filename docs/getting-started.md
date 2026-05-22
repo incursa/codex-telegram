@@ -241,6 +241,7 @@ If you prefer to edit JSON by hand, this is a good starting point:
   },
   "CodexTelegram": {
     "InitializeOnStart": true,
+    "TerminalEventHoldMilliseconds": 3000,
     "Context": {
       "WorkingDirectory": "C:\\src\\your-repo",
       "Sandbox": "workspace-write",
@@ -270,9 +271,10 @@ Configuration behavior:
 10. `OpenAI:FfmpegPath` defaults to `ffmpeg`.
 11. `TelegramBot:MinAudioDurationSeconds` and `TelegramBot:MaxAudioDurationSeconds` reject suspiciously short or long Telegram audio before download.
 12. `CodexTelegram:InitializeOnStart` controls whether the Codex gateway initializes during startup. Leave it `true` for normal bot use.
-13. `CodexTelegram:Context:WorkingDirectory` is the default Codex working directory.
-14. `CodexTelegram:Workspace:WorkspaceRoots` are the directories users may add as projects.
-15. The Codex submenu will query live model names and effort choices when the configured executable is reachable.
+13. `CodexTelegram:TerminalEventHoldMilliseconds` controls how long the bot waits for late turn events after Codex reports completion.
+14. `CodexTelegram:Context:WorkingDirectory` is the default Codex working directory.
+15. `CodexTelegram:Workspace:WorkspaceRoots` are the directories users may add as projects.
+16. The Codex submenu will query live model names and effort choices when the configured executable is reachable.
 
 ## First Launch Checklist
 

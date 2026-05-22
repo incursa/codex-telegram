@@ -127,10 +127,12 @@ public sealed class CodexGatewayTests
                 ClientName = "Incursa.Codex.Telegram.Tests",
                 ClientTitle = "Incursa Codex Telegram Tests",
             }),
+            Microsoft.Extensions.Options.Options.Create(new CodexTelegramOptions()),
             new NoopPlanInputCoordinator(),
             new NoopRealtimeBroadcaster(),
             new NoopTurnOutputRelay(),
             new NoopApplicationLifetime(),
+            TimeProvider.System,
             NullLoggerFactory.Instance,
             runtimeClientFactory);
 
