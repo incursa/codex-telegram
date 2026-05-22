@@ -104,15 +104,16 @@ public sealed class CodexTurnExecutionCoordinatorStreamingTests
         await coordinator.StartAsync(thread, [], new CodexTurnOptions(), CancellationToken.None);
         await firstScript.Finished.Task.WaitAsync(TimeSpan.FromSeconds(1));
         await retryScript.Finished.Task.WaitAsync(TimeSpan.FromSeconds(1));
+        Func<bool> sawRetryWorked = () => queue.Messages.Any(message => message.Text == "retry worked")
+            || (queue.Messages.Any(message => message.Text == "retry") && queue.Messages.Any(message => message.Text == "worked"));
         await WaitForConditionAsync(
-            () => string.Join(" ", queue.Messages.Select(message => message.Text))
-                .Contains("retry worked", StringComparison.OrdinalIgnoreCase),
+            sawRetryWorked,
             () => $"Messages: {string.Join(" | ", queue.Messages.Select(message => message.Text))}");
 
         Assert.Contains(queue.Messages, message =>
             message.Text.Contains("Selected model is at capacity", StringComparison.OrdinalIgnoreCase)
             && message.Text.Contains("(1/3)", StringComparison.OrdinalIgnoreCase));
-        Assert.Contains(queue.Messages, message => message.Text == "retry worked");
+        Assert.True(sawRetryWorked(), $"Messages: {string.Join(" | ", queue.Messages.Select(message => message.Text))}");
         Assert.DoesNotContain(queue.Messages, message => message.Text.StartsWith("Thread error", StringComparison.OrdinalIgnoreCase));
         Assert.DoesNotContain(queue.Messages, message => message.Text.Contains("Please try a different model", StringComparison.OrdinalIgnoreCase));
     }

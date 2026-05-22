@@ -378,7 +378,7 @@ internal sealed class CodexTurnExecutionCoordinator
             terminalHoldCancellation?.Cancel();
             terminalHoldCancellation?.Dispose();
 
-            if (pendingTerminalEntry is null && !terminalFailurePublished && !_applicationLifetime.ApplicationStopping.IsCancellationRequested)
+            if (pendingTerminalEntry is null && !terminalFailurePublished && !retryScheduled && !_applicationLifetime.ApplicationStopping.IsCancellationRequested)
             {
                 pendingTerminalEntry = new CodexTimelineEntryVm(
                     "turn.completed",
