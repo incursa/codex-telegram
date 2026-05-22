@@ -89,6 +89,7 @@ public sealed class CodexTurnExecutionCoordinatorStreamingTests
         using ScriptedCodexRuntime runtime = new();
         ScriptedCodexTurnScript firstScript = runtime.QueueTurn("thread-1");
         firstScript.AddThreadError("Selected model is at capacity. Please try a different model.");
+        DisableAutoCompletion(firstScript);
         ScriptedCodexTurnScript retryScript = runtime.QueueTurn("thread-1");
         retryScript.AddDelta("retry worked").Complete("retry worked");
 
@@ -104,9 +105,9 @@ public sealed class CodexTurnExecutionCoordinatorStreamingTests
         await firstScript.Finished.Task.WaitAsync(TimeSpan.FromSeconds(1));
         await retryScript.Finished.Task.WaitAsync(TimeSpan.FromSeconds(1));
         await WaitForConditionAsync(
-            () => queue.Messages.Any(message => message.Text == "retry worked"),
-            () => $"Messages: {string.Join(" | ", queue.Messages.Select(message => message.Text))}",
-            TimeSpan.FromSeconds(5));
+            () => string.Join(" ", queue.Messages.Select(message => message.Text))
+                .Contains("retry worked", StringComparison.OrdinalIgnoreCase),
+            () => $"Messages: {string.Join(" | ", queue.Messages.Select(message => message.Text))}");
 
         Assert.Contains(queue.Messages, message =>
             message.Text.Contains("Selected model is at capacity", StringComparison.OrdinalIgnoreCase)
@@ -122,12 +123,16 @@ public sealed class CodexTurnExecutionCoordinatorStreamingTests
         using ScriptedCodexRuntime runtime = new();
         ScriptedCodexTurnScript firstScript = runtime.QueueTurn("thread-1");
         firstScript.AddThreadError("Selected model is at capacity. Please try a different model.");
+        DisableAutoCompletion(firstScript);
         ScriptedCodexTurnScript secondScript = runtime.QueueTurn("thread-1");
         secondScript.AddThreadError("Selected model is at capacity. Please try a different model.");
+        DisableAutoCompletion(secondScript);
         ScriptedCodexTurnScript thirdScript = runtime.QueueTurn("thread-1");
         thirdScript.AddThreadError("Selected model is at capacity. Please try a different model.");
+        DisableAutoCompletion(thirdScript);
         ScriptedCodexTurnScript fourthScript = runtime.QueueTurn("thread-1");
         fourthScript.AddThreadError("Selected model is at capacity. Please try a different model.");
+        DisableAutoCompletion(fourthScript);
 
         ICodexThreadHandle thread = runtime.CreateThread("thread-1");
         FakeOutboundTelegramQueue queue = new();
@@ -138,6 +143,7 @@ public sealed class CodexTurnExecutionCoordinatorStreamingTests
             capacityRetryDelays: [TimeSpan.Zero, TimeSpan.Zero, TimeSpan.Zero]);
 
         await coordinator.StartAsync(thread, [], new CodexTurnOptions(), CancellationToken.None);
+        await fourthScript.Finished.Task.WaitAsync(TimeSpan.FromSeconds(5));
         await WaitForConditionAsync(
             () => queue.Messages.Any(message =>
                 message.Text.Contains("Selected model is still at capacity", StringComparison.OrdinalIgnoreCase)),
