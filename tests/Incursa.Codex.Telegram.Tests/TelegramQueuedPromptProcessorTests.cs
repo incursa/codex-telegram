@@ -105,6 +105,32 @@ public sealed class TelegramQueuedPromptProcessorTests
     }
 
     [Fact]
+    public async Task ProcessNextAsync_WhenQueuedAttachmentIsMissingFailsWithoutDroppingItFromDiagnostics()
+    {
+        using ProcessorHarness harness = ProcessorHarness.Create();
+        string imagePath = Path.Combine(harness.Temp.Path, "missing-image.png");
+        TelegramQueuedPrompt prompt = CreatePrompt(
+            "prompt-1",
+            "thread-1",
+            "inspect this",
+            attachments:
+            [
+                new TelegramAttachmentDescriptor(imagePath, "missing-image.png", "image/png", IsImage: true),
+            ]);
+        harness.SessionManager.Sessions.Add(CreateSession("thread-1"));
+        await EnqueueSelectedPromptAsync(harness, prompt);
+
+        bool processed = await harness.Processor.ProcessNextAsync(CancellationToken.None);
+
+        Assert.True(processed);
+        Assert.Empty(harness.SessionManager.AttachmentSends);
+        SentTelegramMessage sent = Assert.Single(harness.Sender.Sent);
+        Assert.Contains("attachment is no longer available", sent.Text);
+        TelegramConversationState state = Assert.Single(await harness.StateStore.ListConversationStatesAsync(CancellationToken.None));
+        Assert.Equal(0, state.QueuedPromptCount);
+    }
+
+    [Fact]
     public async Task ProcessNextAsync_SkipsMissingSessionAndDeletesAttachments()
     {
         using ProcessorHarness harness = ProcessorHarness.Create();
@@ -453,6 +479,7 @@ public sealed class TelegramQueuedPromptProcessorTests
                 typingIndicatorRegistry,
                 outboundQueue,
                 sender,
+                NullTelegramDebugTraceStore.Instance,
                 NullLogger<TelegramQueuedPromptProcessor>.Instance);
 
             return new ProcessorHarness(

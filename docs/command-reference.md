@@ -13,7 +13,7 @@ Use [README.md](../README.md) for first setup and [usage.md](usage.md) for day-t
 5. Private chats, trusted group roots, and forum topics can auto-route plain text to the active session.
 6. Use `/send <text>` when Telegram privacy mode or an unsupported chat type prevents normal auto-routing.
 7. Attachments are forwarded to Codex when they are attached to a routed message.
-8. Voice notes are transcribed first, then sent to the active session.
+8. Voice notes are transcribed first, then either captured into an input bundle or sent to the active session according to `TelegramInput:DefaultCaptureMode`.
 9. Groups and forum topics require an allowed user plus either `AllowedChatIds` or `/trust` from an allowed user in that chat.
 
 ## Quick Workflow
@@ -156,6 +156,40 @@ Expected behavior:
 
 Use this when investigating whether foreground replies, queued work, and live Codex turn output are interleaving.
 
+Trace controls are also available through `/debug trace ...`:
+
+```text
+/debug trace status
+/debug trace on
+/debug trace off
+/debug trace latest
+```
+
+`/debug trace on` enables local JSONL trace-file writes for this process. In-memory turn diagnostics are still collected for recent turns even when file tracing is off.
+
+### `/trace`
+
+Shows local trace and turn-delivery diagnostics.
+
+Syntax:
+
+```text
+/trace
+/trace latest
+/trace <traceId>
+/trace status
+/trace on
+/trace off
+/trace reset
+```
+
+Expected behavior:
+
+1. `/trace latest` shows the newest in-memory trace diagnostics.
+2. `/trace on` and `/trace off` control trace-file writing for the current process.
+3. Diagnostics distinguish Telegram input receipt, bundling, queueing, steering, Codex send/plan requests, actual Codex turn start, Codex terminal events, and Telegram outbound delivery.
+4. Diagnostics show Codex event counts, assistant-output character counts, queued outbound characters, sent chunks, pending chunks, compaction, rate limits, timeouts, and last Telegram API/send errors.
+
 ### `/projects`
 
 Lists known local project directories.
@@ -277,7 +311,12 @@ Expected behavior:
 1. Uses the selected session when one exists.
 2. Creates a project-based default session if no session is selected.
 3. Sends attachments with the prompt when attachments are present.
-4. Queues the prompt if a turn is already active.
+4. With `TelegramInput:DefaultCaptureMode` set to `BundleWhenActiveOrMedia`, creates or updates an editable input bundle when a turn is active or when media is present.
+5. The input bundle card includes Send now, Queue next, Steer current turn, Add more, Clear, Cancel, and Trace buttons.
+6. Telegram albums/media groups are debounced by `TelegramInput:MediaGroupDebounceMilliseconds` and forwarded as one inbound bundle candidate with all collected media.
+7. Slash commands remain available as fallbacks.
+
+Cards are the live mobile control surface. Editing a session or input-bundle card does not replace the durable Telegram message history: assistant output is still delivered as normal Telegram messages after a bundle is sent, queued, or steered.
 
 ### `/send <text>`
 
@@ -299,7 +338,7 @@ Expected behavior:
 
 1. Routes text to the active session or creates one when allowed.
 2. Useful when Telegram privacy mode or an unsupported chat type prevents normal auto-routing.
-3. Queues the prompt if a turn is already active.
+3. Keeps immediate send behavior for command fallback use; normal non-command input may be captured into an input bundle according to `TelegramInput:DefaultCaptureMode`.
 
 ### `/steer <text>`
 
@@ -496,9 +535,11 @@ Syntax:
 Expected behavior:
 
 1. Defaults to the active session.
-2. Shows status, working directory, model, thinking effort, created time, last activity, and use command.
-3. Shows exit code or last error when present.
+2. Renders a session status card with state wording such as `Codex is working`, `Telegram output still draining`, `Codex finished; sending remaining Telegram output`, `Codex finished; Telegram delivery complete`, `Codex failed`, `Telegram delivery delayed`, or `Output compacted; open trace/history for full details`.
+3. Shows active turn ID, queue count, pending Telegram messages, pending Telegram chunks, model, thinking effort, working directory, and last activity.
 4. Includes a compact `Rate limits` line with five-hour and weekly block percentages and reset times when Codex account data is available.
+5. Shows the last turn closeout when the current process has observed one, including missing-final-response warnings for streamed assistant text.
+6. Includes buttons for Send/Add Input, Steer, Queue, Refresh, Tail/History, Debug/Trace, Model, Thinking, and Stop/Cancel.
 
 ### `/usage`
 
@@ -542,6 +583,7 @@ Expected behavior:
 2. Defaults to 40 recent lines when no count is supplied.
 3. Starts following live output for the session.
 4. Adds a session button when applicable.
+5. Includes recent in-process session events when transcript output alone does not explain the latest turn state.
 
 ### `/tail <sessionId> [count]`
 
@@ -763,6 +805,7 @@ Expected behavior:
 1. Shows pending destinations, messages, chunks, and characters.
 2. Shows global backoff when Telegram rate limits are active.
 3. Shows pending output for the current chat.
+4. Use `/trace latest` when you need to know whether Codex finished, Telegram is still draining, output was compacted, or Telegram send failed.
 
 Only `status` is implemented as an outbound subcommand.
 
@@ -940,8 +983,10 @@ Images and documents can be attached to a routed message.
 Expected behavior:
 
 1. The file is downloaded to a temporary local path.
-2. The attachment is forwarded to Codex with the prompt.
-3. Temporary files are removed after processing when possible.
+2. If the input is captured into a bundle or queued for later, the attachment is copied under the configured local data root in `telegram-attachments` before the bundle/queue record is persisted.
+3. The attachment is forwarded to Codex with the prompt, bundle, queued prompt, or steering input when supported.
+4. Temporary source files are removed after durable copy or after processing when possible.
+5. If a persisted attachment is missing later, the bot reports the missing attachment instead of silently dropping it.
 
 ## Voice Notes
 
@@ -970,4 +1015,5 @@ Expected behavior:
 2. Separate sessions can progress independently.
 3. Telegram output is rate-limited and may be batched.
 4. Batched output is concatenated with simple spacing and preserves multi-line content.
-5. `/tail` is the best source when Telegram scrollback is not enough.
+5. Assistant output is sent as durable Telegram messages/chunks, not by continuously editing the live status card.
+6. `/tail`, `/history`, and `/trace` are the authoritative paths when Telegram scrollback or edited cards are not enough.

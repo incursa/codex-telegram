@@ -33,6 +33,8 @@ internal interface ICodexTurnExecutionCoordinator
 internal sealed class CodexTurnExecutionCoordinator
     : ICodexTurnExecutionCoordinator
 {
+    private const string TurnCompletionMarker = "~~ turn complete ~~";
+    private const string LegacyTurnFinishedMarker = "~~ fin ~~";
     private static readonly TimeSpan[] DefaultCapacityRetryDelays =
     [
         TimeSpan.FromSeconds(5),
@@ -44,6 +46,7 @@ internal sealed class CodexTurnExecutionCoordinator
     private readonly ConcurrentDictionary<string, byte> _startingThreads = new(StringComparer.Ordinal);
     private readonly ICodexRealtimeBroadcaster _broadcaster;
     private readonly ITelegramTurnOutputRelay _telegramTurnOutputRelay;
+    private readonly ICodexSessionEventLog _eventLog;
     private readonly IHostApplicationLifetime _applicationLifetime;
     private readonly TimeProvider _timeProvider;
     private readonly TimeSpan _terminalEventHoldDuration;
@@ -57,10 +60,12 @@ internal sealed class CodexTurnExecutionCoordinator
         TimeProvider timeProvider,
         TimeSpan terminalEventHoldDuration,
         ILogger<CodexTurnExecutionCoordinator> logger,
-        IReadOnlyList<TimeSpan>? capacityRetryDelays = null)
+        IReadOnlyList<TimeSpan>? capacityRetryDelays = null,
+        ICodexSessionEventLog? eventLog = null)
     {
         _broadcaster = broadcaster;
         _telegramTurnOutputRelay = telegramTurnOutputRelay;
+        _eventLog = eventLog ?? NullCodexSessionEventLog.Instance;
         _applicationLifetime = applicationLifetime;
         _timeProvider = timeProvider;
         _terminalEventHoldDuration = terminalEventHoldDuration < TimeSpan.Zero ? TimeSpan.Zero : terminalEventHoldDuration;
@@ -211,6 +216,7 @@ internal sealed class CodexTurnExecutionCoordinator
         }
 
         CodexTimelineEntryVm? pendingTerminalEntry = null;
+        CodexTimelineEntryVm? pendingFinalResponseEntry = null;
         int lateEventCount = 0;
         bool terminalHoldTimedOut = false;
         bool terminalFailurePublished = false;
@@ -220,8 +226,8 @@ internal sealed class CodexTurnExecutionCoordinator
         using CancellationTokenSource streamCancellation = CancellationTokenSource.CreateLinkedTokenSource(_applicationLifetime.ApplicationStopping);
         try
         {
-            await using IAsyncEnumerator<CodexThreadEvent> enumerator = state.Turn
-                .StreamAsync(streamCancellation.Token)
+            await using IAsyncEnumerator<CodexTurnEvent> enumerator = state.Turn
+                .StreamNormalizedAsync(streamCancellation.Token)
                 .GetAsyncEnumerator(streamCancellation.Token);
 
             while (true)
@@ -247,6 +253,15 @@ internal sealed class CodexTurnExecutionCoordinator
                         return;
                     }
 
+                    if (IsFinalResponse(streamEntry))
+                    {
+                        pendingFinalResponseEntry = streamEntry;
+                        state.RecordVisibleOutputIfNeeded(streamEntry);
+                        RecordEvent(streamEntry);
+                        UpdateActiveTurnState(state.ThreadId, state.TurnId, streamEntry);
+                        continue;
+                    }
+
                     if (IsTerminalTurnEvent(streamEntry))
                     {
                         pendingTerminalEntry = streamEntry;
@@ -263,6 +278,7 @@ internal sealed class CodexTurnExecutionCoordinator
                     }
 
                     state.RecordVisibleOutputIfNeeded(streamEntry);
+                    RecordEvent(streamEntry);
                     UpdateActiveTurnState(state.ThreadId, state.TurnId, streamEntry);
                     await _broadcaster.BroadcastThreadEventAsync(state.ThreadId, streamEntry, _applicationLifetime.ApplicationStopping).ConfigureAwait(false);
                     await _telegramTurnOutputRelay.PublishTurnEventAsync(streamEntry, _applicationLifetime.ApplicationStopping).ConfigureAwait(false);
@@ -298,6 +314,15 @@ internal sealed class CodexTurnExecutionCoordinator
                     return;
                 }
 
+                if (IsFinalResponse(postTerminalEntry))
+                {
+                    pendingFinalResponseEntry = postTerminalEntry;
+                    state.RecordVisibleOutputIfNeeded(postTerminalEntry);
+                    RecordEvent(postTerminalEntry);
+                    UpdateActiveTurnState(state.ThreadId, state.TurnId, postTerminalEntry);
+                    continue;
+                }
+
                 if (IsTerminalTurnEvent(postTerminalEntry))
                 {
                     pendingTerminalEntry = postTerminalEntry;
@@ -306,6 +331,7 @@ internal sealed class CodexTurnExecutionCoordinator
 
                 lateEventCount++;
                 state.RecordVisibleOutputIfNeeded(postTerminalEntry);
+                RecordEvent(postTerminalEntry);
                 UpdateActiveTurnState(state.ThreadId, state.TurnId, postTerminalEntry);
                 await _broadcaster.BroadcastThreadEventAsync(state.ThreadId, postTerminalEntry, _applicationLifetime.ApplicationStopping).ConfigureAwait(false);
                 await _telegramTurnOutputRelay.PublishTurnEventAsync(postTerminalEntry, _applicationLifetime.ApplicationStopping).ConfigureAwait(false);
@@ -313,7 +339,10 @@ internal sealed class CodexTurnExecutionCoordinator
 
             if (pendingTerminalEntry is not null)
             {
-                EmptyOutputRetryResult emptyOutputRetryResult = await TryHandleEmptyOutputRetryAsync(state, pendingTerminalEntry, streamCancellation.Token).ConfigureAwait(false);
+                EmptyOutputRetryResult emptyOutputRetryResult = await TryHandleEmptyOutputRetryAsync(
+                    state,
+                    pendingTerminalEntry,
+                    _applicationLifetime.ApplicationStopping).ConfigureAwait(false);
                 if (emptyOutputRetryResult == EmptyOutputRetryResult.Scheduled)
                 {
                     retryScheduled = true;
@@ -355,6 +384,7 @@ internal sealed class CodexTurnExecutionCoordinator
                         lateEventCount);
                 }
 
+                await PublishPendingFinalResponseAsync(state, pendingFinalResponseEntry).ConfigureAwait(false);
                 await PublishTerminalEventAsync(state, pendingTerminalEntry).ConfigureAwait(false);
             }
 
@@ -381,18 +411,25 @@ internal sealed class CodexTurnExecutionCoordinator
             if (pendingTerminalEntry is null && !terminalFailurePublished && !retryScheduled && !_applicationLifetime.ApplicationStopping.IsCancellationRequested)
             {
                 pendingTerminalEntry = new CodexTimelineEntryVm(
-                    "turn.completed",
-                    "Turn completed",
+                    "turn.stream.ended",
+                    "Turn stream ended without a terminal event",
+                    "The SDK did not observe turn.completed or turn.failed.",
                     null,
-                    null,
-                    "success",
+                    "danger",
                     _timeProvider.GetUtcNow(),
                     state.ThreadId,
                     state.TurnId,
-                    new Dictionary<string, string?>(),
+                    new Dictionary<string, string?>
+                    {
+                        ["terminal"] = true.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                        ["terminalState"] = CodexTurnTerminalState.Incomplete.ToString(),
+                    },
                     false);
 
-                EmptyOutputRetryResult emptyOutputRetryResult = await TryHandleEmptyOutputRetryAsync(state, pendingTerminalEntry, _applicationLifetime.ApplicationStopping).ConfigureAwait(false);
+                EmptyOutputRetryResult emptyOutputRetryResult = await TryHandleEmptyOutputRetryAsync(
+                    state,
+                    pendingTerminalEntry,
+                    _applicationLifetime.ApplicationStopping).ConfigureAwait(false);
                 if (emptyOutputRetryResult == EmptyOutputRetryResult.Scheduled)
                 {
                     retryScheduled = true;
@@ -403,6 +440,7 @@ internal sealed class CodexTurnExecutionCoordinator
                 }
                 else
                 {
+                    await PublishPendingFinalResponseAsync(state, pendingFinalResponseEntry).ConfigureAwait(false);
                     await PublishTerminalEventAsync(state, pendingTerminalEntry).ConfigureAwait(false);
                 }
             }
@@ -633,6 +671,8 @@ internal sealed class CodexTurnExecutionCoordinator
 
     private async Task PublishNonTerminalEventAsync(CodexTimelineEntryVm entry)
     {
+        RecordEvent(entry);
+
         try
         {
             if (!string.IsNullOrWhiteSpace(entry.ThreadId))
@@ -653,7 +693,31 @@ internal sealed class CodexTurnExecutionCoordinator
 
     private async Task PublishTerminalEventAsync(ActiveTurnState state, CodexTimelineEntryVm entry)
     {
+        CodexTurnCloseoutSummary closeout = BuildTurnCloseoutSummary(state, entry);
+        RecordEvent(entry, closeout);
         UpdateActiveTurnState(state.ThreadId, state.TurnId, entry);
+
+        try
+        {
+            await _broadcaster.BroadcastThreadEventAsync(state.ThreadId, entry, _applicationLifetime.ApplicationStopping).ConfigureAwait(false);
+            await _telegramTurnOutputRelay.PublishTurnEventAsync(entry, _applicationLifetime.ApplicationStopping).ConfigureAwait(false);
+            await PublishMissingFinalResponseWarningIfNeededAsync(state, entry, closeout).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (_applicationLifetime.ApplicationStopping.IsCancellationRequested)
+        {
+        }
+        catch (Exception exception)
+        {
+            _logger.LogWarning(exception, "Failed to publish terminal event for turn {TurnId} on thread {ThreadId}.", state.TurnId, state.ThreadId);
+        }
+    }
+
+    private async Task PublishPendingFinalResponseAsync(ActiveTurnState state, CodexTimelineEntryVm? entry)
+    {
+        if (entry is null)
+        {
+            return;
+        }
 
         try
         {
@@ -665,18 +729,154 @@ internal sealed class CodexTurnExecutionCoordinator
         }
         catch (Exception exception)
         {
-            _logger.LogWarning(exception, "Failed to publish terminal event for turn {TurnId} on thread {ThreadId}.", state.TurnId, state.ThreadId);
+            _logger.LogWarning(exception, "Failed to publish final response for turn {TurnId} on thread {ThreadId}.", state.TurnId, state.ThreadId);
         }
+    }
+
+    private async Task PublishMissingFinalResponseWarningIfNeededAsync(
+        ActiveTurnState state,
+        CodexTimelineEntryVm terminalEntry,
+        CodexTurnCloseoutSummary closeout)
+    {
+        if (!closeout.Warning)
+        {
+            return;
+        }
+
+        if (!_eventLog.TryMarkCloseoutWarningPublished(state.ThreadId, state.TurnId))
+        {
+            return;
+        }
+
+        await PublishRecoveredAssistantOutputIfNeededAsync(state).ConfigureAwait(false);
+
+        CodexTimelineEntryVm warning = new(
+            "turn.closeout.warning",
+            "Turn completed without a final response",
+            "The session is idle.",
+            closeout.Message,
+            "warning",
+            _timeProvider.GetUtcNow(),
+            state.ThreadId,
+            state.TurnId,
+            new Dictionary<string, string?>
+            {
+                ["terminalEventType"] = terminalEntry.Type,
+                ["assistantTextSeen"] = closeout.AssistantTextSeen.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                ["finalResponseSeen"] = closeout.FinalResponseSeen.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            },
+            false);
+
+        RecordEvent(warning);
+        await _broadcaster.BroadcastThreadEventAsync(state.ThreadId, warning, _applicationLifetime.ApplicationStopping).ConfigureAwait(false);
+        await _telegramTurnOutputRelay.PublishTurnEventAsync(warning, _applicationLifetime.ApplicationStopping).ConfigureAwait(false);
+    }
+
+    private async Task PublishRecoveredAssistantOutputIfNeededAsync(ActiveTurnState state)
+    {
+        if (_eventLog.HasVisibleAssistantOutput(state.ThreadId, state.TurnId)
+            || string.IsNullOrWhiteSpace(state.AssistantOutputText))
+        {
+            return;
+        }
+
+        CodexTimelineEntryVm recovered = new(
+            "turn.assistant.recovered",
+            "Recovered assistant text",
+            null,
+            state.AssistantOutputText,
+            "warning",
+            _timeProvider.GetUtcNow(),
+            state.ThreadId,
+            state.TurnId,
+            new Dictionary<string, string?>
+            {
+                ["reason"] = "terminal-without-final-response",
+            },
+            false);
+
+        RecordEvent(recovered);
+        await _broadcaster.BroadcastThreadEventAsync(state.ThreadId, recovered, _applicationLifetime.ApplicationStopping).ConfigureAwait(false);
+        await _telegramTurnOutputRelay.PublishTurnEventAsync(recovered, _applicationLifetime.ApplicationStopping).ConfigureAwait(false);
     }
 
     private static bool IsTerminalTurnEvent(CodexTimelineEntryVm entry)
         => string.Equals(entry.Type, "turn.completed", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(entry.Type, "turn.failed", StringComparison.OrdinalIgnoreCase);
+            || string.Equals(entry.Type, "turn.failed", StringComparison.OrdinalIgnoreCase)
+            || IsMetadataFlagSet(entry, "terminal");
+
+    private void RecordEvent(CodexTimelineEntryVm entry, CodexTurnCloseoutSummary? closeout = null)
+        => _eventLog.Record(CodexSessionEventRecord.FromTimelineEntry(entry, closeout));
+
+    private CodexTurnCloseoutSummary BuildTurnCloseoutSummary(ActiveTurnState state, CodexTimelineEntryVm entry)
+    {
+        bool completed = string.Equals(entry.Type, "turn.completed", StringComparison.OrdinalIgnoreCase);
+        bool terminalIncomplete = IsTerminalState(entry, CodexTurnTerminalState.Incomplete);
+        bool finalResponseSeen = state.FinalResponseSeen || (completed && !IsEmptyCompletionBody(entry.Body));
+        bool assistantTextSeen = state.HasVisibleAssistantOutput || _eventLog.HasVisibleAssistantOutput(state.ThreadId, state.TurnId);
+        bool warning = completed && assistantTextSeen && !finalResponseSeen;
+        string status = terminalIncomplete ? "incomplete" : completed ? "completed" : "failed";
+        string message = warning
+            ? "Codex streamed assistant text but ended the turn without a final response item."
+            : ResolveCloseoutMessage(status, finalResponseSeen, entry.Body);
+
+        return new CodexTurnCloseoutSummary(
+            state.TurnId,
+            status,
+            entry.Timestamp,
+            assistantTextSeen,
+            finalResponseSeen,
+            warning,
+            message);
+    }
+
+    private static string ResolveCloseoutMessage(string status, bool finalResponseSeen, string? body)
+    {
+        if (string.Equals(status, "failed", StringComparison.OrdinalIgnoreCase))
+        {
+            return string.IsNullOrWhiteSpace(body)
+                ? "Turn failed without an error message."
+                : body.Trim();
+        }
+
+        if (string.Equals(status, "incomplete", StringComparison.OrdinalIgnoreCase))
+        {
+            return string.IsNullOrWhiteSpace(body)
+                ? "Codex stream ended before the SDK observed a terminal event."
+                : body.Trim();
+        }
+
+        return finalResponseSeen
+            ? "Turn completed with a final response."
+            : "Turn completed without assistant response text.";
+    }
 
     private static bool IsEmptySuccessfulCompletion(ActiveTurnState state, CodexTimelineEntryVm entry)
         => string.Equals(entry.Type, "turn.completed", StringComparison.OrdinalIgnoreCase)
-            && !state.HasVisibleCodexOutput
-            && string.IsNullOrWhiteSpace(entry.Body);
+            && IsEmptyCompletionBody(entry.Body)
+            && !state.HasVisibleAssistantOutput
+            && !state.FinalResponseSeen;
+
+    private static bool IsEmptyCompletionBody(string? body)
+    {
+        if (string.IsNullOrWhiteSpace(body))
+        {
+            return true;
+        }
+
+        string normalized = body.Trim();
+        if (normalized.EndsWith(TurnCompletionMarker, StringComparison.Ordinal))
+        {
+            normalized = normalized[..^TurnCompletionMarker.Length].TrimEnd();
+        }
+
+        if (normalized.EndsWith(LegacyTurnFinishedMarker, StringComparison.Ordinal))
+        {
+            normalized = normalized[..^LegacyTurnFinishedMarker.Length].TrimEnd();
+        }
+
+        return string.IsNullOrWhiteSpace(normalized);
+    }
 
     private static bool IsVisibleCodexOutput(CodexTimelineEntryVm entry)
     {
@@ -690,9 +890,32 @@ internal sealed class CodexTurnExecutionCoordinator
             return !string.IsNullOrWhiteSpace(entry.Body);
         }
 
+        if (string.Equals(entry.Type, "turn.finalResponse", StringComparison.OrdinalIgnoreCase))
+        {
+            return !string.IsNullOrWhiteSpace(entry.Body);
+        }
+
         return !entry.IsInternal
             && (!string.IsNullOrWhiteSpace(entry.Body) || !string.IsNullOrWhiteSpace(entry.Subtitle));
     }
+
+    private static bool IsVisibleAssistantOutput(CodexTimelineEntryVm entry)
+        => (string.Equals(entry.Type, "item.agentMessage.delta", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(entry.Type, "turn.finalResponse", StringComparison.OrdinalIgnoreCase))
+            && !string.IsNullOrWhiteSpace(entry.Body);
+
+    private static bool IsFinalResponse(CodexTimelineEntryVm entry)
+        => string.Equals(entry.Type, "turn.finalResponse", StringComparison.OrdinalIgnoreCase)
+            && !string.IsNullOrWhiteSpace(entry.Body);
+
+    private static bool IsMetadataFlagSet(CodexTimelineEntryVm entry, string key)
+        => entry.Metadata.TryGetValue(key, out string? value)
+            && bool.TryParse(value, out bool parsed)
+            && parsed;
+
+    private static bool IsTerminalState(CodexTimelineEntryVm entry, CodexTurnTerminalState state)
+        => entry.Metadata.TryGetValue("terminalState", out string? value)
+            && string.Equals(value, state.ToString(), StringComparison.OrdinalIgnoreCase);
 
     private static bool IsCapacityThreadError(CodexTimelineEntryVm entry)
         => string.Equals(entry.Type, "thread.error", StringComparison.OrdinalIgnoreCase)
@@ -741,7 +964,7 @@ internal sealed class CodexTurnExecutionCoordinator
             state.TurnId,
             FormatTurnFailureMessage(exception),
             "danger",
-            DateTimeOffset.UtcNow,
+            _timeProvider.GetUtcNow(),
             state.ThreadId,
             state.TurnId,
             new Dictionary<string, string?>
@@ -751,20 +974,7 @@ internal sealed class CodexTurnExecutionCoordinator
             },
             false);
 
-        UpdateActiveTurnState(state.ThreadId, state.TurnId, entry);
-
-        try
-        {
-            await _broadcaster.BroadcastThreadEventAsync(state.ThreadId, entry, _applicationLifetime.ApplicationStopping).ConfigureAwait(false);
-            await _telegramTurnOutputRelay.PublishTurnEventAsync(entry, _applicationLifetime.ApplicationStopping).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException) when (_applicationLifetime.ApplicationStopping.IsCancellationRequested)
-        {
-        }
-        catch (Exception publishException)
-        {
-            _logger.LogWarning(publishException, "Failed to publish failure event for turn {TurnId} on thread {ThreadId}.", state.TurnId, state.ThreadId);
-        }
+        await PublishTerminalEventAsync(state, entry).ConfigureAwait(false);
     }
 
     private static string FormatTurnFailureMessage(Exception exception)
@@ -837,6 +1047,12 @@ internal sealed class CodexTurnExecutionCoordinator
 
         public bool HasVisibleCodexOutput { get; private set; }
 
+        public bool HasVisibleAssistantOutput { get; private set; }
+
+        public bool FinalResponseSeen { get; private set; }
+
+        public string? AssistantOutputText { get; private set; }
+
         public DateTimeOffset StartedAt { get; }
 
         public DateTimeOffset UpdatedAt { get; private set; }
@@ -866,6 +1082,17 @@ internal sealed class CodexTurnExecutionCoordinator
             {
                 HasVisibleCodexOutput = true;
             }
+
+            if (IsVisibleAssistantOutput(entry))
+            {
+                HasVisibleAssistantOutput = true;
+                AssistantOutputText = string.Concat(AssistantOutputText, entry.Body);
+            }
+
+            if (IsFinalResponse(entry))
+            {
+                FinalResponseSeen = true;
+            }
         }
 
         public void ReplaceTurn(ICodexTurnHandle turn)
@@ -873,6 +1100,9 @@ internal sealed class CodexTurnExecutionCoordinator
             Turn = turn;
             TurnId = turn.Id;
             HasVisibleCodexOutput = false;
+            HasVisibleAssistantOutput = false;
+            FinalResponseSeen = false;
+            AssistantOutputText = null;
             UpdatedAt = DateTimeOffset.UtcNow;
         }
 

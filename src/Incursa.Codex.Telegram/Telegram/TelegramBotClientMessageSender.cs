@@ -89,15 +89,23 @@ internal sealed class TelegramBotClientMessageSender : ITelegramBotMessageSender
         IReadOnlyList<IReadOnlyList<TelegramReplyButton>>? buttons,
         CancellationToken cancellationToken,
         TelegramDebugMessageContext? debugContext = null)
+        => _ = await SendTextMessageAndGetIdAsync(conversation, text, buttons, cancellationToken, debugContext).ConfigureAwait(false);
+
+    public async Task<int?> SendTextMessageAndGetIdAsync(
+        TelegramConversationScope conversation,
+        string text,
+        IReadOnlyList<IReadOnlyList<TelegramReplyButton>>? buttons,
+        CancellationToken cancellationToken,
+        TelegramDebugMessageContext? debugContext = null)
     {
         if (!_options.Enabled)
         {
-            return;
+            return null;
         }
 
         try
         {
-            await SendMessageAsync(conversation, text, buttons, cancellationToken, debugContext).ConfigureAwait(false);
+            return await SendMessageReturningIdAsync(conversation, text, buttons, cancellationToken, debugContext).ConfigureAwait(false);
         }
         catch (ApiRequestException exception) when (conversation.MessageThreadId is not null && IsThreadReplyFailure(exception))
         {
@@ -106,6 +114,7 @@ internal sealed class TelegramBotClientMessageSender : ITelegramBotMessageSender
                 "Telegram rejected a reply to chat {ChatId} topic {MessageThreadId}. The message was not retried in the main chat to preserve topic isolation.",
                 conversation.ChatId,
                 conversation.MessageThreadId);
+            return null;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -118,6 +127,7 @@ internal sealed class TelegramBotClientMessageSender : ITelegramBotMessageSender
                 "Telegram send failed for chat {ChatId} topic {MessageThreadId}; the bot will continue running.",
                 conversation.ChatId,
                 conversation.MessageThreadId);
+            return null;
         }
     }
 
@@ -188,10 +198,25 @@ internal sealed class TelegramBotClientMessageSender : ITelegramBotMessageSender
         IReadOnlyList<IReadOnlyList<TelegramReplyButton>>? buttons,
         CancellationToken cancellationToken,
         TelegramDebugMessageContext? debugContext = null)
+        => _ = await EditTextMessageOrSendReplacementAsync(
+            conversation,
+            messageId,
+            text,
+            buttons,
+            cancellationToken,
+            debugContext).ConfigureAwait(false);
+
+    public async Task<int?> EditTextMessageOrSendReplacementAsync(
+        TelegramConversationScope conversation,
+        int messageId,
+        string text,
+        IReadOnlyList<IReadOnlyList<TelegramReplyButton>>? buttons,
+        CancellationToken cancellationToken,
+        TelegramDebugMessageContext? debugContext = null)
     {
         if (!_options.Enabled)
         {
-            return;
+            return null;
         }
 
         try
@@ -219,6 +244,7 @@ internal sealed class TelegramBotClientMessageSender : ITelegramBotMessageSender
                 conversation.MessageThreadId,
                 sendText.Length,
                 buttons?.Count ?? 0);
+            return messageId;
         }
         catch (ApiRequestException exception) when (IsMessageNotModified(exception))
         {
@@ -227,6 +253,7 @@ internal sealed class TelegramBotClientMessageSender : ITelegramBotMessageSender
                 "Telegram edit for chat {ChatId} message {MessageId} was a no-op because the content did not change.",
                 conversation.ChatId,
                 messageId);
+            return messageId;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -239,7 +266,7 @@ internal sealed class TelegramBotClientMessageSender : ITelegramBotMessageSender
                 "Telegram edit failed for chat {ChatId} message {MessageId}; falling back to a new message.",
                 conversation.ChatId,
                 messageId);
-            await SendTextMessageAsync(conversation, text, buttons, cancellationToken, debugContext).ConfigureAwait(false);
+            return await SendTextMessageAndGetIdAsync(conversation, text, buttons, cancellationToken, debugContext).ConfigureAwait(false);
         }
     }
 

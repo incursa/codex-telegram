@@ -325,6 +325,241 @@ public sealed class TelegramCommandHandlerTests
     }
 
     [Fact]
+    public async Task HandleMessageAsync_WhenActiveTurnUsesEditableInputBundleAndSteerButton()
+    {
+        using CommandHandlerHarness harness = CommandHandlerHarness.Create(
+            inputOptionsOverride: new TelegramInputOptions
+            {
+                DefaultCaptureMode = TelegramInputCaptureMode.BundleWhenActiveOrMedia,
+            });
+        TelegramConversationScope conversation = new(5555, null);
+        harness.SessionManager.Sessions.Add(CreateSession("thread-1", "Demo session", harness.Temp.Path, CodexSessionStatus.Running));
+        await harness.StateStore.SetActiveSessionIdAsync(conversation, "thread-1", CancellationToken.None);
+
+        await harness.Handler.HandleMessageAsync(
+            new TelegramInboundMessage(1234, conversation.ChatId, "private", "voice transcript note", SourceMessageId: 10),
+            harness.Sender,
+            CancellationToken.None);
+
+        SentTelegramMessage card = Assert.Single(harness.Sender.Sent);
+        Assert.Contains("Input bundle", card.Text);
+        Assert.Contains("voice transcript note", card.Text);
+        string steerCallback = Assert.Single(card.Buttons!.SelectMany(row => row), button => button.Text == "Steer current turn").CallbackData;
+        string imagePath = Path.Combine(harness.Temp.Path, "screen.png");
+        await File.WriteAllBytesAsync(imagePath, [1, 2, 3]);
+
+        await harness.Handler.HandleMessageAsync(
+            new TelegramInboundMessage(
+                1234,
+                conversation.ChatId,
+                "private",
+                "extra screenshot context",
+                Attachments:
+                [
+                    new TelegramAttachmentDescriptor(imagePath, "screen.png", "image/png", IsImage: true),
+                ],
+                SourceMessageId: 11),
+            harness.Sender,
+            CancellationToken.None);
+
+        EditedTelegramMessage edited = Assert.Single(harness.Sender.Edited);
+        Assert.Contains("extra screenshot context", edited.Text);
+        Assert.Contains("Attachments: 1", edited.Text);
+        Assert.Empty(harness.SessionManager.SendRequests);
+
+        await harness.Handler.HandleCallbackAsync(
+            new TelegramInboundCallback("bundle-steer", 1234, conversation.ChatId, "private", steerCallback, SourceMessageId: edited.MessageId),
+            harness.Sender,
+            CancellationToken.None);
+
+        (string sessionId, object inputObject) = Assert.Single(harness.SessionManager.SteerRequests);
+        Assert.Equal("thread-1", sessionId);
+        IReadOnlyList<CodexInputItem> input = Assert.IsAssignableFrom<IReadOnlyList<CodexInputItem>>(inputObject);
+        Assert.Contains(input, item => item is CodexTextInput text && text.Text.Contains("voice transcript note", StringComparison.Ordinal));
+        CodexLocalImageInput imageInput = Assert.IsType<CodexLocalImageInput>(Assert.Single(input, item => item is CodexLocalImageInput));
+        Assert.Contains("telegram-attachments", imageInput.Path, StringComparison.OrdinalIgnoreCase);
+        Assert.True(File.Exists(imageInput.Path));
+        Assert.False(File.Exists(imagePath));
+    }
+
+    [Fact]
+    public async Task HandleMessageAsync_WhenBundleCardEditFailsStoresReplacementMessageId()
+    {
+        using CommandHandlerHarness harness = CommandHandlerHarness.Create(
+            inputOptionsOverride: new TelegramInputOptions
+            {
+                DefaultCaptureMode = TelegramInputCaptureMode.BundleAlways,
+            });
+        TelegramConversationScope conversation = new(5555, null);
+        harness.SessionManager.Sessions.Add(CreateSession("thread-1", "Demo session", harness.Temp.Path));
+        await harness.StateStore.SetActiveSessionIdAsync(conversation, "thread-1", CancellationToken.None);
+
+        await harness.Handler.HandleMessageAsync(
+            new TelegramInboundMessage(1234, conversation.ChatId, "private", "first", SourceMessageId: 10),
+            harness.Sender,
+            CancellationToken.None);
+        harness.Sender.EditFailures.Enqueue(new InvalidOperationException("message to edit not found"));
+
+        await harness.Handler.HandleMessageAsync(
+            new TelegramInboundMessage(1234, conversation.ChatId, "private", "second", SourceMessageId: 11),
+            harness.Sender,
+            CancellationToken.None);
+        await harness.Handler.HandleMessageAsync(
+            new TelegramInboundMessage(1234, conversation.ChatId, "private", "third", SourceMessageId: 12),
+            harness.Sender,
+            CancellationToken.None);
+
+        Assert.Equal(2, harness.Sender.Sent.Count);
+        Assert.Collection(
+            harness.Sender.Edited,
+            edited => Assert.Equal(1, edited.MessageId),
+            edited => Assert.Equal(2, edited.MessageId));
+        TelegramInputBundle bundle = Assert.Single(await harness.InputBundleStore.ListAsync(conversation, CancellationToken.None));
+        Assert.Equal(2, bundle.StatusCardMessageId);
+    }
+
+    [Fact]
+    public async Task HandleCallbackAsync_BundleClearClearsContentAndLeavesBundleOpen()
+    {
+        using CommandHandlerHarness harness = CommandHandlerHarness.Create(
+            inputOptionsOverride: new TelegramInputOptions
+            {
+                DefaultCaptureMode = TelegramInputCaptureMode.BundleAlways,
+            });
+        TelegramConversationScope conversation = new(5555, null);
+        harness.SessionManager.Sessions.Add(CreateSession("thread-1", "Demo session", harness.Temp.Path));
+        await harness.StateStore.SetActiveSessionIdAsync(conversation, "thread-1", CancellationToken.None);
+        string imagePath = Path.Combine(harness.Temp.Path, "clear.png");
+        await File.WriteAllBytesAsync(imagePath, [1, 2, 3]);
+
+        await harness.Handler.HandleMessageAsync(
+            new TelegramInboundMessage(
+                1234,
+                conversation.ChatId,
+                "private",
+                "clear me",
+                Attachments: [new TelegramAttachmentDescriptor(imagePath, "clear.png", "image/png", IsImage: true)],
+                SourceMessageId: 15),
+            harness.Sender,
+            CancellationToken.None);
+
+        SentTelegramMessage card = Assert.Single(harness.Sender.Sent);
+        string clearCallback = Assert.Single(card.Buttons!.SelectMany(row => row), button => button.Text == "Clear").CallbackData;
+        TelegramInputBundle bundleBefore = Assert.Single(await harness.InputBundleStore.ListAsync(conversation, CancellationToken.None));
+        string durablePath = Assert.Single(bundleBefore.Attachments).FilePath;
+        Assert.True(File.Exists(durablePath));
+
+        await harness.Handler.HandleCallbackAsync(
+            new TelegramInboundCallback("bundle-clear", 1234, conversation.ChatId, "private", clearCallback, SourceMessageId: 1),
+            harness.Sender,
+            CancellationToken.None);
+
+        TelegramInputBundle bundleAfter = Assert.Single(await harness.InputBundleStore.ListAsync(conversation, CancellationToken.None));
+        Assert.Equal(TelegramInputBundleStatus.Capturing, bundleAfter.Status);
+        Assert.Empty(bundleAfter.TextParts);
+        Assert.Empty(bundleAfter.Attachments);
+        Assert.False(File.Exists(durablePath));
+        EditedTelegramMessage edited = Assert.Single(harness.Sender.Edited);
+        Assert.Contains("Attachments: 0", edited.Text);
+    }
+
+    [Fact]
+    public async Task HandleMessageAsync_QueuedAttachmentIsCopiedToDurableStateDirectory()
+    {
+        using CommandHandlerHarness harness = CommandHandlerHarness.Create();
+        TelegramConversationScope conversation = new(5555, null);
+        harness.SessionManager.Sessions.Add(CreateSession("thread-1", "Demo session", harness.Temp.Path, CodexSessionStatus.Running));
+        await harness.StateStore.SetActiveSessionIdAsync(conversation, "thread-1", CancellationToken.None);
+        string sourcePath = Path.Combine(harness.Temp.Path, "queued.png");
+        await File.WriteAllBytesAsync(sourcePath, [1, 2, 3]);
+
+        await harness.Handler.HandleMessageAsync(
+            new TelegramInboundMessage(
+                1234,
+                conversation.ChatId,
+                "private",
+                "/send queued attachment",
+                Attachments: [new TelegramAttachmentDescriptor(sourcePath, "queued.png", "image/png", IsImage: true)],
+                SourceMessageId: 21),
+            harness.Sender,
+            CancellationToken.None);
+
+        TelegramQueuedPrompt prompt = Assert.Single(await harness.StateStore.ListQueuedPromptsAsync(1234, conversation, CancellationToken.None));
+        TelegramAttachmentDescriptor attachment = Assert.Single(prompt.Attachments!);
+        Assert.Contains("telegram-attachments", attachment.FilePath, StringComparison.OrdinalIgnoreCase);
+        Assert.True(File.Exists(attachment.FilePath));
+        Assert.False(File.Exists(sourcePath));
+    }
+
+    [Fact]
+    public async Task HandleMessageAsync_BundleAlwaysCapturesVoiceTranscriptWithoutImmediateSend()
+    {
+        using CommandHandlerHarness harness = CommandHandlerHarness.Create(
+            inputOptionsOverride: new TelegramInputOptions
+            {
+                DefaultCaptureMode = TelegramInputCaptureMode.BundleAlways,
+            });
+        harness.AudioTranscription.Transcript = "transcribed bundle text";
+
+        await harness.Handler.HandleMessageAsync(
+            new TelegramInboundMessage(
+                1234,
+                5555,
+                "private",
+                null,
+                AudioFilePath: "not-created.ogg",
+                SourceMessageId: 20),
+            harness.Sender,
+            CancellationToken.None);
+
+        SentTelegramMessage card = Assert.Single(harness.Sender.Sent);
+        Assert.Contains("Input bundle", card.Text);
+        Assert.Contains("transcribed bundle text", card.Text);
+        Assert.Empty(harness.SessionManager.SendRequests);
+    }
+
+    [Fact]
+    public async Task HandleCallbackAsync_WhenBundleSteerFails_KeepsBundleOpenForRetry()
+    {
+        using CommandHandlerHarness harness = CommandHandlerHarness.Create(
+            inputOptionsOverride: new TelegramInputOptions
+            {
+                DefaultCaptureMode = TelegramInputCaptureMode.BundleWhenActiveOrMedia,
+            });
+        TelegramConversationScope conversation = new(5555, null);
+        harness.SessionManager.Sessions.Add(CreateSession("thread-1", "Demo session", harness.Temp.Path, CodexSessionStatus.Running));
+        await harness.StateStore.SetActiveSessionIdAsync(conversation, "thread-1", CancellationToken.None);
+
+        await harness.Handler.HandleMessageAsync(
+            new TelegramInboundMessage(1234, conversation.ChatId, "private", "retry this bundle", SourceMessageId: 25),
+            harness.Sender,
+            CancellationToken.None);
+
+        SentTelegramMessage card = Assert.Single(harness.Sender.Sent);
+        string steerCallback = Assert.Single(card.Buttons!.SelectMany(row => row), button => button.Text == "Steer current turn").CallbackData;
+        harness.SessionManager.SteerExceptions.Enqueue(new InvalidOperationException("steer failed"));
+
+        await harness.Handler.HandleCallbackAsync(
+            new TelegramInboundCallback("bundle-steer-fail", 1234, conversation.ChatId, "private", steerCallback, SourceMessageId: 1),
+            harness.Sender,
+            CancellationToken.None);
+
+        Assert.Empty(harness.SessionManager.SteerRequests);
+        Assert.Contains(harness.Sender.Edited, edited => edited.Text.Contains("could not be steered", StringComparison.Ordinal));
+
+        await harness.Handler.HandleCallbackAsync(
+            new TelegramInboundCallback("bundle-steer-retry", 1234, conversation.ChatId, "private", steerCallback, SourceMessageId: 1),
+            harness.Sender,
+            CancellationToken.None);
+
+        (string sessionId, object input) = Assert.Single(harness.SessionManager.SteerRequests);
+        Assert.Equal("thread-1", sessionId);
+        Assert.Contains(
+            Assert.IsAssignableFrom<IReadOnlyList<CodexInputItem>>(input),
+            item => item is CodexTextInput text && text.Text == "retry this bundle");
+    }
+
+    [Fact]
     public async Task HandleMessageAsync_DoctorExplainsPrivateChatSetupAndNextAction()
     {
         using CommandHandlerHarness harness = CommandHandlerHarness.Create();
@@ -1150,6 +1385,30 @@ public sealed class TelegramCommandHandlerTests
         Assert.Contains("Status: idle", statusHarness.Sender.Sent.Single().Text);
         AssertCompactUsageSummary(statusHarness.Sender.Sent.Single().Text);
 
+        using CommandHandlerHarness closeoutHarness = CommandHandlerHarness.Create();
+        closeoutHarness.SessionManager.Sessions.Add(CreateSession("thread-1", "Demo session", closeoutHarness.Temp.Path) with
+        {
+            LastTurnCloseout = new CodexTurnCloseoutSummary(
+                "turn-1",
+                "completed",
+                DateTimeOffset.UtcNow,
+                AssistantTextSeen: true,
+                FinalResponseSeen: false,
+                Warning: true,
+                "Codex streamed assistant text but ended the turn without a final response item."),
+        });
+        await closeoutHarness.StateStore.SetActiveSessionIdAsync(conversation, "thread-1", CancellationToken.None);
+
+        await closeoutHarness.Handler.HandleMessageAsync(
+            new TelegramInboundMessage(1234, conversation.ChatId, "private", "/status"),
+            closeoutHarness.Sender,
+            CancellationToken.None);
+
+        string closeoutStatus = Assert.Single(closeoutHarness.Sender.Sent).Text;
+        Assert.Contains("Last turn: completed", closeoutStatus);
+        Assert.Contains("warning", closeoutStatus);
+        Assert.Contains("Closeout: Codex streamed assistant text", closeoutStatus);
+
         using CommandHandlerHarness cachedMissHarness = CommandHandlerHarness.Create();
         cachedMissHarness.SessionManager.Sessions.Add(CreateSession("thread-1", "Demo session", cachedMissHarness.Temp.Path));
         await cachedMissHarness.StateStore.SetActiveSessionIdAsync(conversation, "thread-1", CancellationToken.None);
@@ -1942,6 +2201,7 @@ public sealed class TelegramCommandHandlerTests
             FakeProjectCatalogStore projectCatalog,
             TelegramBotStateStore stateStore,
             FakeOutboundTelegramQueue outboundQueue,
+            TelegramInputBundleStore inputBundleStore,
             TelegramTypingIndicatorRegistry typingIndicatorRegistry,
             TelegramTurnReactionRegistry turnReactionRegistry,
             TestTelegramDebugPreambleMode debugPreambleMode,
@@ -1956,6 +2216,7 @@ public sealed class TelegramCommandHandlerTests
             ProjectCatalog = projectCatalog;
             StateStore = stateStore;
             OutboundQueue = outboundQueue;
+            InputBundleStore = inputBundleStore;
             TypingIndicatorRegistry = typingIndicatorRegistry;
             TurnReactionRegistry = turnReactionRegistry;
             DebugPreambleMode = debugPreambleMode;
@@ -1977,6 +2238,8 @@ public sealed class TelegramCommandHandlerTests
 
         public FakeOutboundTelegramQueue OutboundQueue { get; }
 
+        public TelegramInputBundleStore InputBundleStore { get; }
+
         public TelegramTypingIndicatorRegistry TypingIndicatorRegistry { get; }
 
         public TelegramTurnReactionRegistry TurnReactionRegistry { get; }
@@ -1991,7 +2254,9 @@ public sealed class TelegramCommandHandlerTests
 
         public TelegramCodexBotCommandHandler Handler { get; }
 
-        public static CommandHandlerHarness Create(TelegramBotOptions? botOptions = null)
+        public static CommandHandlerHarness Create(
+            TelegramBotOptions? botOptions = null,
+            TelegramInputOptions? inputOptionsOverride = null)
         {
             TemporaryDirectory temp = TemporaryDirectory.Create();
             IOptions<CodexTelegramOptions> codexOptions = Microsoft.Extensions.Options.Options.Create(new CodexTelegramOptions
@@ -2014,6 +2279,16 @@ public sealed class TelegramCommandHandlerTests
             FakeTelegramForumTopicService topicService = new();
             FakeAudioTranscriptionService audioTranscription = new();
             TestTelegramBotMessageSender sender = new();
+            IOptions<TelegramInputOptions> inputOptions = Microsoft.Extensions.Options.Options.Create(inputOptionsOverride ?? new TelegramInputOptions
+            {
+                DefaultCaptureMode = TelegramInputCaptureMode.ImmediateText,
+            });
+            TelegramInputBundleStore inputBundleStore = new(codexOptions, inputOptions, TimeProvider.System);
+            TelegramInputBundleCardRenderer inputBundleCardRenderer = new(inputOptions);
+            TelegramDebugTraceStore traceStore = new(
+                codexOptions,
+                Microsoft.Extensions.Options.Options.Create(new TelegramDebugTraceOptions()));
+            TelegramAttachmentStore attachmentStore = new(codexOptions);
             TelegramCodexBotCommandHandler handler = new(
                 new TelegramCommandParser(),
                 new TelegramMessageChunker(),
@@ -2031,13 +2306,18 @@ public sealed class TelegramCommandHandlerTests
                 topicService,
                 audioTranscription,
                 outboundQueue,
+                attachmentStore,
+                inputBundleStore,
+                inputBundleCardRenderer,
+                traceStore,
                 Microsoft.Extensions.Options.Options.Create(botOptions ?? new TelegramBotOptions
                 {
                     AllowedUserIds = [1234],
                 }),
+                inputOptions,
                 NullLogger<TelegramCodexBotCommandHandler>.Instance);
 
-            return new CommandHandlerHarness(temp, sessionManager, accountUsage, projectCatalog, stateStore, outboundQueue, typingIndicatorRegistry, turnReactionRegistry, debugPreambleMode, topicService, audioTranscription, sender, handler);
+            return new CommandHandlerHarness(temp, sessionManager, accountUsage, projectCatalog, stateStore, outboundQueue, inputBundleStore, typingIndicatorRegistry, turnReactionRegistry, debugPreambleMode, topicService, audioTranscription, sender, handler);
         }
 
         public void Dispose()
@@ -2413,6 +2693,8 @@ public sealed class TelegramCommandHandlerTests
 
         public List<EditedTelegramMessage> Edited { get; } = [];
 
+        public Queue<Exception> EditFailures { get; } = new();
+
         public List<CallbackAnswer> CallbackAnswers { get; } = [];
 
         public List<TelegramMessageReaction> Reactions { get; } = [];
@@ -2428,6 +2710,17 @@ public sealed class TelegramCommandHandlerTests
             return Task.CompletedTask;
         }
 
+        public Task<int?> SendTextMessageAndGetIdAsync(
+            TelegramConversationScope conversation,
+            string text,
+            IReadOnlyList<IReadOnlyList<TelegramReplyButton>>? buttons,
+            CancellationToken cancellationToken,
+            TelegramDebugMessageContext? debugContext = null)
+        {
+            Sent.Add(new SentTelegramMessage(conversation, text, buttons));
+            return Task.FromResult<int?>(Sent.Count);
+        }
+
         public Task EditTextMessageAsync(
             TelegramConversationScope conversation,
             int messageId,
@@ -2437,6 +2730,11 @@ public sealed class TelegramCommandHandlerTests
             TelegramDebugMessageContext? debugContext = null)
         {
             Edited.Add(new EditedTelegramMessage(conversation, messageId, text, buttons));
+            if (EditFailures.TryDequeue(out Exception? exception))
+            {
+                throw exception;
+            }
+
             return Task.CompletedTask;
         }
 

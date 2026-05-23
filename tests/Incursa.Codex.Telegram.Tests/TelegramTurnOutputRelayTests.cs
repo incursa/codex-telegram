@@ -1,5 +1,6 @@
 using Incursa.Codex.Telegram.Models;
 using Incursa.Codex.Telegram.Options;
+using Incursa.Codex.Telegram.Services;
 using Incursa.Codex.Telegram.Telegram;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -399,7 +400,7 @@ public sealed class TelegramTurnOutputRelayTests
     }
 
     [Fact]
-    public async Task PublishTurnEventAsync_PublishesAgentDeltasAndOnlyUnpublishedCompletionText()
+    public async Task PublishTurnEventAsync_PublishesAgentDeltasAndOnlyUnpublishedFinalResponseText()
     {
         FakeOutboundTelegramQueue queue = new();
         TelegramThreadFollowRegistry followRegistry = FollowThread();
@@ -413,7 +414,7 @@ public sealed class TelegramTurnOutputRelayTests
             CreateEntry(type: "item.agentMessage.delta", title: "Agent", body: "hello world.\nremaining"),
             CancellationToken.None);
         await relay.PublishTurnEventAsync(
-            CreateEntry(type: "turn.completed", title: "Turn completed", body: "hello world.\nremaining", severity: "success"),
+            CreateEntry(type: "turn.finalResponse", title: "Final response", body: "hello world.\nremaining", severity: "success"),
             CancellationToken.None);
 
         Assert.Collection(
@@ -453,7 +454,7 @@ public sealed class TelegramTurnOutputRelayTests
     }
 
     [Fact]
-    public async Task PublishTurnEventAsync_PublishesCompletionTitleWhenAllAgentTextWasAlreadyPublished()
+    public async Task PublishTurnEventAsync_DoesNotPublishCompletionTitleWhenAllAgentTextWasAlreadyPublished()
     {
         FakeOutboundTelegramQueue queue = new();
         TelegramThreadFollowRegistry followRegistry = FollowThread();
@@ -470,14 +471,32 @@ public sealed class TelegramTurnOutputRelayTests
             CreateEntry(type: "turn.completed", title: "Turn completed", body: "all done.", severity: "success"),
             CancellationToken.None);
 
-        Assert.Collection(
-            queue.Messages,
-            message => Assert.Equal("all done.", message.Text),
-            message =>
-            {
-                Assert.Equal("Turn completed", message.Text);
-                Assert.Equal(CodexOutboundMessageKind.Completion, message.Kind);
-            });
+        OutboundTelegramMessage message = Assert.Single(queue.Messages);
+        Assert.Equal("all done.", message.Text);
+        Assert.Equal(CodexOutboundMessageKind.Update, message.Kind);
+    }
+
+    [Fact]
+    public async Task PublishTurnEventAsync_DoesNotRepeatAlreadyPublishedFinalResponseWithLegacyMarker()
+    {
+        FakeOutboundTelegramQueue queue = new();
+        TelegramThreadFollowRegistry followRegistry = FollowThread();
+        TelegramTurnOutputRelay relay = CreateRelay(queue, followRegistry, new TelegramOutboundOptions
+        {
+            AgentMessageUpdateMinChars = 5,
+            AgentMessageUpdateMaxChars = 20,
+        });
+
+        await relay.PublishTurnEventAsync(
+            CreateEntry(type: "item.agentMessage.delta", title: "Agent", body: "all done.\n"),
+            CancellationToken.None);
+        await relay.PublishTurnEventAsync(
+            CreateEntry(type: "turn.completed", title: "Turn completed", body: "all done.\n\n~~ fin ~~", severity: "success"),
+            CancellationToken.None);
+
+        OutboundTelegramMessage message = Assert.Single(queue.Messages);
+        Assert.Equal("all done.", message.Text);
+        Assert.Equal(CodexOutboundMessageKind.Update, message.Kind);
     }
 
     [Fact]
@@ -495,7 +514,23 @@ public sealed class TelegramTurnOutputRelayTests
     }
 
     [Fact]
-    public async Task PublishTurnEventAsync_FlushesUnpublishedAgentTextAndAppendsCompletionTitleWhenCompletionHasNoBody()
+    public async Task PublishTurnEventAsync_RecordsAssistantTextVisibleInTelegram()
+    {
+        FakeOutboundTelegramQueue queue = new();
+        TelegramThreadFollowRegistry followRegistry = FollowThread();
+        CodexSessionEventLog eventLog = new();
+        TelegramTurnOutputRelay relay = CreateRelay(queue, followRegistry, eventLog: eventLog);
+
+        await relay.PublishTurnEventAsync(
+            CreateEntry(type: "item.agentMessage.delta", title: "Agent", body: "visible text.", turnId: "turn-1"),
+            CancellationToken.None);
+
+        Assert.True(eventLog.HasVisibleAssistantOutput("thread-1", "turn-1"));
+        Assert.Contains(eventLog.GetRecent("thread-1", 5), evt => evt.Type == "telegram.assistant.visible");
+    }
+
+    [Fact]
+    public async Task PublishTurnEventAsync_FlushesUnpublishedAgentTextWhenCompletionHasNoBody()
     {
         FakeOutboundTelegramQueue queue = new();
         TelegramThreadFollowRegistry followRegistry = FollowThread();
@@ -532,7 +567,21 @@ public sealed class TelegramTurnOutputRelayTests
     }
 
     [Fact]
-    public async Task PublishTurnEventAsync_PublishesCompletionTitleWhenCompletionHasNoBody()
+    public async Task PublishTurnEventAsync_DoesNotPublishCompletionTitleForMarkerOnlyFinalResponse()
+    {
+        FakeOutboundTelegramQueue queue = new();
+        TelegramThreadFollowRegistry followRegistry = FollowThread();
+        TelegramTurnOutputRelay relay = CreateRelay(queue, followRegistry);
+
+        await relay.PublishTurnEventAsync(
+            CreateEntry(type: "turn.completed", title: "Turn completed", body: "~~ fin ~~", severity: "success"),
+            CancellationToken.None);
+
+        Assert.Empty(queue.Messages);
+    }
+
+    [Fact]
+    public async Task PublishTurnEventAsync_DoesNotPublishCompletionTitleWhenCompletionHasNoBody()
     {
         FakeOutboundTelegramQueue queue = new();
         TelegramThreadFollowRegistry followRegistry = FollowThread();
@@ -542,13 +591,11 @@ public sealed class TelegramTurnOutputRelayTests
             CreateEntry(type: "turn.completed", title: "Turn completed", body: null, severity: "success"),
             CancellationToken.None);
 
-        OutboundTelegramMessage message = Assert.Single(queue.Messages);
-        Assert.Equal("Turn completed", message.Text);
-        Assert.Equal(CodexOutboundMessageKind.Completion, message.Kind);
+        Assert.Empty(queue.Messages);
     }
 
     [Fact]
-    public async Task PublishTurnEventAsync_PublishesCompletionTitleWhenCompletionHasNoBodyAfterLiveProgress()
+    public async Task PublishTurnEventAsync_DoesNotPublishCompletionTitleWhenCompletionHasNoBodyAfterLiveProgress()
     {
         FakeOutboundTelegramQueue queue = new();
         TelegramThreadFollowRegistry followRegistry = FollowThread();
@@ -565,8 +612,8 @@ public sealed class TelegramTurnOutputRelayTests
             CreateEntry(type: "turn.completed", title: "Turn completed", body: null, severity: "success"),
             CancellationToken.None);
 
-        Assert.Contains(queue.Messages, message => string.Equals(message.Text, "Turn completed", StringComparison.Ordinal));
         Assert.Contains(queue.Messages, message => message.Text.Contains("hello world.", StringComparison.Ordinal));
+        Assert.DoesNotContain(queue.Messages, message => string.Equals(message.Text, "Turn completed", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -736,14 +783,16 @@ public sealed class TelegramTurnOutputRelayTests
         TelegramThreadFollowRegistry followRegistry,
         TelegramOutboundOptions? options = null,
         ITelegramTurnReactionRegistry? reactionRegistry = null,
-        TestTelegramBotMessageSender? messageSender = null)
+        TestTelegramBotMessageSender? messageSender = null,
+        ICodexSessionEventLog? eventLog = null)
         => new(
             queue,
             followRegistry,
             reactionRegistry ?? new TelegramTurnReactionRegistry(),
             messageSender ?? new TestTelegramBotMessageSender(),
             Microsoft.Extensions.Options.Options.Create(options ?? new TelegramOutboundOptions()),
-            NullLogger<TelegramTurnOutputRelay>.Instance);
+            NullLogger<TelegramTurnOutputRelay>.Instance,
+            eventLog);
 
     private static TelegramThreadFollowRegistry FollowThread()
     {

@@ -27,7 +27,9 @@ Record the date, operator, OS, published asset or commit SHA, Codex CLI version,
 10. Send `/new` and confirm the reply uses an auto-generated project-based session name without noisy status/model/thinking buttons; if Codex rate limits are available, confirm it includes a compact `Rate limits` line.
 11. Send a normal text prompt and confirm live output returns to the private chat.
 12. Send `/tail`, `/status`, `/usage`, `/model`, `/thinking`, and `/goal` and confirm each command is understandable without stale or truncated buttons; `/status`, `/model`, and `/thinking` should include compact rate limits when available.
-13. Send `/stop` and confirm pending queued messages for the session are cleared.
+13. Send `/status` during and after a turn and confirm the card distinguishes Codex work from Telegram delivery drain.
+14. After a completed prompt, confirm Telegram does not append a bare successful `Turn completed` message, `/status` shows the last turn closeout, and `/tail` includes useful recent session events when available.
+15. Send `/stop` and confirm pending queued messages for the session are cleared.
 
 ## Authorization
 
@@ -56,23 +58,31 @@ Record the date, operator, OS, published asset or commit SHA, Codex CLI version,
 
 1. With `OpenAI:ApiKey` missing, send a voice note and confirm the failure explains the missing key.
 2. With `OpenAI:FfmpegPath` invalid, send a voice note that requires transcoding and confirm the failure identifies `ffmpeg`, explains that voice transcription is optional, and does not route the failed audio to Codex.
-3. With a valid key and `ffmpeg`, send a short voice note and confirm the transcript is sent to the active session.
+3. With `TelegramInput:DefaultCaptureMode` set to `BundleWhenActiveOrMedia`, start a turn, then send a short voice note and confirm the transcript appears in an editable input bundle card.
 4. Send a near-empty or zero-duration voice note and confirm the bot rejects it before download/transcription.
 5. Send or simulate audio longer than `TelegramBot:MaxAudioDurationSeconds` and confirm the bot rejects it before download/transcription.
-6. Send an image attachment with a prompt and confirm Codex receives both.
-7. Send a document attachment with a prompt and confirm Codex receives both.
-8. Send an audio file larger than the OpenAI transcription limit and confirm the failure is clear.
+6. Send an image attachment with a prompt while the bundle is open and confirm the existing bundle card is edited in place rather than a separate Codex turn being started.
+7. Tap `Steer current turn` and confirm Codex receives the transcript/text plus image input items.
+8. Repeat with `Queue next` and confirm attachment files are copied under the configured data root before the queued bundle is persisted.
+9. Tap `Clear` on a bundle with text and attachments and confirm the card remains open, content count resets, and durable attachment copies are removed.
+10. Tap `Cancel` on a bundle with attachments and confirm the durable attachment files are deleted.
+11. Delete the editable bundle card in Telegram, send another note into the same open bundle, and confirm a replacement card appears and future bundle updates edit the replacement instead of creating repeated duplicates.
+12. Simulate or force a bundle send/steer failure and confirm the bundle remains open for retry with its attachments intact.
+13. Send a Telegram album with multiple images/documents and confirm one bundle card appears with the first caption, all attachments, and the grouped source messages after the media-group debounce window.
+14. Send an audio file larger than the OpenAI transcription limit and confirm the failure is clear.
 
 ## Queueing And Long Output
 
 1. Send a prompt that produces a long response and confirm the Telegram chunks arrive in order.
-2. While a turn is active, send another prompt and confirm it is queued rather than racing the active turn.
+2. While a turn is active, send another prompt and confirm the bot shows an input bundle card with Steer current turn and Queue next choices.
 3. In two topics, trigger overlapping long responses and confirm one topic does not starve the other.
 4. Send `/queue` during the active turn and confirm queued prompts appear in FIFO order with Send now, Edit, and Delete buttons.
 5. Edit one queued prompt with `/queue edit <id> <new text>` and confirm the queued preview updates.
 6. Delete one queued prompt and confirm only that queued item is removed.
 7. Use Send now on one queued prompt while the turn is active and confirm it is sent as steering rather than waiting for normal queue drain.
 8. Send `/outbound` during a backlog and confirm pending destination and chunk counts are plausible.
+9. Enable `/trace on`, reproduce a long output, then send `/trace latest` and confirm diagnostics answer whether Telegram received the input, whether it was bundled/sent/queued/steered, whether Codex send/plan started, whether Codex saw a terminal event, how many assistant-output characters were captured, how many Telegram chunks were queued and sent, whether chunks are pending, and whether compaction, rate limits, timeouts, or send failures occurred.
+10. Simulate a Telegram send failure or rate limit and confirm `/status` does not report delivery complete while messages or chunks remain pending.
 
 ## Restart And Persistence
 
@@ -81,6 +91,8 @@ Record the date, operator, OS, published asset or commit SHA, Codex CLI version,
 3. Send `/project current` and `/status` in the private chat and in any tested topic.
 4. Stop the process during a live turn and restart it.
 5. Confirm the bot reports a sane state. Mid-turn resume is not expected unless that behavior is explicitly implemented later.
+6. Queue a bundle with an attachment, restart the process before it sends, and confirm the queued attachment path still exists under the configured data root and can be sent or cancelled.
+7. If a queued attachment file is manually deleted, confirm the bot reports the missing attachment and does not send a text-only prompt that silently drops it.
 
 ## Release Gate
 

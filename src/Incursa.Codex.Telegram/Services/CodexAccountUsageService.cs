@@ -61,10 +61,27 @@ internal sealed class CodexAccountUsageService : ICodexAccountUsageService
         => new(
             snapshot.LimitId,
             snapshot.LimitName,
-            snapshot.PlanType,
+            FormatPlanType(snapshot.PlanType),
             snapshot.RateLimitReachedType,
             ToRateLimitWindowVm(snapshot.Primary),
             ToRateLimitWindowVm(snapshot.Secondary));
+
+    private static string? FormatPlanType(CodexPlanType planType)
+        => planType switch
+        {
+            CodexPlanType.Free => "free",
+            CodexPlanType.Go => "go",
+            CodexPlanType.Plus => "plus",
+            CodexPlanType.Pro => "pro",
+            CodexPlanType.Prolite => "prolite",
+            CodexPlanType.Team => "team",
+            CodexPlanType.SelfServeBusinessUsageBased => "self_serve_business_usage_based",
+            CodexPlanType.Business => "business",
+            CodexPlanType.EnterpriseCbpUsageBased => "enterprise_cbp_usage_based",
+            CodexPlanType.Enterprise => "enterprise",
+            CodexPlanType.Edu => "edu",
+            _ => null,
+        };
 
     private static CodexRateLimitWindowVm? ToRateLimitWindowVm(CodexRateLimitWindow? window)
         => window is null
