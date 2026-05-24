@@ -403,7 +403,6 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
         StringBuilder builder = new();
         builder.AppendLine(stateText);
         builder.AppendLine($"Session: {ShortId(snapshot.ThreadId)}");
-        builder.AppendLine($"Turn: {ShortId(snapshot.TurnId)}");
         builder.AppendLine($"Mode: {presentationMode}");
         if (!string.IsNullOrWhiteSpace(snapshot.Activity))
         {

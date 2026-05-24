@@ -186,18 +186,18 @@ Buttons:
 
 ## Live Turn Card
 
-In `LiveCard` and `FinalOnly` output modes, progress and update events can be projected into one editable live turn card instead of a stream of chat messages. In `LiveCard`, the card keeps a visible `Latest` line for assistant output and a separate `Activity` line for ephemeral internal work.
+In `LiveCard` and `FinalOnly` output modes, progress and update events can be projected into one editable live turn card instead of a stream of chat messages. In `LiveCard`, the card keeps a visible `Latest` line for assistant output and a separate `Activity` line for ephemeral internal work. The card does not show the internal Codex turn ID.
 
 Expected content:
 
-1. Session and short turn ID.
+1. Session ID.
 2. State such as `Codex is working`, `Codex finished; sending remaining Telegram output`, or `Codex failed`.
-3. Latest meaningful assistant update.
-4. Activity summary for ephemeral internal work, when present.
-5. Captured update count and suppressed progress count.
-6. Artifact count.
-7. Final-response capture status.
+3. Activity summary for ephemeral internal work, when present.
+4. Captured update count and suppressed progress count.
+5. Artifact count.
+6. Final-response capture status.
 7. Telegram delivery state.
+8. Latest meaningful assistant update, shown last so the newest visible content is easy to scan.
 
 Buttons:
 
