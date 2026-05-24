@@ -60,7 +60,7 @@ public static class TelegramOutboundDefaults
     public const int AgentMessageUpdateMaxChars = 900;
 
     /// <summary>
-    /// Default amount of time to collect normal-priority updates before batching and sending them.
+    /// Default amount of time normal-priority updates may wait before sending.
     /// </summary>
     public const int BatchWindowSeconds = 0;
 
@@ -162,12 +162,12 @@ public static class TelegramOutboundLimits
     public const int MinAgentMessageUpdateChars = 12;
 
     /// <summary>
-    /// Smallest allowed batching delay.
+    /// Smallest allowed normal-priority send delay.
     /// </summary>
     public const int MinBatchWindowSeconds = 0;
 
     /// <summary>
-    /// Largest allowed batching delay.
+    /// Largest allowed normal-priority send delay.
     /// </summary>
     public const int MaxBatchWindowSeconds = 120;
 }
@@ -238,7 +238,7 @@ public sealed class TelegramOutboundOptions
     public int AgentMessageUpdateMaxChars { get; set; } = TelegramOutboundDefaults.AgentMessageUpdateMaxChars;
 
     /// <summary>
-    /// Gets or sets how long normal-priority updates may wait so adjacent updates can be batched.
+    /// Gets or sets how long normal-priority updates may wait before sending.
     /// </summary>
     public int BatchWindowSeconds { get; set; } = TelegramOutboundDefaults.BatchWindowSeconds;
 

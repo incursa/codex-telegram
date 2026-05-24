@@ -32,6 +32,10 @@ internal interface ICodexTurnHandle
 
     IAsyncEnumerable<CodexThreadEvent> StreamAsync(CancellationToken cancellationToken);
 
+    IAsyncEnumerable<CodexTurnEvent> StreamNormalizedAsync(CancellationToken cancellationToken);
+
+    Task<CodexTurnResult> RunToResultAsync(CancellationToken cancellationToken);
+
     Task SteerAsync(IReadOnlyList<CodexInputItem> input, CancellationToken cancellationToken);
 
     Task InterruptAsync(CancellationToken cancellationToken);
@@ -88,6 +92,12 @@ internal sealed class CodexTurnHandle : ICodexTurnHandle
 
     public IAsyncEnumerable<CodexThreadEvent> StreamAsync(CancellationToken cancellationToken)
         => _turn.StreamAsync(cancellationToken);
+
+    public IAsyncEnumerable<CodexTurnEvent> StreamNormalizedAsync(CancellationToken cancellationToken)
+        => _turn.StreamNormalizedAsync(cancellationToken);
+
+    public Task<CodexTurnResult> RunToResultAsync(CancellationToken cancellationToken)
+        => _turn.RunToResultAsync(cancellationToken);
 
     public Task SteerAsync(IReadOnlyList<CodexInputItem> input, CancellationToken cancellationToken)
         => _turn.SteerAsync(input, cancellationToken);

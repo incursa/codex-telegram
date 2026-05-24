@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Incursa.Codex.Telegram.Options;
 using Incursa.Codex.Telegram.Telegram;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -72,6 +73,31 @@ public sealed class TelegramHostedServiceUpdateAdapterTests
 
         TelegramInboundMessage message = Assert.Single(harness.Handler.Messages);
         Assert.Equal("use the message text", message.Text);
+    }
+
+    [Fact]
+    public async Task HandleUpdateAsync_FullCaptureRecordsInboundTelegramMessageBody()
+    {
+        using Harness harness = Harness.Create();
+        harness.TraceStore.EnableFullCapture(TimeSpan.FromMinutes(30));
+        Update update = new()
+        {
+            Id = 116,
+            Message = CreateMessage(text: "capture this input", messageThreadId: 77, messageId: 42),
+        };
+
+        await harness.Service.HandleUpdateAsync(harness.FileClient, update, harness.Sender, CancellationToken.None);
+
+        TelegramInboundMessage message = Assert.Single(harness.Handler.Messages);
+        Assert.False(string.IsNullOrWhiteSpace(message.TraceId));
+        string file = Assert.Single(Directory.GetFiles(Path.Combine(harness.Temp.Path, "telegram-traces"), "*.jsonl", SearchOption.AllDirectories));
+        string line = Assert.Single(await File.ReadAllLinesAsync(file, CancellationToken.None));
+        using JsonDocument document = JsonDocument.Parse(line);
+        JsonElement root = document.RootElement;
+        Assert.Equal("telegram.inbound.message", root.GetProperty("kind").GetString());
+        Assert.Equal("TelegramInbound", root.GetProperty("source").GetString());
+        Assert.Equal("capture this input", root.GetProperty("textBody").GetString());
+        Assert.Equal("116", root.GetProperty("metadata").GetProperty("updateId").GetString());
     }
 
     [Fact]
@@ -418,6 +444,56 @@ public sealed class TelegramHostedServiceUpdateAdapterTests
     }
 
     [Fact]
+    public async Task HandleUpdateAsync_CollectsMediaGroupIntoSingleInboundMessage()
+    {
+        using Harness harness = Harness.Create(
+            null,
+            new TelegramInputOptions
+            {
+                MediaGroupDebounceMilliseconds = TelegramInputLimits.MinMediaGroupDebounceMilliseconds,
+            });
+        Message first = CreateMessage(caption: "inspect the album", messageId: 41, mediaGroupId: "album-1");
+        first.Photo =
+        [
+            new PhotoSize { FileId = "photo-small", FileUniqueId = "photo-small-u", Width = 32, Height = 32 },
+            new PhotoSize { FileId = "photo-large", FileUniqueId = "photo-large-u", Width = 2048, Height = 1024 },
+        ];
+        Message second = CreateMessage(messageId: 42, mediaGroupId: "album-1");
+        second.Document = new Document
+        {
+            FileId = "doc-file",
+            FileUniqueId = "doc-file-u",
+            FileName = "notes.pdf",
+            MimeType = "application/pdf",
+        };
+
+        await harness.Service.HandleUpdateAsync(harness.FileClient, new Update { Id = 40, Message = first }, harness.Sender, CancellationToken.None);
+        Assert.Empty(harness.Handler.Messages);
+
+        await harness.Service.HandleUpdateAsync(harness.FileClient, new Update { Id = 41, Message = second }, harness.Sender, CancellationToken.None);
+        await WaitUntilAsync(() => harness.Handler.Messages.Count == 1);
+
+        TelegramInboundMessage message = Assert.Single(harness.Handler.Messages);
+        Assert.Equal("inspect the album", message.Text);
+        Assert.Equal(41, message.SourceMessageId);
+        Assert.Equal([41, 42], message.SourceMessageIds);
+        Assert.Collection(
+            message.Attachments ?? [],
+            attachment =>
+            {
+                Assert.Equal("telegram-photo.jpg", attachment.FileName);
+                Assert.True(attachment.IsImage);
+            },
+            attachment =>
+            {
+                Assert.Equal("notes.pdf", attachment.FileName);
+                Assert.False(attachment.IsImage);
+            });
+        Assert.Equal(["photo-large", "doc-file"], harness.FileClient.DownloadedFileIds);
+        Assert.Equal([41, 42], harness.Sender.Acknowledgements.Select(item => item.MessageId).ToArray());
+    }
+
+    [Fact]
     public async Task HandleUpdateAsync_MapsImageDocumentFallbackNameAndImageFlag()
     {
         using Harness harness = Harness.Create();
@@ -743,7 +819,8 @@ public sealed class TelegramHostedServiceUpdateAdapterTests
         long chatId = 5555,
         ChatType chatType = ChatType.Private,
         int? messageThreadId = null,
-        int messageId = 7)
+        int messageId = 7,
+        string? mediaGroupId = null)
         => new()
         {
             Id = messageId,
@@ -758,7 +835,17 @@ public sealed class TelegramHostedServiceUpdateAdapterTests
             Text = text,
             Caption = caption,
             MessageThreadId = messageThreadId,
+            MediaGroupId = mediaGroupId,
         };
+
+    private static async Task WaitUntilAsync(Func<bool> condition)
+    {
+        using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(2));
+        while (!condition())
+        {
+            await Task.Delay(10, timeout.Token).ConfigureAwait(false);
+        }
+    }
 
     private static User CreateUser(long userId)
         => new()
@@ -777,6 +864,7 @@ public sealed class TelegramHostedServiceUpdateAdapterTests
             FakeTelegramUpdateFileClient fileClient,
             TelegramBotStateStore stateStore,
             TelegramMessageContextStore messageContextStore,
+            TelegramDebugTraceStore traceStore,
             TelegramCodexBotHostedService service)
         {
             Temp = temp;
@@ -785,6 +873,7 @@ public sealed class TelegramHostedServiceUpdateAdapterTests
             FileClient = fileClient;
             StateStore = stateStore;
             MessageContextStore = messageContextStore;
+            TraceStore = traceStore;
             Service = service;
         }
 
@@ -800,22 +889,33 @@ public sealed class TelegramHostedServiceUpdateAdapterTests
 
         public TelegramMessageContextStore MessageContextStore { get; }
 
+        public TelegramDebugTraceStore TraceStore { get; }
+
         public TelegramCodexBotHostedService Service { get; }
 
         public static Harness Create(TelegramBotOptions? options = null)
+            => Create(options, null);
+
+        public static Harness Create(
+            TelegramBotOptions? options,
+            TelegramInputOptions? inputOptions)
         {
             TemporaryDirectory temp = TemporaryDirectory.Create();
             CapturingTelegramUpdateHandler handler = new();
             TestTelegramBotMessageSender sender = new();
             FakeTelegramUpdateFileClient fileClient = new();
             TelegramMessageContextStore messageContextStore = new();
-            TelegramBotStateStore stateStore = new(Microsoft.Extensions.Options.Options.Create(new CodexTelegramOptions
+            IOptions<CodexTelegramOptions> codexOptions = Microsoft.Extensions.Options.Options.Create(new CodexTelegramOptions
             {
                 Workspace = new CodexWorkspaceOptions
                 {
                     DataRoot = temp.Path,
                 },
-            }));
+            });
+            TelegramBotStateStore stateStore = new(codexOptions);
+            TelegramDebugTraceStore traceStore = new(
+                codexOptions,
+                Microsoft.Extensions.Options.Options.Create(new TelegramDebugTraceOptions()));
             options ??= new TelegramBotOptions
             {
                 AllowedUserIds = [1234],
@@ -826,10 +926,12 @@ public sealed class TelegramHostedServiceUpdateAdapterTests
                 sender,
                 stateStore,
                 messageContextStore,
+                traceStore,
                 Microsoft.Extensions.Options.Options.Create(options),
+                Microsoft.Extensions.Options.Options.Create(inputOptions ?? new TelegramInputOptions()),
                 NullLogger<TelegramCodexBotHostedService>.Instance);
 
-            return new Harness(temp, handler, sender, fileClient, stateStore, messageContextStore, service);
+            return new Harness(temp, handler, sender, fileClient, stateStore, messageContextStore, traceStore, service);
         }
 
         public void Dispose()

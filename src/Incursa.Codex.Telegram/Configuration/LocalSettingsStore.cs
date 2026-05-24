@@ -112,6 +112,7 @@ internal sealed class LocalSettingsStore
             GetStringArray("CodexTelegram", "Workspace", "WorkspaceRoots"),
             GetString("CodexTelegram", "Context", "Model"),
             GetString("CodexTelegram", "Context", "ReasoningEffort"),
+            GetString("Codex", "PlanMode", "ReasoningEffort"),
             GetString("CodexTelegram", "Context", "Sandbox"),
             GetString("CodexTelegram", "Context", "ApprovalMode"),
             GetBool("CodexTelegram", "Context", "NetworkAccessEnabled"));
@@ -174,6 +175,9 @@ internal sealed class LocalSettingsStore
 
     public void SetReasoningEffort(string? value)
         => SetString(value, "CodexTelegram", "Context", "ReasoningEffort");
+
+    public void SetPlanModeReasoningEffort(string? value)
+        => SetString(value, "Codex", "PlanMode", "ReasoningEffort");
 
     public void SetSandbox(string? value)
         => SetString(value, "CodexTelegram", "Context", "Sandbox");

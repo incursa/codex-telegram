@@ -68,6 +68,15 @@ internal sealed record CodexSessionModelSettings(
     IReadOnlyList<CodexModelVm> AvailableModels,
     IReadOnlyList<CodexReasoningEffort> AvailableReasoningEfforts);
 
+internal sealed record CodexTurnCloseoutSummary(
+    string TurnId,
+    string Status,
+    DateTimeOffset CompletedAtUtc,
+    bool AssistantTextSeen,
+    bool FinalResponseSeen,
+    bool Warning,
+    string Message);
+
 internal sealed record CodexSessionSummary(
     string Id,
     string Name,
@@ -76,7 +85,8 @@ internal sealed record CodexSessionSummary(
     DateTimeOffset CreatedUtc,
     DateTimeOffset LastActivityUtc,
     int? ExitCode,
-    string? LastError);
+    string? LastError,
+    CodexTurnCloseoutSummary? LastTurnCloseout = null);
 
 internal enum CodexSessionStatus
 {
@@ -95,6 +105,7 @@ internal sealed class CodexGatewaySessionManager : ICodexSessionManager
     private readonly ICodexTurnExecutionCoordinator _turnCoordinator;
     private readonly ICodexThreadManifestStore _manifestStore;
     private readonly ITelegramBotStateStore _stateStore;
+    private readonly ICodexSessionEventLog _eventLog;
     private readonly TelegramBotOptions _options;
     private readonly CodexTelegramOptions _codexOptions;
 
@@ -103,6 +114,7 @@ internal sealed class CodexGatewaySessionManager : ICodexSessionManager
         ICodexTurnExecutionCoordinator turnCoordinator,
         ICodexThreadManifestStore manifestStore,
         ITelegramBotStateStore stateStore,
+        ICodexSessionEventLog eventLog,
         IOptions<TelegramBotOptions> options,
         IOptions<CodexTelegramOptions> codexOptions)
     {
@@ -110,6 +122,7 @@ internal sealed class CodexGatewaySessionManager : ICodexSessionManager
         _turnCoordinator = turnCoordinator;
         _manifestStore = manifestStore;
         _stateStore = stateStore;
+        _eventLog = eventLog;
         _options = options.Value;
         _codexOptions = codexOptions.Value;
     }
@@ -127,7 +140,7 @@ internal sealed class CodexGatewaySessionManager : ICodexSessionManager
 
         foreach (CodexThreadListItemVm thread in threads.Where(thread => !forgotten.Contains(thread.Id)))
         {
-            sessions[thread.Id] = ToSummary(thread, _turnCoordinator.TryGetActiveTurnState(thread.Id));
+            sessions[thread.Id] = ToSummary(thread, _turnCoordinator.TryGetActiveTurnState(thread.Id), _eventLog.GetLastCloseout(thread.Id));
         }
 
         foreach (string trackedSessionId in trackedSessionIds)
@@ -143,7 +156,7 @@ internal sealed class CodexGatewaySessionManager : ICodexSessionManager
                 continue;
             }
 
-            sessions[manifest.ThreadId] = ToSummary(manifest, _turnCoordinator.TryGetActiveTurnState(manifest.ThreadId));
+            sessions[manifest.ThreadId] = ToSummary(manifest, _turnCoordinator.TryGetActiveTurnState(manifest.ThreadId), _eventLog.GetLastCloseout(manifest.ThreadId));
         }
 
         return sessions.Values
@@ -164,7 +177,7 @@ internal sealed class CodexGatewaySessionManager : ICodexSessionManager
 
         CodexThreadListItemVm thread = await _gateway.CreateThreadShellAsync(submission, cancellationToken).ConfigureAwait(false);
         await _stateStore.TrackSessionAsync(thread.Id, cancellationToken).ConfigureAwait(false);
-        return ToSummary(thread, _turnCoordinator.TryGetActiveTurnState(thread.Id));
+        return ToSummary(thread, _turnCoordinator.TryGetActiveTurnState(thread.Id), _eventLog.GetLastCloseout(thread.Id));
     }
 
     public async Task<CodexSessionSummary?> GetSessionAsync(string sessionId, CancellationToken cancellationToken)
@@ -385,12 +398,35 @@ internal sealed class CodexGatewaySessionManager : ICodexSessionManager
             }
         }
 
+        IReadOnlyList<CodexSessionEventRecord> recentEvents = _eventLog.GetRecent(sessionId, Math.Min(lineCount, 25));
+        if (recentEvents.Count > 0)
+        {
+            if (lines.Count > 0)
+            {
+                lines.Add(string.Empty);
+            }
+
+            lines.Add("recent events:");
+            foreach (CodexSessionEventRecord evt in recentEvents)
+            {
+                lines.Add(FormatSessionEvent(evt));
+            }
+        }
+
         if (lines.Count == 0)
         {
             return "No transcript output is available for this session yet.";
         }
 
         return string.Join(Environment.NewLine, lines.TakeLast(lineCount));
+    }
+
+    private static string FormatSessionEvent(CodexSessionEventRecord evt)
+    {
+        string summary = string.IsNullOrWhiteSpace(evt.Summary)
+            ? evt.Title
+            : $"{evt.Title}: {CodexTextFormatting.TruncatePreview(evt.Summary)}";
+        return $"{evt.Timestamp:u} [{evt.Lane}/{evt.Kind}] {summary}";
     }
 
     public async Task StopAsync(string sessionId, CancellationToken cancellationToken)
@@ -449,18 +485,25 @@ internal sealed class CodexGatewaySessionManager : ICodexSessionManager
         await _turnCoordinator.InterruptAsync(activeTurn.ThreadId, activeTurn.TurnId, cancellationToken).ConfigureAwait(false);
     }
 
-    private static CodexSessionSummary ToSummary(CodexThreadListItemVm thread, CodexActiveTurnStateVm? activeTurn)
+    private static CodexSessionSummary ToSummary(
+        CodexThreadListItemVm thread,
+        CodexActiveTurnStateVm? activeTurn,
+        CodexTurnCloseoutSummary? closeout)
         => new(
             thread.Id,
             CodexTextFormatting.ResolveDisplayName(thread.Name, thread.Id),
             ResolveStatus(thread, activeTurn),
             thread.WorkingDirectory,
             thread.CreatedAt,
-            activeTurn?.UpdatedAt ?? thread.UpdatedAt,
+            ResolveLastActivity(activeTurn?.UpdatedAt ?? thread.UpdatedAt, closeout),
             null,
-            null);
+            null,
+            closeout);
 
-    private static CodexSessionSummary ToSummary(CodexThreadManifestRecord manifest, CodexActiveTurnStateVm? activeTurn)
+    private static CodexSessionSummary ToSummary(
+        CodexThreadManifestRecord manifest,
+        CodexActiveTurnStateVm? activeTurn,
+        CodexTurnCloseoutSummary? closeout)
     {
         DateTimeOffset createdAt = manifest.CreatedAt == default
             ? manifest.UpdatedAt
@@ -475,10 +518,16 @@ internal sealed class CodexGatewaySessionManager : ICodexSessionManager
             ResolveStatus(manifest, activeTurn),
             manifest.WorkingDirectory,
             createdAt,
-            activeTurn?.UpdatedAt ?? updatedAt,
+            ResolveLastActivity(activeTurn?.UpdatedAt ?? updatedAt, closeout),
             null,
-            null);
+            null,
+            closeout);
     }
+
+    private static DateTimeOffset ResolveLastActivity(DateTimeOffset source, CodexTurnCloseoutSummary? closeout)
+        => closeout is not null && closeout.CompletedAtUtc > source
+            ? closeout.CompletedAtUtc
+            : source;
 
     private static CodexSessionStatus ResolveStatus(CodexThreadListItemVm thread, CodexActiveTurnStateVm? activeTurn)
     {

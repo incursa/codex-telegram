@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Text;
 using Incursa.Codex.Telegram.Models;
 using Incursa.Codex.Telegram.Options;
+using Incursa.Codex.Telegram.Services;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -30,8 +31,10 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
     private const string TurnStartedType = "turn.started";
     private const string TurnCompletedType = "turn.completed";
     private const string TurnFailedType = "turn.failed";
+    private const string TurnFinalResponseType = "turn.finalResponse";
     private const string TurnCompletionMarker = "~~ turn complete ~~";
     private const string LegacyTurnFinishedMarker = "~~ fin ~~";
+    private const string TurnCompletedMarkerType = "turn.completed.marker";
     private const int InternalProgressMaxCharacters = 2000;
     private const long MaxTelegramPhotoBytes = 10L * 1024L * 1024L;
     private const long MaxTelegramDocumentBytes = 50L * 1024L * 1024L;
@@ -42,7 +45,12 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
     private readonly ITelegramTurnReactionRegistry _reactionRegistry;
     private readonly ITelegramBotMessageSender _messageSender;
     private readonly TelegramOutboundOptions _options;
+    private readonly TelegramOutputOptions _outputOptions;
+    private readonly ITelegramOutputModeState _outputModeState;
+    private readonly ICodexSessionEventLog _eventLog;
+    private readonly ITelegramDebugTraceStore _traceStore;
     private readonly ILogger<TelegramTurnOutputRelay> _logger;
+    private readonly ConcurrentDictionary<TelegramLiveTurnCardKey, TelegramLiveTurnCardState> _liveCards = new();
 
     /// <summary>
     /// Initializes a new instance of the <see cref="TelegramTurnOutputRelay"/> class.
@@ -52,20 +60,32 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
     /// <param name="reactionRegistry">Registry that maps Codex turns back to their source Telegram messages for reactions.</param>
     /// <param name="messageSender">Telegram sender used for best-effort message reactions.</param>
     /// <param name="options">Outbound delivery options.</param>
+    /// <param name="outputOptions">Turn-output presentation and history options.</param>
+    /// <param name="outputModeState">Runtime output presentation mode state.</param>
     /// <param name="logger">Logger for enqueue failures.</param>
+    /// <param name="eventLog">Session event projection updated when assistant text is actually queued to Telegram.</param>
+    /// <param name="traceStore">Optional trace store for turn and delivery diagnostics.</param>
     public TelegramTurnOutputRelay(
         IOutboundTelegramQueue outboundQueue,
         ITelegramThreadFollowRegistry followRegistry,
         ITelegramTurnReactionRegistry reactionRegistry,
         ITelegramBotMessageSender messageSender,
         IOptions<TelegramOutboundOptions> options,
-        ILogger<TelegramTurnOutputRelay> logger)
+        IOptions<TelegramOutputOptions> outputOptions,
+        ITelegramOutputModeState outputModeState,
+        ILogger<TelegramTurnOutputRelay> logger,
+        ICodexSessionEventLog? eventLog = null,
+        ITelegramDebugTraceStore? traceStore = null)
     {
         _outboundQueue = outboundQueue;
         _followRegistry = followRegistry;
         _reactionRegistry = reactionRegistry;
         _messageSender = messageSender;
         _options = options.Value;
+        _outputOptions = outputOptions.Value;
+        _outputModeState = outputModeState;
+        _eventLog = eventLog ?? NullCodexSessionEventLog.Instance;
+        _traceStore = traceStore ?? NullTelegramDebugTraceStore.Instance;
         _logger = logger;
     }
 
@@ -77,6 +97,7 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
             return;
         }
 
+        TelegramOutputPresentationMode presentationMode = _outputModeState.CurrentMode;
         if (IsAgentMessageDelta(entry))
         {
             string? updateText = AppendAgentMessageDelta(
@@ -84,16 +105,32 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
                 entry.Body,
                 _options.AgentMessageUpdateMinChars,
                 _options.AgentMessageUpdateMaxChars);
+            await RecordCodexEventTraceAsync(entry, CodexOutboundMessageKind.Update, isTerminal: false, entry.Body, cancellationToken).ConfigureAwait(false);
+            await PublishLiveCardAsync(
+                entry,
+                CodexOutboundMessageKind.Update,
+                updateText ?? entry.Body,
+                isTerminal: false,
+                force: false,
+                presentationMode,
+                cancellationToken).ConfigureAwait(false);
             if (!string.IsNullOrWhiteSpace(updateText))
             {
-                await PublishTextAsync(entry.ThreadId, entry.TurnId, entry.Type, updateText, CodexOutboundMessageKind.Update, OutboundPriority.High, cancellationToken).ConfigureAwait(false);
+                if (ShouldPublishDurableText(entry, CodexOutboundMessageKind.Update, presentationMode))
+                {
+                    await PublishTextAsync(entry.ThreadId, entry.TurnId, entry.Type, updateText, CodexOutboundMessageKind.Update, OutboundPriority.High, cancellationToken).ConfigureAwait(false);
+                }
+                else
+                {
+                    await RecordSuppressedOutputAsync(entry, CodexOutboundMessageKind.Update, updateText, presentationMode, cancellationToken).ConfigureAwait(false);
+                }
             }
 
             return;
         }
 
         AgentMessageFlush? bufferedAgentMessage = null;
-        if (IsTerminalTurnEvent(entry))
+        if (IsTerminalTurnEvent(entry) || IsFinalResponse(entry))
         {
             if (_agentMessageBuffersByThreadId.TryRemove(entry.ThreadId, out AgentMessageProgressBuffer? buffer))
             {
@@ -105,27 +142,72 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
 
         if (await TryPublishExplicitMediaAsync(entry, cancellationToken).ConfigureAwait(false))
         {
+            await RecordCodexEventTraceAsync(entry, CodexOutboundMessageKind.Update, IsTerminalTurnEvent(entry), entry.Body, cancellationToken).ConfigureAwait(false);
+            await PublishLiveCardAsync(
+                entry,
+                CodexOutboundMessageKind.Update,
+                entry.Body ?? entry.Title,
+                IsTerminalTurnEvent(entry),
+                force: true,
+                presentationMode,
+                cancellationToken).ConfigureAwait(false);
             return;
         }
 
         CodexOutboundMessageKind kind = Classify(entry);
+        bool isTerminal = IsTerminalTurnEvent(entry);
+        string? text = entry.IsInternal && kind == CodexOutboundMessageKind.Progress
+            ? FormatInternalProgressEntry(entry)
+            : FormatEntry(entry, bufferedAgentMessage);
+        bool hasText = !string.IsNullOrWhiteSpace(text);
+        bool shouldPublishDurableText = hasText && ShouldPublishDurableText(entry, kind, presentationMode);
+        bool publishDurableTextBeforeCard = shouldPublishDurableText && IsHighPriorityDurableEvent(entry, kind);
+        await RecordCodexEventTraceAsync(entry, kind, isTerminal, text, cancellationToken).ConfigureAwait(false);
+        if (publishDurableTextBeforeCard)
+        {
+            await PublishTextAsync(entry.ThreadId, entry.TurnId, entry.Type, text!, kind, ResolvePriority(entry, kind), cancellationToken).ConfigureAwait(false);
+        }
+
+        await PublishLiveCardAsync(
+            entry,
+            kind,
+            text,
+            isTerminal,
+            force: isTerminal || IsHighPriorityDurableEvent(entry, kind),
+            presentationMode,
+            cancellationToken).ConfigureAwait(false);
+
         if (entry.IsInternal && kind is not (CodexOutboundMessageKind.Error or CodexOutboundMessageKind.System or CodexOutboundMessageKind.Progress))
         {
             return;
         }
 
-        bool isTerminal = IsTerminalTurnEvent(entry);
-        string? text = entry.IsInternal && kind == CodexOutboundMessageKind.Progress
-            ? FormatInternalProgressEntry(entry)
-            : FormatEntry(entry, bufferedAgentMessage);
-
-        if (!string.IsNullOrWhiteSpace(text))
+        if (hasText && !publishDurableTextBeforeCard)
         {
-            await PublishTextAsync(entry.ThreadId, entry.TurnId, entry.Type, text, kind, ResolvePriority(kind), cancellationToken).ConfigureAwait(false);
+            if (shouldPublishDurableText)
+            {
+                await PublishTextAsync(entry.ThreadId, entry.TurnId, entry.Type, text!, kind, ResolvePriority(entry, kind), cancellationToken).ConfigureAwait(false);
+            }
+            else
+            {
+                await RecordSuppressedOutputAsync(entry, kind, text!, presentationMode, cancellationToken).ConfigureAwait(false);
+            }
         }
 
         if (isTerminal)
         {
+            if (string.Equals(entry.Type, TurnCompletedType, StringComparison.OrdinalIgnoreCase))
+            {
+                await PublishTextAsync(
+                    entry.ThreadId,
+                    entry.TurnId,
+                    TurnCompletedMarkerType,
+                    LegacyTurnFinishedMarker,
+                    CodexOutboundMessageKind.Completion,
+                    OutboundPriority.High,
+                    cancellationToken).ConfigureAwait(false);
+            }
+
             await ReactToTerminalTurnAsync(entry, cancellationToken).ConfigureAwait(false);
         }
     }
@@ -181,6 +263,180 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
         return true;
     }
 
+    private async Task PublishLiveCardAsync(
+        CodexTimelineEntryVm entry,
+        CodexOutboundMessageKind kind,
+        string? text,
+        bool isTerminal,
+        bool force,
+        TelegramOutputPresentationMode presentationMode,
+        CancellationToken cancellationToken)
+    {
+        if (presentationMode == TelegramOutputPresentationMode.Verbose
+            || string.IsNullOrWhiteSpace(entry.ThreadId)
+            || string.IsNullOrWhiteSpace(entry.TurnId))
+        {
+            return;
+        }
+
+        IReadOnlyCollection<TelegramConversationScope> targets = _followRegistry.GetTargets(entry.ThreadId);
+        if (targets.Count == 0)
+        {
+            return;
+        }
+
+        TelegramOutboundQueueStatus outboundStatus;
+        try
+        {
+            outboundStatus = await _outboundQueue.GetStatusAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch
+        {
+            outboundStatus = new TelegramOutboundQueueStatus(0, 0, 0, 0, null, null, null, []);
+        }
+
+        foreach (TelegramConversationScope target in targets)
+        {
+            TelegramLiveTurnCardKey key = new(entry.ThreadId, target);
+            TelegramLiveTurnCardState state = _liveCards.GetOrAdd(key, _ => new TelegramLiveTurnCardState(entry.ThreadId, entry.TurnId, target));
+            TelegramLiveTurnCardSnapshot snapshot = state.Record(entry, kind, text, isTerminal);
+            bool forceEdit = force || snapshot.TurnChanged;
+            DateTimeOffset now = DateTimeOffset.UtcNow;
+            if (!forceEdit && snapshot.LastEditUtc is { } lastEdit && now - lastEdit < TimeSpan.FromSeconds(_outputOptions.LiveCardMinEditIntervalSeconds))
+            {
+                continue;
+            }
+
+            TelegramOutboundDestinationStatus? destination = outboundStatus.Destinations.FirstOrDefault(item =>
+                item.ChatId == target.ChatId
+                && item.MessageThreadId == target.MessageThreadId);
+            string cardText = BuildLiveCardText(snapshot, destination, presentationMode);
+            IReadOnlyList<IReadOnlyList<TelegramReplyButton>> buttons = BuildLiveCardButtons(snapshot);
+            TelegramDebugMessageContext debugContext = new(
+                "turn-live-card",
+                snapshot.ThreadId,
+                snapshot.TurnId,
+                snapshot.TurnId,
+                presentationMode.ToString(),
+                TraceId: _traceStore.TryGetTraceIdForTurn(snapshot.ThreadId, snapshot.TurnId));
+
+            try
+            {
+                int? previousMessageId = snapshot.MessageId;
+                int? messageId = previousMessageId.HasValue
+                    ? await _messageSender.EditTextMessageOrSendReplacementAsync(target, previousMessageId.Value, cardText, buttons, cancellationToken, debugContext).ConfigureAwait(false)
+                    : await _messageSender.SendTextMessageAndGetIdAsync(target, cardText, buttons, cancellationToken, debugContext).ConfigureAwait(false);
+                if (messageId.HasValue)
+                {
+                    state.MarkEdited(messageId.Value, now);
+                    if (previousMessageId.HasValue && previousMessageId.Value != messageId.Value)
+                    {
+                        await RecordLiveCardTraceAsync(snapshot, "telegram.live_card.replaced", messageId.Value, cancellationToken).ConfigureAwait(false);
+                    }
+                }
+                else
+                {
+                    state.MarkEdited(previousMessageId, now);
+                }
+
+                await RecordLiveCardTraceAsync(snapshot, "telegram.live_card.updated", messageId ?? previousMessageId, cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception exception)
+            {
+                _logger.LogWarning(exception, "Failed to update Telegram live turn card for thread {ThreadId} turn {TurnId}.", entry.ThreadId, entry.TurnId);
+                await RecordLiveCardTraceAsync(snapshot, "telegram.live_card.failed", snapshot.MessageId, cancellationToken, exception.Message).ConfigureAwait(false);
+            }
+        }
+    }
+
+    private Task RecordLiveCardTraceAsync(
+        TelegramLiveTurnCardSnapshot snapshot,
+        string kind,
+        int? messageId,
+        CancellationToken cancellationToken,
+        string? error = null)
+    {
+        string? traceId = _traceStore.TryGetTraceIdForTurn(snapshot.ThreadId, snapshot.TurnId);
+        if (string.IsNullOrWhiteSpace(traceId))
+        {
+            return Task.CompletedTask;
+        }
+
+        return _traceStore.RecordAsync(
+            new TelegramDebugTraceEvent(
+                traceId,
+                DateTimeOffset.UtcNow,
+                kind,
+                SessionId: snapshot.ThreadId,
+                TurnId: snapshot.TurnId,
+                ChatId: snapshot.Conversation.ChatId,
+                MessageThreadId: snapshot.Conversation.MessageThreadId,
+                Direction: "telegram",
+                Status: snapshot.StateText,
+                Metadata: new Dictionary<string, string>
+                {
+                    ["messageId"] = messageId?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? string.Empty,
+                    ["updatesCaptured"] = snapshot.UpdateCount.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    ["progressSuppressed"] = snapshot.ProgressCount.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    ["finalResponseCaptured"] = snapshot.FinalResponseCaptured.ToString(),
+                },
+                Error: error,
+                Source: "TelegramLiveCard"),
+            cancellationToken);
+    }
+
+    private static string BuildLiveCardText(
+        TelegramLiveTurnCardSnapshot snapshot,
+        TelegramOutboundDestinationStatus? destination,
+        TelegramOutputPresentationMode presentationMode)
+    {
+        bool draining = destination is not null && (destination.PendingMessageCount > 0 || destination.PendingChunkCount > 0);
+        string stateText = snapshot.TerminalEventSeen
+            ? snapshot.Failed
+                ? "Codex failed"
+                : draining ? "Codex finished; sending remaining Telegram output" : "Codex finished; Telegram delivery complete"
+            : snapshot.FinalResponseCaptured ? "Final response captured" : "Codex is working";
+
+        StringBuilder builder = new();
+        builder.AppendLine(stateText);
+        builder.AppendLine($"Session: {ShortId(snapshot.ThreadId)}");
+        builder.AppendLine($"Mode: {presentationMode}");
+        if (!string.IsNullOrWhiteSpace(snapshot.Activity))
+        {
+            builder.AppendLine($"Activity: {snapshot.Activity}");
+        }
+
+        builder.AppendLine($"Updates: {snapshot.UpdateCount.ToString(System.Globalization.CultureInfo.InvariantCulture)} captured");
+        builder.AppendLine($"Progress: {snapshot.ProgressCount.ToString(System.Globalization.CultureInfo.InvariantCulture)} suppressed");
+        builder.AppendLine($"Artifacts: {snapshot.ArtifactCount.ToString(System.Globalization.CultureInfo.InvariantCulture)}");
+        builder.AppendLine($"Final response: {(snapshot.FinalResponseCaptured ? "captured" : "not yet")}");
+        builder.AppendLine(draining
+            ? $"Telegram delivery: draining ({destination!.PendingMessageCount.ToString(System.Globalization.CultureInfo.InvariantCulture)} messages, {destination.PendingChunkCount.ToString(System.Globalization.CultureInfo.InvariantCulture)} chunks)"
+            : "Telegram delivery: idle");
+        if (!string.IsNullOrWhiteSpace(snapshot.Latest))
+        {
+            builder.AppendLine($"Latest: {snapshot.Latest}");
+        }
+        return builder.ToString().TrimEnd();
+    }
+
+    private static IReadOnlyList<IReadOnlyList<TelegramReplyButton>> BuildLiveCardButtons(TelegramLiveTurnCardSnapshot snapshot)
+        =>
+        [
+            [
+                new TelegramReplyButton("Show Updates", $"turn:updates|{snapshot.ThreadId}"),
+                new TelegramReplyButton("Show Full Turn", $"turn:full|{snapshot.ThreadId}"),
+            ],
+            [
+                new TelegramReplyButton("Trace", $"trace:{snapshot.ThreadId}"),
+                new TelegramReplyButton("Refresh", $"status:{snapshot.ThreadId}"),
+            ],
+        ];
+
     private async Task PublishFileAsync(
         string threadId,
         string? turnId,
@@ -211,6 +467,7 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
                         File = file,
                         CreatedUtc = DateTimeOffset.UtcNow,
                         Priority = OutboundPriority.High,
+                        TraceId = _traceStore.TryGetTraceIdForTurn(threadId, turnId),
                     },
                     cancellationToken).ConfigureAwait(false);
             }
@@ -258,6 +515,8 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
             return;
         }
 
+        bool enqueued = false;
+        DateTimeOffset createdUtc = DateTimeOffset.UtcNow;
         foreach (TelegramConversationScope target in targets)
         {
             try
@@ -272,23 +531,77 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
                         TurnId = string.IsNullOrWhiteSpace(turnId) ? null : turnId,
                         Kind = kind,
                         Text = text,
-                        CreatedUtc = DateTimeOffset.UtcNow,
+                        CreatedUtc = createdUtc,
                         Priority = priority,
+                        TraceId = _traceStore.TryGetTraceIdForTurn(threadId, turnId),
                     },
                     cancellationToken).ConfigureAwait(false);
+                enqueued = true;
             }
             catch (Exception exception)
             {
                 _logger.LogWarning(exception, "Failed to enqueue Codex turn event {EventType} for thread {ThreadId} to Telegram destination {Destination}.", eventType, threadId, target);
             }
         }
+
+        if (enqueued && IsVisibleAssistantOutput(eventType, kind))
+        {
+            _eventLog.RecordVisibleAssistantOutput(threadId, turnId, createdUtc, text);
+        }
     }
 
     private static string? FormatEntry(CodexTimelineEntryVm entry, string? bufferedAgentMessage)
-        => FormatEntry(entry, bufferedAgentMessage is null ? null : new AgentMessageFlush(bufferedAgentMessage, bufferedAgentMessage, false));
+        => FormatEntry(entry, bufferedAgentMessage is null ? null : new AgentMessageFlush(bufferedAgentMessage, null, bufferedAgentMessage, false));
+
+    private Task RecordCodexEventTraceAsync(
+        CodexTimelineEntryVm entry,
+        CodexOutboundMessageKind kind,
+        bool isTerminal,
+        string? text,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(entry.ThreadId) || string.IsNullOrWhiteSpace(entry.TurnId))
+        {
+            return Task.CompletedTask;
+        }
+
+        string? traceId = _traceStore.TryGetTraceIdForTurn(entry.ThreadId, entry.TurnId);
+        if (string.IsNullOrWhiteSpace(traceId))
+        {
+            return Task.CompletedTask;
+        }
+
+        return _traceStore.RecordAsync(
+            new TelegramDebugTraceEvent(
+                traceId,
+                entry.Timestamp == default ? DateTimeOffset.UtcNow : entry.Timestamp,
+                isTerminal ? "codex.terminal" : "codex.event",
+                SessionId: entry.ThreadId,
+                TurnId: entry.TurnId,
+                Direction: "codex",
+                Status: isTerminal ? entry.Type : null,
+                TextLength: text?.Length ?? 0,
+                Metadata: new Dictionary<string, string>
+                {
+                    ["eventType"] = entry.Type,
+                    ["severity"] = entry.Severity,
+                    ["outboundKind"] = kind.ToString(),
+                    ["title"] = entry.Title,
+                    ["bodyLength"] = (entry.Body?.Length ?? 0).ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    ["visibleAssistantOutput"] = IsVisibleAssistantOutput(entry.Type, kind).ToString(),
+                },
+                TextBody: entry.Body ?? text,
+                Source: "CodexNormalizedEvent"),
+            cancellationToken);
+    }
 
     private static string? FormatEntry(CodexTimelineEntryVm entry, AgentMessageFlush? bufferedAgentMessage)
     {
+        if (string.Equals(entry.Type, TurnFinalResponseType, StringComparison.OrdinalIgnoreCase))
+        {
+            return RemoveTurnFinishedMarker(ResolveFinalResponseText(entry, bufferedAgentMessage));
+        }
+
         if (string.Equals(entry.Type, TurnCompletedType, StringComparison.OrdinalIgnoreCase))
         {
             string? finalResponse = RemoveTurnFinishedMarker(ResolveFinalResponseText(entry, bufferedAgentMessage));
@@ -297,7 +610,7 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
                 return finalResponse;
             }
 
-            return entry.Title;
+            return null;
         }
 
         List<string> lines = [entry.Title];
@@ -400,22 +713,35 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
         => string.Equals(entry.Type, TurnCompletedType, StringComparison.OrdinalIgnoreCase)
             || string.Equals(entry.Type, TurnFailedType, StringComparison.OrdinalIgnoreCase);
 
+    private static bool IsFinalResponse(CodexTimelineEntryVm entry)
+        => string.Equals(entry.Type, TurnFinalResponseType, StringComparison.OrdinalIgnoreCase);
+
     private static bool IsItemProgressEntry(CodexTimelineEntryVm entry)
         => entry.Type.StartsWith("item.", StringComparison.OrdinalIgnoreCase);
 
     private static string? ResolveFinalResponseText(CodexTimelineEntryVm entry, AgentMessageFlush? bufferedAgentMessage)
     {
-        if (!string.IsNullOrWhiteSpace(entry.Body))
+        string? entryBody = RemoveTurnFinishedMarker(entry.Body);
+        if (!string.IsNullOrWhiteSpace(entryBody))
         {
-            if (bufferedAgentMessage?.PublishedAny == true && TextEquals(entry.Body, bufferedAgentMessage.FullText))
+            if (bufferedAgentMessage?.PublishedAny == true
+                && !string.IsNullOrWhiteSpace(bufferedAgentMessage.PublishedText))
             {
-                // Avoid repeating a full final response that was already streamed through live deltas.
-                return !string.IsNullOrWhiteSpace(bufferedAgentMessage.UnpublishedText)
-                    ? bufferedAgentMessage.UnpublishedText
-                    : null;
+                string normalizedEntryBody = NormalizeText(entryBody);
+                string normalizedPublishedText = NormalizeText(bufferedAgentMessage.PublishedText);
+                if (normalizedEntryBody.StartsWith(normalizedPublishedText, StringComparison.Ordinal))
+                {
+                    string remainder = normalizedEntryBody[normalizedPublishedText.Length..].TrimStart();
+                    if (string.IsNullOrWhiteSpace(remainder))
+                    {
+                        return bufferedAgentMessage.UnpublishedText;
+                    }
+
+                    return remainder;
+                }
             }
 
-            return entry.Body;
+            return entryBody;
         }
 
         if (!string.IsNullOrWhiteSpace(bufferedAgentMessage?.UnpublishedText))
@@ -461,7 +787,8 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
             return CodexOutboundMessageKind.Error;
         }
 
-        if (string.Equals(entry.Type, TurnCompletedType, StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(entry.Type, TurnCompletedType, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(entry.Type, TurnFinalResponseType, StringComparison.OrdinalIgnoreCase))
         {
             return CodexOutboundMessageKind.Completion;
         }
@@ -474,6 +801,16 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
         return CodexOutboundMessageKind.Update;
     }
 
+    private static OutboundPriority ResolvePriority(CodexTimelineEntryVm entry, CodexOutboundMessageKind kind)
+    {
+        if (IsApprovalNeeded(entry))
+        {
+            return OutboundPriority.Critical;
+        }
+
+        return ResolvePriority(kind);
+    }
+
     private static OutboundPriority ResolvePriority(CodexOutboundMessageKind kind)
         => kind switch
         {
@@ -483,6 +820,138 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
             CodexOutboundMessageKind.Update => OutboundPriority.Normal,
             _ => OutboundPriority.Low,
         };
+
+    private static bool ShouldPublishDurableText(
+        CodexTimelineEntryVm entry,
+        CodexOutboundMessageKind kind,
+        TelegramOutputPresentationMode presentationMode)
+    {
+        if (presentationMode == TelegramOutputPresentationMode.Verbose)
+        {
+            return true;
+        }
+
+        return IsHighPriorityDurableEvent(entry, kind);
+    }
+
+    private static bool IsHighPriorityDurableEvent(CodexTimelineEntryVm entry, CodexOutboundMessageKind kind)
+        => kind is CodexOutboundMessageKind.Completion or CodexOutboundMessageKind.Error or CodexOutboundMessageKind.System
+            || IsApprovalNeeded(entry)
+            || string.Equals(entry.Type, "turn.closeout.warning", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsApprovalNeeded(CodexTimelineEntryVm entry)
+        => ContainsAny(entry.Type, "approval", "plan.question", "plan_input", "input.request")
+            || ContainsAny(entry.Title, "approval", "question", "waiting for input")
+            || ContainsAny(entry.Subtitle, "approval", "question", "waiting for input");
+
+    private static bool ContainsAny(string? value, params string[] needles)
+        => !string.IsNullOrWhiteSpace(value)
+            && needles.Any(needle => value.Contains(needle, StringComparison.OrdinalIgnoreCase));
+
+    private async Task RecordSuppressedOutputAsync(
+        CodexTimelineEntryVm entry,
+        CodexOutboundMessageKind kind,
+        string text,
+        TelegramOutputPresentationMode presentationMode,
+        CancellationToken cancellationToken)
+    {
+        string? traceId = _traceStore.TryGetTraceIdForTurn(entry.ThreadId!, entry.TurnId);
+        if (string.IsNullOrWhiteSpace(traceId))
+        {
+            return;
+        }
+
+        await _traceStore.RecordAsync(
+            new TelegramDebugTraceEvent(
+                traceId,
+                DateTimeOffset.UtcNow,
+                "telegram.output.suppressed",
+                SessionId: entry.ThreadId,
+                TurnId: entry.TurnId,
+                Direction: "telegram",
+                Status: presentationMode.ToString(),
+                TextLength: text.Length,
+                Metadata: new Dictionary<string, string>
+                {
+                    ["eventType"] = entry.Type,
+                    ["outboundKind"] = kind.ToString(),
+                    ["presentationMode"] = presentationMode.ToString(),
+                },
+                Source: "TelegramOutputProjection"),
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    private static bool IsVisibleAssistantOutput(string eventType, CodexOutboundMessageKind kind)
+        => string.Equals(eventType, AgentMessageDeltaType, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(eventType, "turn.assistant.recovered", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(eventType, TurnFinalResponseType, StringComparison.OrdinalIgnoreCase)
+            || (string.Equals(eventType, TurnCompletedType, StringComparison.OrdinalIgnoreCase)
+                && kind == CodexOutboundMessageKind.Completion);
+
+    private static string ShortId(string value)
+        => value.Length <= 8 ? value : value[..8];
+
+    private static string? ResolveVisibleSummary(CodexTimelineEntryVm entry, CodexOutboundMessageKind kind, string? text)
+    {
+        string? candidate = !string.IsNullOrWhiteSpace(text)
+            ? text
+            : !string.IsNullOrWhiteSpace(entry.Body) ? entry.Body : entry.Subtitle ?? entry.Title;
+        if (string.IsNullOrWhiteSpace(candidate))
+        {
+            return null;
+        }
+
+        string normalized = NormalizeText(candidate).Replace("\n", " ", StringComparison.Ordinal);
+        if (kind == CodexOutboundMessageKind.Progress && normalized.StartsWith("Progress:", StringComparison.OrdinalIgnoreCase))
+        {
+            normalized = normalized["Progress:".Length..].Trim();
+        }
+
+        return normalized.Length <= 180 ? normalized : normalized[..177] + "...";
+    }
+
+    private static string? ResolveActivitySummary(CodexTimelineEntryVm entry, CodexOutboundMessageKind kind, string? text)
+    {
+        string? progress = kind == CodexOutboundMessageKind.Progress
+            ? FormatInternalProgressEntry(entry)
+            : null;
+        if (!string.IsNullOrWhiteSpace(progress))
+        {
+            return progress;
+        }
+
+        if (string.Equals(entry.Type, "thread.tokenUsage.updated", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Usage updated";
+        }
+
+        if (ContainsAny(entry.Type, "reasoning")
+            || ContainsAny(entry.Title, "reasoning")
+            || ContainsAny(entry.Subtitle, "reasoning")
+            || ContainsAny(entry.Body, "reasoning"))
+        {
+            return "Thinking";
+        }
+
+        if (ContainsAny(entry.Type, "collabAgentToolCall")
+            || ContainsAny(entry.Title, "collab")
+            || ContainsAny(entry.Subtitle, "collab")
+            || ContainsAny(entry.Body, "collabAgentToolCall"))
+        {
+            return "Tool call";
+        }
+
+        if (string.Equals(entry.Severity, "warning", StringComparison.OrdinalIgnoreCase)
+            || ContainsAny(entry.Type, "warning")
+            || ContainsAny(entry.Title, "warning")
+            || ContainsAny(entry.Subtitle, "warning")
+            || ContainsAny(entry.Body, "warning"))
+        {
+            return "Warning";
+        }
+
+        return null;
+    }
 
     private static bool TryGetMetadata(CodexTimelineEntryVm entry, string key, out string? value)
         => entry.Metadata.TryGetValue(key, out value) && !string.IsNullOrWhiteSpace(value);
@@ -752,18 +1221,157 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
         return Truncate(summary);
     }
 
-    private static bool TextEquals(string left, string right)
-        => string.Equals(NormalizeText(left), NormalizeText(right), StringComparison.Ordinal);
-
     private static string NormalizeText(string text)
         => text.Replace("\r\n", "\n", StringComparison.Ordinal).Trim();
 
-    private sealed record AgentMessageFlush(string FullText, string? UnpublishedText, bool PublishedAny);
+    private sealed record TelegramLiveTurnCardKey(
+        string ThreadId,
+        TelegramConversationScope Conversation);
+
+    private sealed record TelegramLiveTurnCardSnapshot(
+        string ThreadId,
+        string TurnId,
+        TelegramConversationScope Conversation,
+        int? MessageId,
+        DateTimeOffset? LastEditUtc,
+        string StateText,
+        string? Latest,
+        string? Activity,
+        bool TurnChanged,
+        int UpdateCount,
+        int ProgressCount,
+        int ArtifactCount,
+        bool FinalResponseCaptured,
+        bool TerminalEventSeen,
+        bool Failed);
+
+    private sealed class TelegramLiveTurnCardState
+    {
+        private readonly object _gate = new();
+        private string TurnId { get; set; }
+        private string? _latest;
+        private string? _activity;
+        private int? _messageId;
+        private DateTimeOffset? _lastEditUtc;
+        private int _updateCount;
+        private int _progressCount;
+        private int _artifactCount;
+        private bool _finalResponseCaptured;
+        private bool _terminalEventSeen;
+        private bool _failed;
+
+        public TelegramLiveTurnCardState(string threadId, string turnId, TelegramConversationScope conversation)
+        {
+            ThreadId = threadId;
+            TurnId = turnId;
+            Conversation = conversation;
+        }
+
+        private string ThreadId { get; }
+
+        private TelegramConversationScope Conversation { get; }
+
+        public TelegramLiveTurnCardSnapshot Record(
+            CodexTimelineEntryVm entry,
+            CodexOutboundMessageKind kind,
+            string? text,
+            bool terminal)
+        {
+            lock (_gate)
+            {
+                bool turnChanged = !string.Equals(TurnId, entry.TurnId, StringComparison.Ordinal);
+                if (turnChanged)
+                {
+                    TurnId = entry.TurnId!;
+                    _latest = null;
+                    _activity = null;
+                    _updateCount = 0;
+                    _progressCount = 0;
+                    _artifactCount = 0;
+                    _finalResponseCaptured = false;
+                    _terminalEventSeen = false;
+                    _failed = false;
+                }
+
+                if (kind == CodexOutboundMessageKind.Progress || entry.IsInternal)
+                {
+                    _progressCount++;
+                }
+                else if (kind == CodexOutboundMessageKind.Update)
+                {
+                    _updateCount++;
+                }
+
+                if (entry.Metadata.ContainsKey("explicitMediaKind"))
+                {
+                    _artifactCount++;
+                }
+
+                if (IsFinalResponse(entry) || (string.Equals(entry.Type, TurnCompletedType, StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(text)))
+                {
+                    _finalResponseCaptured = true;
+                }
+
+                if (terminal)
+                {
+                    _terminalEventSeen = true;
+                    _activity = null;
+                }
+
+                if (string.Equals(entry.Type, TurnFailedType, StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(entry.Severity, "danger", StringComparison.OrdinalIgnoreCase))
+                {
+                    _failed = true;
+                }
+
+                if (entry.IsInternal)
+                {
+                    _activity = ResolveActivitySummary(entry, kind, text) ?? _activity;
+                }
+                else
+                {
+                    _latest = ResolveVisibleSummary(entry, kind, text) ?? _latest;
+                }
+
+                return Snapshot(turnChanged);
+            }
+        }
+
+        public void MarkEdited(int? messageId, DateTimeOffset editedUtc)
+        {
+            lock (_gate)
+            {
+                _messageId = messageId;
+                _lastEditUtc = editedUtc;
+            }
+        }
+
+        private TelegramLiveTurnCardSnapshot Snapshot(bool turnChanged)
+            => new(
+                ThreadId,
+                TurnId,
+                Conversation,
+                _messageId,
+                _lastEditUtc,
+                _terminalEventSeen ? _failed ? "failed" : "completed" : "working",
+                _latest,
+                _activity,
+                turnChanged,
+                _updateCount,
+                _progressCount,
+                _artifactCount,
+                _finalResponseCaptured,
+                _terminalEventSeen,
+                _failed);
+    }
+
+    private sealed record AgentMessageFlush(string FullText, string? PublishedText, string? UnpublishedText, bool PublishedAny);
 
     private sealed class AgentMessageProgressBuffer
     {
         private readonly object _gate = new();
         private string _text = string.Empty;
+        private string _publishedText = string.Empty;
         private int _publishedLength;
 
         public string? Append(string delta, int minChars, int maxChars)
@@ -780,7 +1388,13 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
 
                 string segment = _text[_publishedLength..boundary];
                 _publishedLength = boundary;
-                return FormatLiveAgentProgress(segment);
+                string? published = FormatLiveAgentProgress(segment);
+                if (!string.IsNullOrWhiteSpace(published))
+                {
+                    _publishedText += published;
+                }
+
+                return published;
             }
         }
 
@@ -864,7 +1478,7 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
                 string unpublished = _publishedLength >= _text.Length
                     ? string.Empty
                     : _text[_publishedLength..];
-                return new AgentMessageFlush(_text, CleanAgentProgress(unpublished), _publishedLength > 0);
+                return new AgentMessageFlush(_text, _publishedText, CleanAgentProgress(unpublished), _publishedLength > 0);
             }
         }
 

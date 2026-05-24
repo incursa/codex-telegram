@@ -20,6 +20,7 @@ namespace Incursa.Codex.Telegram.Configuration;
 /// <param name="WorkspaceRoots">Configured project allowlist roots.</param>
 /// <param name="CodexModel">Default Codex model.</param>
 /// <param name="ReasoningEffort">Default Codex reasoning effort.</param>
+/// <param name="PlanModeReasoningEffort">Default Codex Plan mode reasoning effort.</param>
 /// <param name="Sandbox">Default Codex sandbox mode.</param>
 /// <param name="ApprovalMode">Default Codex approval mode.</param>
 /// <param name="NetworkAccessEnabled">Default Codex network-access setting.</param>
@@ -41,6 +42,7 @@ internal sealed record LocalSettingsSnapshot(
     IReadOnlyList<string> WorkspaceRoots,
     string? CodexModel,
     string? ReasoningEffort,
+    string? PlanModeReasoningEffort,
     string? Sandbox,
     string? ApprovalMode,
     bool? NetworkAccessEnabled);

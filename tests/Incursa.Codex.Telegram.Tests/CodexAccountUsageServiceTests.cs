@@ -17,7 +17,7 @@ public sealed class CodexAccountUsageServiceTests
                 {
                     LimitId = "codex",
                     LimitName = "Codex",
-                    PlanType = "pro",
+                    PlanType = CodexPlanType.Pro,
                     Primary = new CodexRateLimitWindow
                     {
                         UsedPercent = 10,

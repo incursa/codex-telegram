@@ -515,6 +515,7 @@ internal static class InteractiveBootstrapMenu
             Console.WriteLine($"Initialize on start: {FormatEnabled(snapshot.InitializeOnStart)}");
             Console.WriteLine($"Model: {FormatModelValue(snapshot.CodexModel, modelCatalog.Models, "Codex default")}");
             Console.WriteLine($"Thinking: {FormatValue(snapshot.ReasoningEffort, "Codex default")}");
+            Console.WriteLine($"Plan mode thinking: {FormatValue(snapshot.PlanModeReasoningEffort, "Codex default")}");
             Console.WriteLine($"Sandbox: {FormatValue(snapshot.Sandbox, "workspace-write")}");
             Console.WriteLine($"Approval mode: {FormatValue(snapshot.ApprovalMode, "on-request")}");
             Console.WriteLine($"Network access: {FormatNullableBool(snapshot.NetworkAccessEnabled, "Codex default")}");
@@ -524,9 +525,10 @@ internal static class InteractiveBootstrapMenu
             Console.WriteLine("2. Toggle initialize on start");
             Console.WriteLine("3. Pick default model");
             Console.WriteLine("4. Pick default thinking effort");
-            Console.WriteLine("5. Set sandbox");
-            Console.WriteLine("6. Set approval mode");
-            Console.WriteLine("7. Cycle network access default");
+            Console.WriteLine("5. Pick plan-mode thinking effort");
+            Console.WriteLine("6. Set sandbox");
+            Console.WriteLine("7. Set approval mode");
+            Console.WriteLine("8. Cycle network access default");
             Console.WriteLine("B. Back");
             Console.WriteLine();
 
@@ -556,6 +558,10 @@ internal static class InteractiveBootstrapMenu
                     break;
 
                 case "5":
+                    PickPlanModeReasoningEffort(snapshot, store, modelCatalog);
+                    break;
+
+                case "6":
                     SetString(
                         "Sandbox (read-only, workspace-write, danger-full-access)",
                         snapshot.Sandbox,
@@ -564,7 +570,7 @@ internal static class InteractiveBootstrapMenu
                         "workspace-write");
                     break;
 
-                case "6":
+                case "7":
                     SetString(
                         "Approval mode (never, on-request, on-failure, untrusted)",
                         snapshot.ApprovalMode,
@@ -573,7 +579,7 @@ internal static class InteractiveBootstrapMenu
                         "on-request");
                     break;
 
-                case "7":
+                case "8":
                     store.SetNetworkAccessEnabled(NextNullableBool(snapshot.NetworkAccessEnabled));
                     SaveAndPause(store);
                     break;
@@ -661,7 +667,7 @@ internal static class InteractiveBootstrapMenu
         Console.WriteLine($"Default working directory: {FormatValue(snapshot.WorkingDirectory, Environment.CurrentDirectory)}");
         Console.WriteLine($"Telegram polling: {FormatEnabled(snapshot.TelegramEnabled)}, token {FormatConfigured(snapshot.TelegramTokenConfigured)}, admins {snapshot.AllowedUserIds.Count}, chats {snapshot.AllowedChatIds.Count}");
         Console.WriteLine($"OpenAI: key {FormatConfigured(snapshot.OpenAiApiKeyConfigured)}, model {FormatValue(snapshot.OpenAiModel, "whisper-1")}");
-        Console.WriteLine($"Codex: executable {FormatValue(ResolveCodexExecutablePath(snapshot), "PATH")}, model {FormatModelValue(snapshot.CodexModel, modelCatalog.Models, "Codex default")}, thinking {FormatValue(snapshot.ReasoningEffort, "Codex default")}");
+        Console.WriteLine($"Codex: executable {FormatValue(ResolveCodexExecutablePath(snapshot), "PATH")}, model {FormatModelValue(snapshot.CodexModel, modelCatalog.Models, "Codex default")}, thinking {FormatValue(snapshot.ReasoningEffort, "Codex default")}, plan thinking {FormatValue(snapshot.PlanModeReasoningEffort, "Codex default")}");
         Console.WriteLine($"Codex model catalog: {DescribeModelCatalog(modelCatalog)}");
         Console.WriteLine();
 
@@ -892,6 +898,95 @@ internal static class InteractiveBootstrapMenu
                                 "Default thinking effort (minimal, low, medium, high, xhigh)",
                                 snapshot.ReasoningEffort,
                                 store.SetReasoningEffort,
+                                store,
+                                "Codex default");
+                            return;
+                        }
+                    }
+
+                    break;
+            }
+        }
+    }
+
+    private static void PickPlanModeReasoningEffort(LocalSettingsSnapshot snapshot, LocalSettingsStore store, CodexModelCatalog modelCatalog)
+    {
+        IReadOnlyList<CodexModelVm> models = modelCatalog.Models;
+        CodexModelVm? selectedModel = ResolveModel(models, snapshot.CodexModel);
+        IReadOnlyList<string> efforts = BuildReasoningEffortChoices(selectedModel);
+        bool hasModelSpecificEfforts = selectedModel is not null
+            && selectedModel.SupportedEfforts.Any(option => !string.Equals(option.ToString(), "None", StringComparison.OrdinalIgnoreCase));
+
+        while (true)
+        {
+            ClearScreen();
+            Console.WriteLine("Codex Plan Mode Thinking Effort");
+            Console.WriteLine();
+            Console.WriteLine($"Current: {FormatValue(snapshot.PlanModeReasoningEffort, "Codex default")}");
+            Console.WriteLine($"Model: {FormatModelValue(snapshot.CodexModel, models, "Codex default")}");
+            if (selectedModel is null)
+            {
+                Console.WriteLine(modelCatalog.IsLive
+                    ? "Live discovery found models, but the configured model was not matched; showing generic effort choices."
+                    : "Live discovery is unavailable; showing generic effort choices.");
+            }
+            else if (hasModelSpecificEfforts)
+            {
+                Console.WriteLine($"Efforts reported by Codex: {string.Join(", ", efforts)}");
+            }
+            else
+            {
+                Console.WriteLine(modelCatalog.IsLive
+                    ? "Live discovery did not report a model-specific effort list; showing generic effort choices."
+                    : "Curated fallback examples do not report a specific effort list; showing generic effort choices.");
+            }
+
+            Console.WriteLine();
+            Console.WriteLine("1. Use the Codex default");
+            for (int index = 0; index < efforts.Count; index++)
+            {
+                string effort = efforts[index];
+                string label = effort;
+                if (!string.IsNullOrWhiteSpace(snapshot.PlanModeReasoningEffort) && string.Equals(snapshot.PlanModeReasoningEffort, effort, StringComparison.OrdinalIgnoreCase))
+                {
+                    label = "[x] " + label;
+                }
+
+                Console.WriteLine($"{index + 2}. {label}");
+            }
+
+            Console.WriteLine($"{efforts.Count + 2}. Enter a custom value");
+            Console.WriteLine("B. Back");
+            Console.WriteLine();
+
+            string choice = NormalizeChoice(ReadLine("Select: "));
+            switch (choice)
+            {
+                case "1":
+                    store.SetPlanModeReasoningEffort(null);
+                    SaveAndPause(store);
+                    return;
+
+                case "b":
+                case "back":
+                    return;
+
+                default:
+                    if (int.TryParse(choice, NumberStyles.Integer, CultureInfo.InvariantCulture, out int selectedIndex))
+                    {
+                        if (selectedIndex >= 2 && selectedIndex < efforts.Count + 2)
+                        {
+                            store.SetPlanModeReasoningEffort(efforts[selectedIndex - 2]);
+                            SaveAndPause(store);
+                            return;
+                        }
+
+                        if (selectedIndex == efforts.Count + 2)
+                        {
+                            SetString(
+                                "Plan mode thinking effort (minimal, low, medium, high, xhigh)",
+                                snapshot.PlanModeReasoningEffort,
+                                store.SetPlanModeReasoningEffort,
                                 store,
                                 "Codex default");
                             return;

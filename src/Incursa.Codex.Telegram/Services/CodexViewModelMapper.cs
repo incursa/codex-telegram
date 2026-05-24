@@ -108,6 +108,82 @@ internal static class CodexViewModelMapper
         };
     }
 
+    public static CodexTimelineEntryVm ToTimelineEntryVm(CodexTurnEvent evt, string? fallbackThreadId = null)
+    {
+        string type = evt.Kind == CodexTurnEventKind.FinalResponse
+            ? "turn.finalResponse"
+            : string.IsNullOrWhiteSpace(evt.RawEventType)
+                ? evt.Kind.ToString()
+                : evt.RawEventType;
+        string? threadId = ResolveThreadId(evt.ThreadId, fallbackThreadId);
+        string? turnId = string.IsNullOrWhiteSpace(evt.TurnId) ? null : evt.TurnId;
+        Dictionary<string, string?> metadata = evt.Metadata.ToDictionary(
+            pair => pair.Key,
+            pair => pair.Value,
+            StringComparer.Ordinal);
+        metadata["normalizedKind"] = evt.Kind.ToString();
+        metadata["importance"] = evt.Importance.ToString();
+        metadata["sequenceNumber"] = evt.SequenceNumber.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        metadata["contributesToFinalOutput"] = evt.ContributesToFinalOutput.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        metadata["userVisibleByDefault"] = evt.IsUserVisibleByDefault.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        metadata["rawEventType"] = evt.RawEventType;
+
+        if (evt.IsTerminal)
+        {
+            metadata["terminal"] = true.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            metadata["terminalState"] = evt.TerminalState.ToString();
+        }
+
+        string title = evt.Kind switch
+        {
+            CodexTurnEventKind.FinalResponse => "Final response",
+            CodexTurnEventKind.Terminal => evt.Title ?? FormatTerminalTitle(evt.TerminalState),
+            CodexTurnEventKind.AssistantDelta => "Assistant response delta",
+            _ => evt.Title ?? type,
+        };
+
+        string severity = evt.Kind switch
+        {
+            CodexTurnEventKind.Error => "danger",
+            CodexTurnEventKind.ApprovalNeeded => "warning",
+            CodexTurnEventKind.FinalResponse => "success",
+            CodexTurnEventKind.Terminal => evt.TerminalState switch
+            {
+                CodexTurnTerminalState.Completed => "success",
+                CodexTurnTerminalState.None => "neutral",
+                _ => "danger",
+            },
+            _ => evt.Importance switch
+            {
+                CodexTurnEventImportance.Critical => "danger",
+                CodexTurnEventImportance.High => "info",
+                _ => "neutral",
+            },
+        };
+
+        bool isInternal = evt.Kind switch
+        {
+            CodexTurnEventKind.FinalResponse => false,
+            CodexTurnEventKind.Terminal => false,
+            CodexTurnEventKind.Error => false,
+            CodexTurnEventKind.ApprovalNeeded => false,
+            CodexTurnEventKind.Artifact => false,
+            _ => !evt.IsUserVisibleByDefault,
+        };
+
+        return new CodexTimelineEntryVm(
+            type,
+            title,
+            evt.Kind == CodexTurnEventKind.Terminal ? FormatTerminalSubtitle(evt) : null,
+            RepairTextOrNull(evt.Text),
+            severity,
+            evt.Timestamp == default ? DateTimeOffset.UtcNow : evt.Timestamp,
+            threadId,
+            turnId,
+            metadata,
+            isInternal);
+    }
+
     public static CodexTimelineEntryVm ToTurnItemVm(CodexThreadItem item)
         => new(
             item.Type,
@@ -233,9 +309,28 @@ internal static class CodexViewModelMapper
             return RepairTextOrNull(phaseLess.Text);
         }
 
-        CodexThreadItem? lastVisible = items.LastOrDefault(item => item is not CodexUserMessageItem);
-        return lastVisible is null ? null : DescribeItem(lastVisible);
+        return null;
     }
+
+    private static string FormatTerminalTitle(CodexTurnTerminalState terminalState)
+        => terminalState switch
+        {
+            CodexTurnTerminalState.Completed => "Turn completed",
+            CodexTurnTerminalState.Failed => "Turn failed",
+            CodexTurnTerminalState.Interrupted => "Turn interrupted",
+            CodexTurnTerminalState.Incomplete => "Turn stream ended without a terminal event",
+            _ => "Turn terminal state",
+        };
+
+    private static string? FormatTerminalSubtitle(CodexTurnEvent evt)
+        => evt.TerminalState switch
+        {
+            CodexTurnTerminalState.Completed => "Codex terminal event observed.",
+            CodexTurnTerminalState.Failed => "Codex failure terminal event observed.",
+            CodexTurnTerminalState.Interrupted => "Codex turn was interrupted.",
+            CodexTurnTerminalState.Incomplete => "The SDK did not observe turn.completed or turn.failed.",
+            _ => string.IsNullOrWhiteSpace(evt.RawEventType) ? null : evt.RawEventType,
+        };
 
     private static CodexTimelineEntryVm ToTurnTerminalEventVm(
         string type,

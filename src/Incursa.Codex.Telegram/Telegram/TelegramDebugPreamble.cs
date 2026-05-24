@@ -136,6 +136,7 @@ internal sealed class DisabledTelegramDebugPreambleMode : ITelegramDebugPreamble
 /// <param name="Kind">Message kind or event classification.</param>
 /// <param name="MessageId">Queue or source message identifier.</param>
 /// <param name="ItemCount">Number of queued source items represented by this Telegram message.</param>
+/// <param name="TraceId">Debug trace correlation ID associated with the message.</param>
 internal sealed record TelegramDebugMessageContext(
     string Source,
     string? SessionId = null,
@@ -143,7 +144,8 @@ internal sealed record TelegramDebugMessageContext(
     string? ActiveTurnId = null,
     string? Kind = null,
     string? MessageId = null,
-    int? ItemCount = null);
+    int? ItemCount = null,
+    string? TraceId = null);
 
 /// <summary>
 /// Formats compact debug preambles for Telegram text messages.
@@ -188,6 +190,11 @@ internal static class TelegramDebugPreambleFormatter
         if (!string.IsNullOrWhiteSpace(effective.MessageId))
         {
             fields.Add(FormatField("msg", effective.MessageId));
+        }
+
+        if (!string.IsNullOrWhiteSpace(effective.TraceId))
+        {
+            fields.Add(FormatField("trace", effective.TraceId));
         }
 
         return $"[codex-debug {string.Join(' ', fields)}]{Environment.NewLine}{Environment.NewLine}{text.TrimStart()}";

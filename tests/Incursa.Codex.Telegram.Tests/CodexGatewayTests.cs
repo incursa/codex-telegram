@@ -112,6 +112,112 @@ public sealed class CodexGatewayTests
         Assert.Equal("running", execution.Status);
     }
 
+    [Fact]
+    public async Task ListSessionsAsync_UsesCloseoutProjectionForLastActivityAndOrdering()
+    {
+        using TemporaryDirectory dataRoot = TemporaryDirectory.Create();
+        using TemporaryDirectory workspaceRoot = TemporaryDirectory.Create();
+
+        DateTimeOffset olderActivity = new(2026, 5, 13, 1, 0, 0, TimeSpan.Zero);
+        DateTimeOffset normalActivity = new(2026, 5, 13, 2, 0, 0, TimeSpan.Zero);
+        DateTimeOffset closeoutActivity = new(2026, 5, 13, 3, 0, 0, TimeSpan.Zero);
+        CodexTurnCloseoutSummary closeout = new(
+            "turn-1",
+            "completed",
+            closeoutActivity,
+            AssistantTextSeen: true,
+            FinalResponseSeen: false,
+            Warning: true,
+            "Codex streamed assistant text but ended the turn without a final response item.");
+
+        ScriptedCodexRuntimeClient runtimeClient = new();
+        runtimeClient.QueueListThreadsResult(new CodexThreadListResult
+        {
+            Threads =
+            [
+                CreateSummary("thread-normal", "Normal", "Normal preview", workspaceRoot.Path, updatedAt: normalActivity),
+                CreateSummary("thread-closeout", "Closeout", "Closeout preview", workspaceRoot.Path, updatedAt: olderActivity),
+            ],
+        });
+
+        CodexSessionEventLog eventLog = new();
+        eventLog.Record(new CodexSessionEventRecord(
+            "thread-closeout",
+            "turn-1",
+            closeoutActivity,
+            "turn.completed",
+            CodexSessionEventKind.TerminalSuccess,
+            CodexSessionEventLane.State,
+            "Turn completed",
+            closeout.Message,
+            closeout));
+
+        RecordingRuntimeClientFactory runtimeClientFactory = new(runtimeClient);
+        IOptions<CodexTelegramOptions> telegramOptions = CreateTelegramOptions(dataRoot.Path, workspaceRoot.Path);
+
+        await using CodexSessionRuntimeRegistry registry = CreateRegistry(runtimeClientFactory, eventLog);
+        CodexGateway gateway = CreateGateway(telegramOptions, registry);
+        CodexGatewaySessionManager manager = CreateSessionManager(gateway, registry, telegramOptions, eventLog);
+
+        CodexSessionSummary[] sessions = (await manager.ListSessionsAsync(CancellationToken.None)).ToArray();
+
+        Assert.Collection(
+            sessions,
+            session =>
+            {
+                Assert.Equal("thread-closeout", session.Id);
+                Assert.Equal(closeoutActivity, session.LastActivityUtc);
+                Assert.Same(closeout, session.LastTurnCloseout);
+            },
+            session =>
+            {
+                Assert.Equal("thread-normal", session.Id);
+                Assert.Equal(normalActivity, session.LastActivityUtc);
+                Assert.Null(session.LastTurnCloseout);
+            });
+    }
+
+    [Fact]
+    public async Task TailAsync_AppendsRecentSessionEvents()
+    {
+        using TemporaryDirectory dataRoot = TemporaryDirectory.Create();
+        using TemporaryDirectory workspaceRoot = TemporaryDirectory.Create();
+
+        ScriptedCodexRuntimeClient runtimeClient = new();
+        runtimeClient.QueueListThreadsResult(new CodexThreadListResult
+        {
+            Threads =
+            [
+                CreateSummary("thread-1", "Tail", "Tail preview", workspaceRoot.Path),
+            ],
+        });
+        runtimeClient.QueueReadThreadSnapshot("thread-1", CreateSnapshot("thread-1", "Tail", workspaceRoot.Path));
+
+        CodexSessionEventLog eventLog = new();
+        eventLog.Record(new CodexSessionEventRecord(
+            "thread-1",
+            "turn-1",
+            new DateTimeOffset(2026, 5, 13, 4, 0, 0, TimeSpan.Zero),
+            "turn.closeout.warning",
+            CodexSessionEventKind.CloseoutWarning,
+            CodexSessionEventLane.Timeline,
+            "Turn completed without a final response",
+            "Codex streamed assistant text but ended the turn without a final response item."));
+
+        RecordingRuntimeClientFactory runtimeClientFactory = new(runtimeClient);
+        IOptions<CodexTelegramOptions> telegramOptions = CreateTelegramOptions(dataRoot.Path, workspaceRoot.Path);
+
+        await using CodexSessionRuntimeRegistry registry = CreateRegistry(runtimeClientFactory, eventLog);
+        CodexGateway gateway = CreateGateway(telegramOptions, registry);
+        CodexGatewaySessionManager manager = CreateSessionManager(gateway, registry, telegramOptions, eventLog);
+
+        string tail = await manager.TailAsync("thread-1", 20, CancellationToken.None);
+
+        Assert.Contains("recent events:", tail);
+        Assert.Contains("[Timeline/CloseoutWarning]", tail);
+        Assert.Contains("Turn completed without a final response", tail);
+    }
+
     private static CodexGateway CreateGateway(IOptions<CodexTelegramOptions> options, CodexSessionRuntimeRegistry registry)
         => new(
             options,
@@ -119,7 +225,23 @@ public sealed class CodexGatewayTests
             new CodexWorkspaceBrowser(options),
             registry);
 
-    private static CodexSessionRuntimeRegistry CreateRegistry(ICodexRuntimeClientFactory runtimeClientFactory)
+    private static CodexGatewaySessionManager CreateSessionManager(
+        CodexGateway gateway,
+        CodexSessionRuntimeRegistry registry,
+        IOptions<CodexTelegramOptions> telegramOptions,
+        ICodexSessionEventLog eventLog)
+        => new(
+            gateway,
+            registry,
+            new CodexThreadManifestStore(telegramOptions, TimeProvider.System),
+            new TelegramBotStateStore(telegramOptions),
+            eventLog,
+            Microsoft.Extensions.Options.Options.Create(new TelegramBotOptions()),
+            telegramOptions);
+
+    private static CodexSessionRuntimeRegistry CreateRegistry(
+        ICodexRuntimeClientFactory runtimeClientFactory,
+        ICodexSessionEventLog? eventLog = null)
         => new(
             Microsoft.Extensions.Options.Options.Create(new CodexClientOptions
             {
@@ -131,6 +253,7 @@ public sealed class CodexGatewayTests
             new NoopPlanInputCoordinator(),
             new NoopRealtimeBroadcaster(),
             new NoopTurnOutputRelay(),
+            eventLog ?? NullCodexSessionEventLog.Instance,
             new NoopApplicationLifetime(),
             TimeProvider.System,
             NullLoggerFactory.Instance,
@@ -150,7 +273,13 @@ public sealed class CodexGatewayTests
             },
         });
 
-    private static CodexThreadSummary CreateSummary(string threadId, string name, string preview, string path)
+    private static CodexThreadSummary CreateSummary(
+        string threadId,
+        string name,
+        string preview,
+        string path,
+        DateTimeOffset? createdAt = null,
+        DateTimeOffset? updatedAt = null)
         => new()
         {
             Id = threadId,
@@ -161,11 +290,30 @@ public sealed class CodexGatewayTests
                 Type = "idle",
             },
             ModelProvider = "test",
+            CreatedAt = createdAt ?? new DateTimeOffset(2026, 5, 13, 0, 0, 0, TimeSpan.Zero),
+            UpdatedAt = updatedAt ?? new DateTimeOffset(2026, 5, 13, 0, 0, 0, TimeSpan.Zero),
+            Ephemeral = false,
+            Path = path,
+            Source = new CodexSubAgentSessionSource(new CodexOtherSubAgentSource("test")),
+        };
+
+    private static CodexThreadSnapshot CreateSnapshot(string threadId, string name, string path)
+        => new()
+        {
+            Id = threadId,
+            Name = name,
+            Preview = string.Empty,
+            Status = new CodexIdleThreadStatus
+            {
+                Type = "idle",
+            },
+            ModelProvider = "test",
             CreatedAt = new DateTimeOffset(2026, 5, 13, 0, 0, 0, TimeSpan.Zero),
             UpdatedAt = new DateTimeOffset(2026, 5, 13, 0, 0, 0, TimeSpan.Zero),
             Ephemeral = false,
             Path = path,
             Source = new CodexSubAgentSessionSource(new CodexOtherSubAgentSource("test")),
+            Turns = [],
         };
 
     private sealed class RecordingRuntimeClientFactory : ICodexRuntimeClientFactory

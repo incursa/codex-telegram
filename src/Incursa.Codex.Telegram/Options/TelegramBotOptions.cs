@@ -133,7 +133,7 @@ public sealed class TelegramBotOptions
     public string? SessionLogDirectory { get; set; }
 
     /// <summary>
-    /// Gets or sets outbound delivery and batching options for Codex output.
+    /// Gets or sets outbound delivery options for Codex output.
     /// </summary>
     public TelegramOutboundOptions Outbound { get; set; } = new();
 }

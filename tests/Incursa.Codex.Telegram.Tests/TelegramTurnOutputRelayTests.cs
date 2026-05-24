@@ -1,5 +1,7 @@
+using System.Text.Json;
 using Incursa.Codex.Telegram.Models;
 using Incursa.Codex.Telegram.Options;
+using Incursa.Codex.Telegram.Services;
 using Incursa.Codex.Telegram.Telegram;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -58,6 +60,249 @@ public sealed class TelegramTurnOutputRelayTests
         });
         Assert.Contains(queue.Messages, message => message.ChatId == 111 && message.MessageThreadId == 10);
         Assert.Contains(queue.Messages, message => message.ChatId == 222 && message.MessageThreadId is null);
+    }
+
+    [Fact]
+    public async Task PublishTurnEventAsync_LiveCardSuppressesDurableUpdateAndCreatesEditableCard()
+    {
+        FakeOutboundTelegramQueue queue = new();
+        TelegramThreadFollowRegistry followRegistry = FollowThread();
+        TestTelegramBotMessageSender sender = new();
+        TelegramTurnOutputRelay relay = CreateRelay(
+            queue,
+            followRegistry,
+            outputOptions: new TelegramOutputOptions
+            {
+                PresentationMode = TelegramOutputPresentationMode.LiveCard,
+                LiveCardMinEditIntervalSeconds = 1,
+            },
+            messageSender: sender);
+
+        await relay.PublishTurnEventAsync(
+            CreateEntry(type: "item.tool_output", title: "Tool output", subtitle: "dotnet test", body: "Tests passed."),
+            CancellationToken.None);
+
+        Assert.Empty(queue.Messages);
+        SentTelegramMessage card = Assert.Single(sender.Sent);
+        Assert.Contains("Codex is working", card.Text);
+        Assert.Contains("Mode: LiveCard", card.Text);
+        Assert.DoesNotContain("Turn:", card.Text, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Updates: 1 captured", card.Text);
+        Assert.Contains("Progress: 0 suppressed", card.Text);
+        Assert.Contains("Final response: not yet", card.Text);
+        Assert.EndsWith("Latest: Tool output dotnet test Tests passed.", card.Text);
+        Assert.Contains(card.Buttons!.SelectMany(row => row).Select(button => button.Text), text => text == "Show Updates");
+        Assert.Contains(card.Buttons!.SelectMany(row => row).Select(button => button.Text), text => text == "Show Full Turn");
+        Assert.All(card.Buttons!.SelectMany(row => row), button => Assert.True(button.CallbackData.Length <= 64, button.CallbackData));
+    }
+
+    [Fact]
+    public async Task PublishTurnEventAsync_LiveCardShowsFriendlyActivityForInternalReasoningUpdates()
+    {
+        FakeOutboundTelegramQueue queue = new();
+        TelegramThreadFollowRegistry followRegistry = FollowThread();
+        TestTelegramBotMessageSender sender = new();
+        TelegramTurnOutputRelay relay = CreateRelay(
+            queue,
+            followRegistry,
+            outputOptions: new TelegramOutputOptions
+            {
+                PresentationMode = TelegramOutputPresentationMode.LiveCard,
+                LiveCardMinEditIntervalSeconds = 0,
+            },
+            messageSender: sender);
+
+        await relay.PublishTurnEventAsync(
+            CreateEntry(type: "item.tool_output", title: "Tool output", subtitle: "dotnet test", body: "Tests passed."),
+            CancellationToken.None);
+        await relay.PublishTurnEventAsync(
+            CreateEntry(type: "item.reasoning", title: "Item completed", body: "checking", isInternal: true),
+            CancellationToken.None);
+
+        Assert.Empty(queue.Messages);
+        Assert.Single(sender.Sent);
+        Assert.Single(sender.Edited);
+
+        string cardText = sender.Edited.Single().Text;
+        Assert.Contains("Activity: Thinking", cardText);
+        Assert.DoesNotContain("Turn:", cardText, StringComparison.OrdinalIgnoreCase);
+        Assert.EndsWith("Latest: Tool output dotnet test Tests passed.", cardText);
+        Assert.True(cardText.IndexOf("Activity: Thinking", StringComparison.Ordinal) < cardText.LastIndexOf("Latest: Tool output dotnet test Tests passed.", StringComparison.Ordinal));
+        Assert.DoesNotContain("item.reasoning", cardText, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("checking", cardText, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task PublishTurnEventAsync_LiveCardReusesSameMessageAcrossTurnChanges()
+    {
+        FakeOutboundTelegramQueue queue = new();
+        TelegramThreadFollowRegistry followRegistry = FollowThread();
+        TestTelegramBotMessageSender sender = new();
+        TelegramTurnOutputRelay relay = CreateRelay(
+            queue,
+            followRegistry,
+            outputOptions: new TelegramOutputOptions
+            {
+                PresentationMode = TelegramOutputPresentationMode.LiveCard,
+                LiveCardMinEditIntervalSeconds = 0,
+            },
+            messageSender: sender);
+
+        await relay.PublishTurnEventAsync(
+            CreateEntry(type: "item.tool_output", title: "Tool output", body: "First update.", turnId: "turn-1"),
+            CancellationToken.None);
+        await relay.PublishTurnEventAsync(
+            CreateEntry(type: "item.tool_output", title: "Tool output", body: "Second update.", turnId: "turn-2"),
+            CancellationToken.None);
+
+        Assert.Empty(queue.Messages);
+        Assert.Single(sender.Sent);
+        Assert.Single(sender.Edited);
+
+        string cardText = sender.Edited.Single().Text;
+        Assert.Contains("Updates: 1 captured", cardText);
+        Assert.Contains("Latest: Tool output Second update.", cardText);
+        Assert.DoesNotContain("Turn:", cardText, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("First update.", cardText, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task PublishTurnEventAsync_LiveCardStillQueuesFinalResponseAsDurableOutput()
+    {
+        FakeOutboundTelegramQueue queue = new();
+        TelegramThreadFollowRegistry followRegistry = FollowThread();
+        TestTelegramBotMessageSender sender = new();
+        TelegramTurnOutputRelay relay = CreateRelay(
+            queue,
+            followRegistry,
+            outputOptions: new TelegramOutputOptions
+            {
+                PresentationMode = TelegramOutputPresentationMode.LiveCard,
+            },
+            messageSender: sender);
+
+        await relay.PublishTurnEventAsync(
+            CreateEntry(type: "turn.finalResponse", title: "Final response", body: "Here is the answer."),
+            CancellationToken.None);
+
+        OutboundTelegramMessage message = Assert.Single(queue.Messages);
+        Assert.Equal(CodexOutboundMessageKind.Completion, message.Kind);
+        Assert.Equal(OutboundPriority.High, message.Priority);
+        Assert.Equal("Here is the answer.", message.Text);
+        Assert.Single(sender.Sent);
+        Assert.Contains("Final response: captured", sender.Sent.Single().Text);
+    }
+
+    [Fact]
+    public async Task PublishTurnEventAsync_FinalOnlySuppressesUpdatesButQueuesFinalResponse()
+    {
+        FakeOutboundTelegramQueue queue = new();
+        TelegramThreadFollowRegistry followRegistry = FollowThread();
+        TestTelegramBotMessageSender sender = new();
+        TelegramTurnOutputRelay relay = CreateRelay(
+            queue,
+            followRegistry,
+            outputOptions: new TelegramOutputOptions
+            {
+                PresentationMode = TelegramOutputPresentationMode.FinalOnly,
+            },
+            messageSender: sender);
+
+        await relay.PublishTurnEventAsync(
+            CreateEntry(type: "item.tool_output", title: "Tool output", body: "Noisy update."),
+            CancellationToken.None);
+        await relay.PublishTurnEventAsync(
+            CreateEntry(type: "turn.finalResponse", title: "Final response", body: "Final answer."),
+            CancellationToken.None);
+
+        OutboundTelegramMessage message = Assert.Single(queue.Messages);
+        Assert.Equal(CodexOutboundMessageKind.Completion, message.Kind);
+        Assert.Equal("Final answer.", message.Text);
+        Assert.Single(sender.Sent);
+        Assert.Single(sender.Edited);
+        Assert.Contains("Mode: FinalOnly", sender.Edited.Single().Text);
+        Assert.Contains("Final response: captured", sender.Edited.Single().Text);
+    }
+
+    [Fact]
+    public async Task PublishTurnEventAsync_FinalOnlyStillQueuesErrors()
+    {
+        FakeOutboundTelegramQueue queue = new();
+        TelegramThreadFollowRegistry followRegistry = FollowThread();
+        TelegramTurnOutputRelay relay = CreateRelay(
+            queue,
+            followRegistry,
+            outputOptions: new TelegramOutputOptions
+            {
+                PresentationMode = TelegramOutputPresentationMode.FinalOnly,
+            });
+
+        await relay.PublishTurnEventAsync(
+            CreateEntry(type: "turn.failed", title: "Turn failed", body: "Codex crashed.", severity: "danger"),
+            CancellationToken.None);
+
+        OutboundTelegramMessage message = Assert.Single(queue.Messages);
+        Assert.Equal(CodexOutboundMessageKind.Error, message.Kind);
+        Assert.Equal(OutboundPriority.Critical, message.Priority);
+        Assert.Contains("Turn failed", message.Text);
+        Assert.Contains("Codex crashed.", message.Text);
+    }
+
+    [Fact]
+    public async Task PublishTurnEventAsync_LiveCardEditFailureCreatesReplacementAndKeepsFinalDelivery()
+    {
+        FakeOutboundTelegramQueue queue = new();
+        TelegramThreadFollowRegistry followRegistry = FollowThread();
+        TestTelegramBotMessageSender sender = new();
+        TelegramTurnOutputRelay relay = CreateRelay(
+            queue,
+            followRegistry,
+            outputOptions: new TelegramOutputOptions
+            {
+                PresentationMode = TelegramOutputPresentationMode.LiveCard,
+            },
+            messageSender: sender);
+
+        await relay.PublishTurnEventAsync(
+            CreateEntry(type: "item.tool_output", title: "Tool output", body: "Initial update."),
+            CancellationToken.None);
+        sender.EditFailures.Enqueue(new InvalidOperationException("message to edit not found"));
+        await relay.PublishTurnEventAsync(
+            CreateEntry(type: "turn.finalResponse", title: "Final response", body: "Final answer after replacement."),
+            CancellationToken.None);
+
+        Assert.Equal(2, sender.Sent.Count);
+        EditedTelegramMessage edit = Assert.Single(sender.Edited);
+        Assert.Equal(1, edit.MessageId);
+        Assert.Contains("Final response: captured", sender.Sent[1].Text);
+        OutboundTelegramMessage message = Assert.Single(queue.Messages);
+        Assert.Equal(CodexOutboundMessageKind.Completion, message.Kind);
+        Assert.Equal("Final answer after replacement.", message.Text);
+    }
+
+    [Fact]
+    public async Task PublishTurnEventAsync_FullCaptureRecordsNormalizedCodexEventBody()
+    {
+        using TemporaryDirectory dataRoot = TemporaryDirectory.Create();
+        TelegramDebugTraceStore traceStore = CreateTraceStore(dataRoot.Path);
+        traceStore.EnableFullCapture(TimeSpan.FromMinutes(30));
+        string traceId = traceStore.CreateTraceId();
+        await traceStore.BindTurnAsync(traceId, "thread-1", "turn-1", CancellationToken.None);
+        FakeOutboundTelegramQueue queue = new();
+        TelegramThreadFollowRegistry followRegistry = FollowThread();
+        TelegramTurnOutputRelay relay = CreateRelay(queue, followRegistry, traceStore: traceStore);
+
+        await relay.PublishTurnEventAsync(
+            CreateEntry(type: "turn.finalResponse", title: "Final response", body: "captured final answer"),
+            CancellationToken.None);
+
+        string path = traceStore.GetTracePath(traceId, DateTimeOffset.Parse("2026-05-04T00:00:00Z"));
+        string line = Assert.Single(await File.ReadAllLinesAsync(path, CancellationToken.None));
+        using JsonDocument document = JsonDocument.Parse(line);
+        JsonElement root = document.RootElement;
+        Assert.Equal("codex.event", root.GetProperty("kind").GetString());
+        Assert.Equal("CodexNormalizedEvent", root.GetProperty("source").GetString());
+        Assert.Equal("captured final answer", root.GetProperty("textBody").GetString());
     }
 
     [Fact]
@@ -399,7 +644,7 @@ public sealed class TelegramTurnOutputRelayTests
     }
 
     [Fact]
-    public async Task PublishTurnEventAsync_PublishesAgentDeltasAndOnlyUnpublishedCompletionText()
+    public async Task PublishTurnEventAsync_PublishesAgentDeltasAndOnlyUnpublishedFinalResponseText()
     {
         FakeOutboundTelegramQueue queue = new();
         TelegramThreadFollowRegistry followRegistry = FollowThread();
@@ -413,7 +658,7 @@ public sealed class TelegramTurnOutputRelayTests
             CreateEntry(type: "item.agentMessage.delta", title: "Agent", body: "hello world.\nremaining"),
             CancellationToken.None);
         await relay.PublishTurnEventAsync(
-            CreateEntry(type: "turn.completed", title: "Turn completed", body: "hello world.\nremaining", severity: "success"),
+            CreateEntry(type: "turn.finalResponse", title: "Final response", body: "hello world.\nremaining", severity: "success"),
             CancellationToken.None);
 
         Assert.Collection(
@@ -453,7 +698,7 @@ public sealed class TelegramTurnOutputRelayTests
     }
 
     [Fact]
-    public async Task PublishTurnEventAsync_PublishesCompletionTitleWhenAllAgentTextWasAlreadyPublished()
+    public async Task PublishTurnEventAsync_DoesNotPublishCompletionTitleWhenAllAgentTextWasAlreadyPublished()
     {
         FakeOutboundTelegramQueue queue = new();
         TelegramThreadFollowRegistry followRegistry = FollowThread();
@@ -472,10 +717,46 @@ public sealed class TelegramTurnOutputRelayTests
 
         Assert.Collection(
             queue.Messages,
-            message => Assert.Equal("all done.", message.Text),
             message =>
             {
-                Assert.Equal("Turn completed", message.Text);
+                Assert.Equal("all done.", message.Text);
+                Assert.Equal(CodexOutboundMessageKind.Update, message.Kind);
+            },
+            message =>
+            {
+                Assert.Equal("~~ fin ~~", message.Text);
+                Assert.Equal(CodexOutboundMessageKind.Completion, message.Kind);
+            });
+    }
+
+    [Fact]
+    public async Task PublishTurnEventAsync_DoesNotRepeatAlreadyPublishedFinalResponseWithLegacyMarker()
+    {
+        FakeOutboundTelegramQueue queue = new();
+        TelegramThreadFollowRegistry followRegistry = FollowThread();
+        TelegramTurnOutputRelay relay = CreateRelay(queue, followRegistry, new TelegramOutboundOptions
+        {
+            AgentMessageUpdateMinChars = 5,
+            AgentMessageUpdateMaxChars = 20,
+        });
+
+        await relay.PublishTurnEventAsync(
+            CreateEntry(type: "item.agentMessage.delta", title: "Agent", body: "all done.\n"),
+            CancellationToken.None);
+        await relay.PublishTurnEventAsync(
+            CreateEntry(type: "turn.completed", title: "Turn completed", body: "all done.\n\n~~ fin ~~", severity: "success"),
+            CancellationToken.None);
+
+        Assert.Collection(
+            queue.Messages,
+            message =>
+            {
+                Assert.Equal("all done.", message.Text);
+                Assert.Equal(CodexOutboundMessageKind.Update, message.Kind);
+            },
+            message =>
+            {
+                Assert.Equal("~~ fin ~~", message.Text);
                 Assert.Equal(CodexOutboundMessageKind.Completion, message.Kind);
             });
     }
@@ -495,7 +776,23 @@ public sealed class TelegramTurnOutputRelayTests
     }
 
     [Fact]
-    public async Task PublishTurnEventAsync_FlushesUnpublishedAgentTextAndAppendsCompletionTitleWhenCompletionHasNoBody()
+    public async Task PublishTurnEventAsync_RecordsAssistantTextVisibleInTelegram()
+    {
+        FakeOutboundTelegramQueue queue = new();
+        TelegramThreadFollowRegistry followRegistry = FollowThread();
+        CodexSessionEventLog eventLog = new();
+        TelegramTurnOutputRelay relay = CreateRelay(queue, followRegistry, eventLog: eventLog);
+
+        await relay.PublishTurnEventAsync(
+            CreateEntry(type: "item.agentMessage.delta", title: "Agent", body: "visible text.", turnId: "turn-1"),
+            CancellationToken.None);
+
+        Assert.True(eventLog.HasVisibleAssistantOutput("thread-1", "turn-1"));
+        Assert.Contains(eventLog.GetRecent("thread-1", 5), evt => evt.Type == "telegram.assistant.visible");
+    }
+
+    [Fact]
+    public async Task PublishTurnEventAsync_FlushesUnpublishedAgentTextWhenCompletionHasNoBody()
     {
         FakeOutboundTelegramQueue queue = new();
         TelegramThreadFollowRegistry followRegistry = FollowThread();
@@ -512,8 +809,42 @@ public sealed class TelegramTurnOutputRelayTests
             CreateEntry(type: "turn.completed", title: "Turn completed", body: null, severity: "success"),
             CancellationToken.None);
 
-        Assert.Single(queue.Messages);
-        Assert.Equal("short final", queue.Messages[0].Text);
+        Assert.Collection(
+            queue.Messages,
+            message => Assert.Equal("short final", message.Text),
+            message => Assert.Equal("~~ fin ~~", message.Text));
+    }
+
+    [Fact]
+    public async Task PublishTurnEventAsync_DoesNotRepeatPublishedPrefixWhenFinalResponseExtendsStream()
+    {
+        FakeOutboundTelegramQueue queue = new();
+        TelegramThreadFollowRegistry followRegistry = FollowThread();
+        TelegramTurnOutputRelay relay = CreateRelay(queue, followRegistry);
+
+        await relay.PublishTurnEventAsync(
+            CreateEntry(type: "item.agentMessage.delta", title: "Agent", body: "The scaffold is in place."),
+            CancellationToken.None);
+        await relay.PublishTurnEventAsync(
+            CreateEntry(
+                type: "turn.finalResponse",
+                title: "Final response",
+                body: "The scaffold is in place.\n\nI'm validating it now with the solution build/test path before I touch Git history or GitHub, because it's cheaper to fix any project-shape mistakes before the repo is published.",
+                severity: "success"),
+            CancellationToken.None);
+
+        Assert.Collection(
+            queue.Messages,
+            message =>
+            {
+                Assert.Equal(CodexOutboundMessageKind.Update, message.Kind);
+                Assert.Equal("The scaffold is in place.", message.Text);
+            },
+            message =>
+            {
+                Assert.Equal(CodexOutboundMessageKind.Completion, message.Kind);
+                Assert.Equal("I'm validating it now with the solution build/test path before I touch Git history or GitHub, because it's cheaper to fix any project-shape mistakes before the repo is published.", message.Text);
+            });
     }
 
     [Fact]
@@ -527,12 +858,28 @@ public sealed class TelegramTurnOutputRelayTests
             CreateEntry(type: "turn.completed", title: "Turn completed", body: "Finished already" + Environment.NewLine + Environment.NewLine + "~~ fin ~~", severity: "success"),
             CancellationToken.None);
 
-        Assert.Single(queue.Messages);
-        Assert.Equal("Finished already", queue.Messages[0].Text);
+        Assert.Collection(
+            queue.Messages,
+            message => Assert.Equal("Finished already", message.Text),
+            message => Assert.Equal("~~ fin ~~", message.Text));
     }
 
     [Fact]
-    public async Task PublishTurnEventAsync_PublishesCompletionTitleWhenCompletionHasNoBody()
+    public async Task PublishTurnEventAsync_PublishesFinishedMarkerForMarkerOnlyFinalResponse()
+    {
+        FakeOutboundTelegramQueue queue = new();
+        TelegramThreadFollowRegistry followRegistry = FollowThread();
+        TelegramTurnOutputRelay relay = CreateRelay(queue, followRegistry);
+
+        await relay.PublishTurnEventAsync(
+            CreateEntry(type: "turn.completed", title: "Turn completed", body: "~~ fin ~~", severity: "success"),
+            CancellationToken.None);
+
+        Assert.Equal("~~ fin ~~", Assert.Single(queue.Messages).Text);
+    }
+
+    [Fact]
+    public async Task PublishTurnEventAsync_PublishesFinishedMarkerWhenCompletionHasNoBody()
     {
         FakeOutboundTelegramQueue queue = new();
         TelegramThreadFollowRegistry followRegistry = FollowThread();
@@ -542,13 +889,11 @@ public sealed class TelegramTurnOutputRelayTests
             CreateEntry(type: "turn.completed", title: "Turn completed", body: null, severity: "success"),
             CancellationToken.None);
 
-        OutboundTelegramMessage message = Assert.Single(queue.Messages);
-        Assert.Equal("Turn completed", message.Text);
-        Assert.Equal(CodexOutboundMessageKind.Completion, message.Kind);
+        Assert.Equal("~~ fin ~~", Assert.Single(queue.Messages).Text);
     }
 
     [Fact]
-    public async Task PublishTurnEventAsync_PublishesCompletionTitleWhenCompletionHasNoBodyAfterLiveProgress()
+    public async Task PublishTurnEventAsync_DoesNotPublishCompletionTitleWhenCompletionHasNoBodyAfterLiveProgress()
     {
         FakeOutboundTelegramQueue queue = new();
         TelegramThreadFollowRegistry followRegistry = FollowThread();
@@ -565,8 +910,9 @@ public sealed class TelegramTurnOutputRelayTests
             CreateEntry(type: "turn.completed", title: "Turn completed", body: null, severity: "success"),
             CancellationToken.None);
 
-        Assert.Contains(queue.Messages, message => string.Equals(message.Text, "Turn completed", StringComparison.Ordinal));
         Assert.Contains(queue.Messages, message => message.Text.Contains("hello world.", StringComparison.Ordinal));
+        Assert.Contains(queue.Messages, message => string.Equals(message.Text, "~~ fin ~~", StringComparison.Ordinal));
+        Assert.DoesNotContain(queue.Messages, message => string.Equals(message.Text, "Turn completed", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -735,15 +1081,37 @@ public sealed class TelegramTurnOutputRelayTests
         FakeOutboundTelegramQueue queue,
         TelegramThreadFollowRegistry followRegistry,
         TelegramOutboundOptions? options = null,
+        TelegramOutputOptions? outputOptions = null,
+        ITelegramOutputModeState? outputModeState = null,
         ITelegramTurnReactionRegistry? reactionRegistry = null,
-        TestTelegramBotMessageSender? messageSender = null)
+        TestTelegramBotMessageSender? messageSender = null,
+        ICodexSessionEventLog? eventLog = null,
+        ITelegramDebugTraceStore? traceStore = null)
         => new(
             queue,
             followRegistry,
             reactionRegistry ?? new TelegramTurnReactionRegistry(),
             messageSender ?? new TestTelegramBotMessageSender(),
             Microsoft.Extensions.Options.Options.Create(options ?? new TelegramOutboundOptions()),
-            NullLogger<TelegramTurnOutputRelay>.Instance);
+            Microsoft.Extensions.Options.Options.Create(outputOptions ?? new TelegramOutputOptions
+            {
+                PresentationMode = TelegramOutputPresentationMode.Verbose,
+            }),
+            outputModeState ?? new TestTelegramOutputModeState(outputOptions?.PresentationMode ?? TelegramOutputPresentationMode.Verbose),
+            NullLogger<TelegramTurnOutputRelay>.Instance,
+            eventLog,
+            traceStore);
+
+    private static TelegramDebugTraceStore CreateTraceStore(string dataRoot)
+        => new(
+            Microsoft.Extensions.Options.Options.Create(new CodexTelegramOptions
+            {
+                Workspace = new CodexWorkspaceOptions
+                {
+                    DataRoot = dataRoot,
+                },
+            }),
+            Microsoft.Extensions.Options.Options.Create(new TelegramDebugTraceOptions()));
 
     private static TelegramThreadFollowRegistry FollowThread()
     {
@@ -799,13 +1167,33 @@ public sealed class TelegramTurnOutputRelayTests
     {
         public List<TelegramMessageReaction> Reactions { get; } = [];
 
+        public List<SentTelegramMessage> Sent { get; } = [];
+
+        public List<EditedTelegramMessage> Edited { get; } = [];
+
+        public Queue<Exception> EditFailures { get; } = [];
+
         public Task SendTextMessageAsync(
             TelegramConversationScope conversation,
             string text,
             IReadOnlyList<IReadOnlyList<TelegramReplyButton>>? buttons,
             CancellationToken cancellationToken,
             TelegramDebugMessageContext? debugContext = null)
-            => Task.CompletedTask;
+        {
+            Sent.Add(new SentTelegramMessage(conversation, text, buttons));
+            return Task.CompletedTask;
+        }
+
+        public Task<int?> SendTextMessageAndGetIdAsync(
+            TelegramConversationScope conversation,
+            string text,
+            IReadOnlyList<IReadOnlyList<TelegramReplyButton>>? buttons,
+            CancellationToken cancellationToken,
+            TelegramDebugMessageContext? debugContext = null)
+        {
+            Sent.Add(new SentTelegramMessage(conversation, text, buttons));
+            return Task.FromResult<int?>(Sent.Count);
+        }
 
         public Task EditTextMessageAsync(
             TelegramConversationScope conversation,
@@ -814,7 +1202,15 @@ public sealed class TelegramTurnOutputRelayTests
             IReadOnlyList<IReadOnlyList<TelegramReplyButton>>? buttons,
             CancellationToken cancellationToken,
             TelegramDebugMessageContext? debugContext = null)
-            => Task.CompletedTask;
+        {
+            Edited.Add(new EditedTelegramMessage(conversation, messageId, text, buttons));
+            if (EditFailures.TryDequeue(out Exception? exception))
+            {
+                throw exception;
+            }
+
+            return Task.CompletedTask;
+        }
 
         public Task AnswerCallbackQueryAsync(string callbackQueryId, string? text, CancellationToken cancellationToken)
             => Task.CompletedTask;
@@ -831,4 +1227,38 @@ public sealed class TelegramTurnOutputRelayTests
             return Task.CompletedTask;
         }
     }
+
+    private sealed class TestTelegramOutputModeState : ITelegramOutputModeState
+    {
+        public TestTelegramOutputModeState(TelegramOutputPresentationMode mode)
+        {
+            CurrentMode = mode;
+        }
+
+        public TelegramOutputPresentationMode CurrentMode { get; private set; }
+
+        public bool HasRuntimeOverride { get; private set; }
+
+        public void SetRuntimeMode(TelegramOutputPresentationMode mode)
+        {
+            CurrentMode = mode;
+            HasRuntimeOverride = true;
+        }
+
+        public void ClearRuntimeMode()
+        {
+            HasRuntimeOverride = false;
+        }
+    }
+
+    private sealed record SentTelegramMessage(
+        TelegramConversationScope Conversation,
+        string Text,
+        IReadOnlyList<IReadOnlyList<TelegramReplyButton>>? Buttons);
+
+    private sealed record EditedTelegramMessage(
+        TelegramConversationScope Conversation,
+        int MessageId,
+        string Text,
+        IReadOnlyList<IReadOnlyList<TelegramReplyButton>>? Buttons);
 }

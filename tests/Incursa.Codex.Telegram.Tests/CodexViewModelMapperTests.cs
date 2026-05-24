@@ -79,7 +79,7 @@ public sealed class CodexViewModelMapperTests
     }
 
     [Fact]
-    public void ToTurnVm_FallsBackToTheLastVisibleItemWhenNoFinalAnswerExists()
+    public void ToTurnVm_DoesNotUseToolOutputAsFinalResponseWhenNoFinalAnswerExists()
     {
         CodexTurnRecord turn = new()
         {
@@ -99,7 +99,84 @@ public sealed class CodexViewModelMapperTests
 
         CodexTurnVm vm = CodexViewModelMapper.ToTurnVm(turn);
 
-        Assert.Equal("dotnet test [Completed]", vm.FinalResponse);
+        Assert.Null(vm.FinalResponse);
+    }
+
+    [Fact]
+    public void ToTimelineEntryVm_MapsUnknownAgentMessageDelta()
+    {
+        CodexTimelineEntryVm entry = CodexViewModelMapper.ToTimelineEntryVm(
+            new CodexUnknownThreadEvent("item.agentMessage.delta")
+            {
+                RawPayload = new JsonObject
+                {
+                    ["threadId"] = "thread-raw",
+                    ["turnId"] = "turn-raw",
+                    ["delta"] = "streamed assistant text",
+                },
+            });
+
+        Assert.Equal("item.agentMessage.delta", entry.Type);
+        Assert.Equal("thread-raw", entry.ThreadId);
+        Assert.Equal("turn-raw", entry.TurnId);
+        Assert.Equal("streamed assistant text", entry.Body);
+        Assert.True(entry.IsInternal);
+    }
+
+    [Fact]
+    public void ToTimelineEntryVm_MapsNormalizedFinalResponseAsVisibleOutput()
+    {
+        CodexTimelineEntryVm entry = CodexViewModelMapper.ToTimelineEntryVm(
+            new CodexTurnEvent
+            {
+                RawEventType = "turn.completed",
+                Kind = CodexTurnEventKind.FinalResponse,
+                Importance = CodexTurnEventImportance.High,
+                ThreadId = "thread-normalized",
+                TurnId = "turn-normalized",
+                Text = "final answer",
+                Metadata = new Dictionary<string, string?>
+                {
+                    ["source"] = CodexFinalResponseSource.TerminalEvent.ToString(),
+                    ["complete"] = true.ToString(),
+                },
+                ContributesToFinalOutput = true,
+                IsUserVisibleByDefault = true,
+            });
+
+        Assert.Equal("turn.finalResponse", entry.Type);
+        Assert.Equal("Final response", entry.Title);
+        Assert.Equal("final answer", entry.Body);
+        Assert.Equal("thread-normalized", entry.ThreadId);
+        Assert.Equal("turn-normalized", entry.TurnId);
+        Assert.Equal("FinalResponse", entry.Metadata["normalizedKind"]);
+        Assert.Equal("turn.completed", entry.Metadata["rawEventType"]);
+        Assert.False(entry.IsInternal);
+    }
+
+    [Fact]
+    public void ToTimelineEntryVm_MapsIncompleteNormalizedTerminalAsLifecycleState()
+    {
+        CodexTimelineEntryVm entry = CodexViewModelMapper.ToTimelineEntryVm(
+            new CodexTurnEvent
+            {
+                RawEventType = "turn.stream.ended",
+                Kind = CodexTurnEventKind.Terminal,
+                Importance = CodexTurnEventImportance.Critical,
+                ThreadId = "thread-normalized",
+                TurnId = "turn-normalized",
+                Text = "The SDK did not observe turn.completed or turn.failed.",
+                IsTerminal = true,
+                TerminalState = CodexTurnTerminalState.Incomplete,
+                IsUserVisibleByDefault = true,
+            });
+
+        Assert.Equal("turn.stream.ended", entry.Type);
+        Assert.Equal("Turn stream ended without a terminal event", entry.Title);
+        Assert.Equal("danger", entry.Severity);
+        Assert.True(bool.Parse(entry.Metadata["terminal"]!));
+        Assert.Equal("Incomplete", entry.Metadata["terminalState"]);
+        Assert.False(entry.IsInternal);
     }
 
     [Fact]

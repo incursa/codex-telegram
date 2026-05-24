@@ -18,6 +18,7 @@ internal sealed class CodexSessionRuntimeRegistry : ICodexTurnExecutionCoordinat
     private readonly ITelegramPlanInputCoordinator _planInputCoordinator;
     private readonly ICodexRealtimeBroadcaster _broadcaster;
     private readonly ITelegramTurnOutputRelay _telegramTurnOutputRelay;
+    private readonly ICodexSessionEventLog _eventLog;
     private readonly IHostApplicationLifetime _applicationLifetime;
     private readonly TimeProvider _timeProvider;
     private readonly ILoggerFactory _loggerFactory;
@@ -30,6 +31,7 @@ internal sealed class CodexSessionRuntimeRegistry : ICodexTurnExecutionCoordinat
         ITelegramPlanInputCoordinator planInputCoordinator,
         ICodexRealtimeBroadcaster broadcaster,
         ITelegramTurnOutputRelay telegramTurnOutputRelay,
+        ICodexSessionEventLog eventLog,
         IHostApplicationLifetime applicationLifetime,
         TimeProvider timeProvider,
         ILoggerFactory loggerFactory,
@@ -39,6 +41,7 @@ internal sealed class CodexSessionRuntimeRegistry : ICodexTurnExecutionCoordinat
         _planInputCoordinator = planInputCoordinator;
         _broadcaster = broadcaster;
         _telegramTurnOutputRelay = telegramTurnOutputRelay;
+        _eventLog = eventLog;
         _applicationLifetime = applicationLifetime;
         _timeProvider = timeProvider;
         _loggerFactory = loggerFactory;
@@ -168,7 +171,8 @@ internal sealed class CodexSessionRuntimeRegistry : ICodexTurnExecutionCoordinat
                 _applicationLifetime,
                 _timeProvider,
                 _terminalEventHoldDuration,
-                _loggerFactory.CreateLogger<CodexTurnExecutionCoordinator>()),
+                _loggerFactory.CreateLogger<CodexTurnExecutionCoordinator>(),
+                eventLog: _eventLog),
             _broadcaster,
             broadcastRuntimeState);
 
@@ -176,7 +180,7 @@ internal sealed class CodexSessionRuntimeRegistry : ICodexTurnExecutionCoordinat
     {
         CodexClientOptions source = _clientOptions.Value;
         CodexApprovalHandler? configuredHandler = source.ApprovalHandler;
-        return new CodexClientOptions
+        CodexClientOptions destination = new CodexClientOptions
         {
             BackendSelection = source.BackendSelection,
             CodexPathOverride = source.CodexPathOverride,
@@ -191,6 +195,9 @@ internal sealed class CodexSessionRuntimeRegistry : ICodexTurnExecutionCoordinat
                 ?? configuredHandler?.Invoke(action, request)
                 ?? CreateDefaultApprovalResponse(action),
         };
+
+        CodexClientOptionsPlanModeBridge.CopyPlanMode(source, destination);
+        return destination;
     }
 
     private static JsonObject? CreateDefaultApprovalResponse(string action)

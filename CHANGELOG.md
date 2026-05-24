@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Stopped publishing bare successful `Turn completed` messages; successful terminal events now only flush real assistant text.
+- Tightened empty-output retry handling so turns that complete without assistant response text retry instead of treating tool, background-agent, or marker-only output as the response.
+- Added an in-memory session event projection so `/status` and `/tail` can show the last turn closeout, including a warning when assistant text reached Telegram but Codex ended without a final response item.
+- Added Telegram input bundles with editable draft cards for active-turn and media input, including send, queue, steer, cancel, and trace buttons.
+- Added Telegram album/media-group debouncing so multiple images/documents from the same album are captured as one bundle candidate.
+- Added local trace diagnostics for Telegram inbound, bundle, Codex turn, and outbound delivery state so cut-off output can be separated into Codex terminal, queue, compaction, rate-limit, timeout, and send-failure causes.
+- Changed `/status` into a session status card that separates Codex completion from Telegram delivery drain and exposes trace/debug buttons.
+- Hardened editable card recovery, durable queued/bundled attachment storage, real bundle clearing, and missing-attachment diagnostics.
+
 ## 1.0.15 - 2026-05-10
 
 - Added `/goal` controls for active Telegram Codex sessions, including show, set, token budget, pause, resume, complete, and clear actions.

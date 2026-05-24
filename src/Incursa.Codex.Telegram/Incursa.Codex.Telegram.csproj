@@ -20,8 +20,15 @@
     <DebugType Condition="'$(Configuration)' == 'Release'">embedded</DebugType>
   </PropertyGroup>
 
+  <ItemGroup Condition="Exists('..\\..\\codex-dotnet\\src\\Incursa.OpenAI.Codex\\Incursa.OpenAI.Codex.csproj')">
+    <ProjectReference Include="..\\..\\codex-dotnet\\src\\Incursa.OpenAI.Codex\\Incursa.OpenAI.Codex.csproj" />
+  </ItemGroup>
+
+  <ItemGroup Condition="!Exists('..\\..\\codex-dotnet\\src\\Incursa.OpenAI.Codex\\Incursa.OpenAI.Codex.csproj')">
+    <PackageReference Include="Incursa.OpenAI.Codex" Version="2.1.0" />
+  </ItemGroup>
+
   <ItemGroup>
-    <PackageReference Include="Incursa.OpenAI.Codex" Version="1.3.0" />
     <PackageReference Include="Microsoft.Extensions.Configuration.UserSecrets" Version="10.0.7" />
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.7" />
     <PackageReference Include="Microsoft.Extensions.Http" Version="10.0.7" />

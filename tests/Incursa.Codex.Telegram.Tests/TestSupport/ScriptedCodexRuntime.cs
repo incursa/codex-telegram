@@ -1,4 +1,5 @@
 using System.Runtime.CompilerServices;
+using System.Text;
 using System.Text.Json.Nodes;
 using Incursa.Codex.Telegram.Services;
 using Incursa.OpenAI.Codex;
@@ -181,6 +182,160 @@ internal sealed class ScriptedCodexTurnHandle : ICodexTurnHandle
         }
     }
 
+    public async IAsyncEnumerable<CodexTurnEvent> StreamNormalizedAsync([EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        int sequenceNumber = 0;
+        ScriptedNormalizationState normalizationState = new();
+        StringBuilder assistantDeltas = new();
+
+        CodexTurnEvent CreateEvent(
+            string rawEventType,
+            CodexTurnEventKind kind,
+            string? title,
+            string? text,
+            IReadOnlyDictionary<string, string?>? metadata = null,
+            CodexTurnEventImportance importance = CodexTurnEventImportance.Normal,
+            bool isTerminal = false,
+            CodexTurnTerminalState terminalState = CodexTurnTerminalState.None,
+            bool contributesToFinalOutput = false,
+            bool isUserVisibleByDefault = false)
+            => new()
+            {
+                SequenceNumber = ++sequenceNumber,
+                ThreadId = _script.ThreadId,
+                TurnId = _script.TurnId,
+                RawEventType = rawEventType,
+                Kind = kind,
+                Importance = importance,
+                Timestamp = DateTimeOffset.UtcNow,
+                Title = title,
+                Text = text,
+                Metadata = metadata ?? new Dictionary<string, string?>(StringComparer.Ordinal),
+                IsTerminal = isTerminal,
+                TerminalState = terminalState,
+                ContributesToFinalOutput = contributesToFinalOutput,
+                IsUserVisibleByDefault = isUserVisibleByDefault,
+            };
+
+        try
+        {
+            if (_script.StartDelay is { } startDelay)
+            {
+                await Task.Delay(startDelay, cancellationToken).ConfigureAwait(false);
+            }
+
+            foreach (CodexThreadEvent evt in _script.Events)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                foreach (CodexTurnEvent normalized in Normalize(evt, CreateEvent, assistantDeltas, normalizationState))
+                {
+                    yield return normalized;
+                }
+
+                if (_script.InterEventDelay is { } interEventDelay)
+                {
+                    await Task.Delay(interEventDelay, cancellationToken).ConfigureAwait(false);
+                }
+            }
+
+            if (_script.CompletionGate is not null)
+            {
+                await _script.CompletionGate.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+            }
+
+            if (_script.FaultException is not null)
+            {
+                throw _script.FaultException;
+            }
+
+            if (_script.EmitAutoCompletion)
+            {
+                foreach (CodexTurnEvent normalized in Normalize(_script.ToCompletedEvent(), CreateEvent, assistantDeltas, normalizationState))
+                {
+                    yield return normalized;
+                }
+            }
+        }
+        finally
+        {
+            _script.Finished.TrySetResult(true);
+        }
+
+        if (!normalizationState.TerminalSeen)
+        {
+            if (assistantDeltas.Length > 0)
+            {
+                yield return CreateEvent(
+                    "turn.stream.ended",
+                    CodexTurnEventKind.FinalResponse,
+                    "Final response",
+                    assistantDeltas.ToString(),
+                    new Dictionary<string, string?>
+                    {
+                        ["source"] = CodexFinalResponseSource.AssistantDelta.ToString(),
+                        ["complete"] = false.ToString(),
+                    },
+                    CodexTurnEventImportance.High,
+                    contributesToFinalOutput: true,
+                    isUserVisibleByDefault: true);
+            }
+
+            yield return CreateEvent(
+                "turn.stream.ended",
+                CodexTurnEventKind.Terminal,
+                "Turn stream ended without a terminal event",
+                "The SDK did not observe turn.completed or turn.failed.",
+                new Dictionary<string, string?>
+                {
+                    ["status"] = CodexTurnTerminalState.Incomplete.ToString(),
+                },
+                CodexTurnEventImportance.Critical,
+                isTerminal: true,
+                terminalState: CodexTurnTerminalState.Incomplete,
+                isUserVisibleByDefault: true);
+        }
+    }
+
+    public async Task<CodexTurnResult> RunToResultAsync(CancellationToken cancellationToken)
+    {
+        CodexTurnResult result = new()
+        {
+            ThreadId = ThreadId ?? string.Empty,
+            TurnId = Id,
+            TerminalState = CodexTurnTerminalState.Incomplete,
+            StartedUtc = DateTimeOffset.UtcNow,
+        };
+
+        await foreach (CodexTurnEvent evt in StreamNormalizedAsync(cancellationToken).ConfigureAwait(false))
+        {
+            if (evt.Kind == CodexTurnEventKind.FinalResponse)
+            {
+                result = result with
+                {
+                    FinalResponseText = evt.Text,
+                    FinalResponseSource = CodexFinalResponseSource.CompletedItem,
+                    FinalResponseComplete = evt.Metadata.TryGetValue("complete", out string? complete)
+                        && bool.TryParse(complete, out bool completeValue)
+                        && completeValue,
+                    FinalResponseCharCount = evt.Text?.Length ?? 0,
+                };
+            }
+
+            if (evt.IsTerminal)
+            {
+                result = result with
+                {
+                    TerminalState = evt.TerminalState,
+                    TerminalEventSeen = evt.TerminalState != CodexTurnTerminalState.Incomplete,
+                    TerminalEventType = evt.RawEventType,
+                    CompletedUtc = evt.Timestamp,
+                };
+            }
+        }
+
+        return result;
+    }
+
     public Task SteerAsync(IReadOnlyList<CodexInputItem> input, CancellationToken cancellationToken)
     {
         _ = cancellationToken;
@@ -193,6 +348,225 @@ internal sealed class ScriptedCodexTurnHandle : ICodexTurnHandle
         _ = cancellationToken;
         _script.RecordInterrupt();
         return Task.CompletedTask;
+    }
+
+    private static IEnumerable<CodexTurnEvent> Normalize(
+        CodexThreadEvent evt,
+        Func<string, CodexTurnEventKind, string?, string?, IReadOnlyDictionary<string, string?>?, CodexTurnEventImportance, bool, CodexTurnTerminalState, bool, bool, CodexTurnEvent> createEvent,
+        StringBuilder assistantDeltas,
+        ScriptedNormalizationState state)
+    {
+        switch (evt)
+        {
+            case CodexTurnStartedEvent started:
+                yield return createEvent(
+                    evt.Type,
+                    CodexTurnEventKind.Activity,
+                    "Turn started",
+                    started.Turn.Id,
+                    new Dictionary<string, string?> { ["status"] = started.Turn.Status.ToString() },
+                    CodexTurnEventImportance.Normal,
+                    false,
+                    CodexTurnTerminalState.None,
+                    false,
+                    false);
+                break;
+
+            case CodexUnknownThreadEvent unknown when string.Equals(unknown.UnknownType, "item.agentMessage.delta", StringComparison.OrdinalIgnoreCase):
+                string? delta = GetString(unknown.RawPayload, "delta")
+                    ?? GetString(unknown.RawPayload, "text")
+                    ?? GetString(unknown.RawPayload, "content");
+                if (!string.IsNullOrEmpty(delta))
+                {
+                    assistantDeltas.Append(delta);
+                    yield return createEvent(
+                        unknown.UnknownType,
+                        CodexTurnEventKind.AssistantDelta,
+                        "Assistant response delta",
+                        delta,
+                        new Dictionary<string, string?>(),
+                        CodexTurnEventImportance.High,
+                        false,
+                        CodexTurnTerminalState.None,
+                        true,
+                        true);
+                }
+
+                break;
+
+            case CodexThreadErrorEvent threadError:
+                yield return createEvent(
+                    evt.Type,
+                    CodexTurnEventKind.Error,
+                    "Thread error",
+                    threadError.Error.Message,
+                    new Dictionary<string, string?> { ["willRetry"] = threadError.WillRetry.ToString() },
+                    CodexTurnEventImportance.Critical,
+                    false,
+                    CodexTurnTerminalState.None,
+                    false,
+                    true);
+                break;
+
+            case CodexTurnPlanUpdatedEvent plan:
+                yield return createEvent(
+                    evt.Type,
+                    CodexTurnEventKind.Activity,
+                    "Plan updated",
+                    plan.Explanation,
+                    new Dictionary<string, string?> { ["planStepCount"] = plan.Plan.Count.ToString() },
+                    CodexTurnEventImportance.Normal,
+                    false,
+                    CodexTurnTerminalState.None,
+                    false,
+                    true);
+                break;
+
+            case CodexItemStartedEvent itemStarted:
+                yield return NormalizeItemEvent(evt.Type, itemStarted.Item, createEvent);
+                break;
+
+            case CodexItemUpdatedEvent itemUpdated:
+                yield return NormalizeItemEvent(evt.Type, itemUpdated.Item, createEvent);
+                break;
+
+            case CodexItemCompletedEvent itemCompleted:
+                if (itemCompleted.Item is CodexAgentMessageItem agentMessage
+                    && agentMessage.Phase == CodexMessagePhase.FinalAnswer
+                    && !string.IsNullOrWhiteSpace(agentMessage.Text))
+                {
+                    yield return CreateFinalResponse(agentMessage.Text, CodexFinalResponseSource.CompletedItem, complete: false, createEvent);
+                }
+                else
+                {
+                    yield return NormalizeItemEvent(evt.Type, itemCompleted.Item, createEvent);
+                }
+
+                break;
+
+            case CodexTurnCompletedEvent completed:
+                state.TerminalSeen = true;
+                string? finalResponse = SelectFinalResponse(completed.Turn.Items);
+                if (string.IsNullOrWhiteSpace(finalResponse) && assistantDeltas.Length > 0)
+                {
+                    finalResponse = assistantDeltas.ToString();
+                }
+
+                if (!string.IsNullOrWhiteSpace(finalResponse))
+                {
+                    yield return CreateFinalResponse(finalResponse, CodexFinalResponseSource.TerminalEvent, complete: true, createEvent);
+                }
+
+                yield return createEvent(
+                    evt.Type,
+                    CodexTurnEventKind.Terminal,
+                    "Turn completed",
+                    completed.Turn.Error?.Message,
+                    new Dictionary<string, string?> { ["status"] = completed.Turn.Status.ToString() },
+                    CodexTurnEventImportance.High,
+                    true,
+                    CodexTurnTerminalState.Completed,
+                    false,
+                    true);
+                break;
+
+            case CodexTurnFailedEvent failed:
+                state.TerminalSeen = true;
+                yield return createEvent(
+                    evt.Type,
+                    CodexTurnEventKind.Error,
+                    "Turn failed",
+                    failed.Turn.Error?.Message,
+                    new Dictionary<string, string?>(),
+                    CodexTurnEventImportance.Critical,
+                    false,
+                    CodexTurnTerminalState.None,
+                    false,
+                    true);
+                yield return createEvent(
+                    evt.Type,
+                    CodexTurnEventKind.Terminal,
+                    "Turn failed",
+                    failed.Turn.Error?.Message,
+                    new Dictionary<string, string?> { ["status"] = failed.Turn.Status.ToString() },
+                    CodexTurnEventImportance.Critical,
+                    true,
+                    CodexTurnTerminalState.Failed,
+                    false,
+                    true);
+                break;
+        }
+    }
+
+    private static CodexTurnEvent NormalizeItemEvent(
+        string rawType,
+        CodexThreadItem item,
+        Func<string, CodexTurnEventKind, string?, string?, IReadOnlyDictionary<string, string?>?, CodexTurnEventImportance, bool, CodexTurnTerminalState, bool, bool, CodexTurnEvent> createEvent)
+        => createEvent(
+            rawType,
+            item is CodexImageViewItem or CodexImageGenerationItem ? CodexTurnEventKind.Artifact : CodexTurnEventKind.Progress,
+            $"Item: {item.Type}",
+            item switch
+            {
+                CodexCommandExecutionItem command => command.Command,
+                CodexContextCompactionItem => "Context compaction",
+                CodexAgentMessageItem message => message.Text,
+                _ => null,
+            },
+            item switch
+            {
+                CodexCommandExecutionItem command => new Dictionary<string, string?>
+                {
+                    ["command"] = command.Command,
+                    ["status"] = command.Status.ToString(),
+                    ["exitCode"] = command.ExitCode?.ToString(),
+                    ["durationMs"] = command.DurationMs?.ToString(),
+                },
+                _ => new Dictionary<string, string?>(),
+            },
+            CodexTurnEventImportance.Low,
+            false,
+            CodexTurnTerminalState.None,
+            false,
+            false);
+
+    private static CodexTurnEvent CreateFinalResponse(
+        string text,
+        CodexFinalResponseSource source,
+        bool complete,
+        Func<string, CodexTurnEventKind, string?, string?, IReadOnlyDictionary<string, string?>?, CodexTurnEventImportance, bool, CodexTurnTerminalState, bool, bool, CodexTurnEvent> createEvent)
+        => createEvent(
+            "turn.finalResponse",
+            CodexTurnEventKind.FinalResponse,
+            "Final response",
+            text,
+            new Dictionary<string, string?>
+            {
+                ["source"] = source.ToString(),
+                ["complete"] = complete.ToString(),
+            },
+            CodexTurnEventImportance.High,
+            false,
+            CodexTurnTerminalState.None,
+            true,
+            true);
+
+    private static string? SelectFinalResponse(IReadOnlyList<CodexThreadItem> items)
+        => items.OfType<CodexAgentMessageItem>().LastOrDefault(item => item.Phase == CodexMessagePhase.FinalAnswer && !string.IsNullOrWhiteSpace(item.Text))?.Text
+            ?? items.OfType<CodexAgentMessageItem>().LastOrDefault(item => item.Phase is null && !string.IsNullOrWhiteSpace(item.Text))?.Text;
+
+    private static string? GetString(JsonObject? payload, string name)
+        => payload is not null
+            && payload.TryGetPropertyValue(name, out JsonNode? node)
+            && node is JsonValue value
+            && value.TryGetValue(out string? text)
+            && !string.IsNullOrEmpty(text)
+                ? text
+                : null;
+
+    private sealed class ScriptedNormalizationState
+    {
+        public bool TerminalSeen { get; set; }
     }
 }
 

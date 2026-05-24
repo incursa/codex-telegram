@@ -151,7 +151,7 @@ The menu has sections for:
 
 1. Telegram and admin allowlists.
 2. OpenAI transcription.
-3. Codex runtime.
+3. Codex runtime, including separate plan-mode thinking defaults.
 4. Workspaces.
 
 The Workspaces section is where you tell the bot which local folders are safe for project selection. Use a parent source directory such as `C:\src`, `~/src`, or `/Users/you/src` when most repositories live together; use specific repository paths when you want tighter scope. The local data root is separate and stores the persisted project catalog, conversation bindings, queued prompts, and thread manifests.
@@ -220,7 +220,10 @@ If you prefer to edit JSON by hand, this is a good starting point:
 ```json
 {
   "Codex": {
-    "CodexPathOverride": ""
+    "CodexPathOverride": "",
+    "PlanMode": {
+      "ReasoningEffort": ""
+    }
   },
   "TelegramBot": {
     "Enabled": true,
@@ -245,7 +248,8 @@ If you prefer to edit JSON by hand, this is a good starting point:
     "Context": {
       "WorkingDirectory": "C:\\src\\your-repo",
       "Sandbox": "workspace-write",
-      "ApprovalMode": "on-request"
+      "ApprovalMode": "on-request",
+      "ReasoningEffort": ""
     },
     "Workspace": {
       "WorkspaceRoots": [
@@ -273,8 +277,10 @@ Configuration behavior:
 12. `CodexTelegram:InitializeOnStart` controls whether the Codex gateway initializes during startup. Leave it `true` for normal bot use.
 13. `CodexTelegram:TerminalEventHoldMilliseconds` controls how long the bot waits for late turn events after Codex reports completion.
 14. `CodexTelegram:Context:WorkingDirectory` is the default Codex working directory.
-15. `CodexTelegram:Workspace:WorkspaceRoots` are the directories users may add as projects.
-16. The Codex submenu will query live model names and effort choices when the configured executable is reachable.
+15. `CodexTelegram:Context:ReasoningEffort` is the default reasoning effort for normal turns.
+16. `Codex:PlanMode:ReasoningEffort` is the separate default reasoning effort for plan turns.
+17. `CodexTelegram:Workspace:WorkspaceRoots` are the directories users may add as projects.
+18. The Codex submenu will query live model names and effort choices when the configured executable is reachable.
 
 ## First Launch Checklist
 
@@ -358,13 +364,14 @@ Useful related settings:
 1. `CodexTelegram:Context:Sandbox` defaults to `workspace-write`.
 2. `CodexTelegram:Context:ApprovalMode` defaults to `on-request`.
 3. `CodexTelegram:Context:Model` lets you pin a default model.
-4. `CodexTelegram:Context:ReasoningEffort` lets you pin a default reasoning effort.
-5. `CodexTelegram:Context:NetworkAccessEnabled` can override the Codex default network posture.
-6. `CodexTelegram:Context:WebSearchEnabled` and `CodexTelegram:Context:WebSearchMode` can be used if your Codex workflow expects web search.
-7. `CodexTelegram:Context:AdditionalDirectories` can grant Codex extra read access when needed.
-8. `CodexTelegram:Workspace:DataRoot` moves the local state files somewhere other than the default user application data folder.
+4. `CodexTelegram:Context:ReasoningEffort` lets you pin a default reasoning effort for normal turns.
+5. `Codex:PlanMode:ReasoningEffort` lets you pin a separate default reasoning effort for plan turns.
+6. `CodexTelegram:Context:NetworkAccessEnabled` can override the Codex default network posture.
+7. `CodexTelegram:Context:WebSearchEnabled` and `CodexTelegram:Context:WebSearchMode` can be used if your Codex workflow expects web search.
+8. `CodexTelegram:Context:AdditionalDirectories` can grant Codex extra read access when needed.
+9. `CodexTelegram:Workspace:DataRoot` moves the local state files somewhere other than the default user application data folder.
 
-The bootstrap menu offers direct pickers for the common values in items 3 and 4, which avoids typing model IDs or effort names from memory.
+The bootstrap menu offers direct pickers for the common values in items 3 through 5, which avoids typing model IDs or effort names from memory.
 
 ## Verify The Private Chat Flow
 
@@ -549,6 +556,32 @@ If you are tuning a busier bot or a noisy session, the outbound queue settings m
 
 The app also clamps several of those values to safe ranges at startup, so wildly out-of-range values will be normalized rather than trusted blindly.
 `DebugPreambleEnabled` can also be changed at runtime with `/debug on`, `/debug off`, and `/debug reset`; when enabled, every Telegram text message is prefixed with diagnostic source, chat/topic, session, turn, and active-turn metadata.
+
+`TelegramOutput` controls how Codex turn output is projected into Telegram:
+
+1. `TelegramOutput:PresentationMode` is `LiveCard` by default. Allowed values are `Verbose`, `LiveCard`, and `FinalOnly`.
+2. `TelegramOutput:HistoryRetentionDays` controls how long normalized operational history is retained in memory.
+3. `TelegramOutput:MaxHistoryEventsPerTurn` caps retained operational history for one turn.
+4. `TelegramOutput:CaptureProgressHistory` controls whether low-value progress text is retained instead of summarized.
+5. `TelegramOutput:LiveCardMinEditIntervalSeconds` throttles non-critical live-card edits.
+
+Use `/output mode` to inspect or temporarily change the runtime presentation mode. Use `/turn updates`, `/turn full`, `/turn progress`, and `/turn final` to inspect retained operational history without enabling debug capture.
+
+For interface-level diagnostics, `TelegramDebugTrace` controls local JSONL capture:
+
+1. `TelegramDebugTrace:Enabled`
+2. `TelegramDebugTrace:TraceDirectory`
+3. `TelegramDebugTrace:CaptureInputText`
+4. `TelegramDebugTrace:CaptureOutputText`
+5. `TelegramDebugTrace:CaptureAttachmentMetadata`
+6. `TelegramDebugTrace:CaptureAttachmentCopies`
+7. `TelegramDebugTrace:FullCaptureTtlMinutes`
+8. `TelegramDebugTrace:MaxTraceFileBytes`
+9. `TelegramDebugTrace:RetentionDays`
+
+Leave capture off by default. Use `/debug capture on` for metadata-only capture, and `/debug capture full on [minutes]` only when you need redacted full text bodies for a short debugging window. Trace files live under `TelegramDebugTrace:TraceDirectory` when configured; otherwise they live under the data root in `telegram-traces`.
+
+`CaptureAttachmentCopies` is a separate content-capture switch. It defaults to `false`, and files are copied only while full capture is active. When enabled, copies are written beside the trace file under `telegram-traces/yyyyMMdd/<traceId>.attachments/`.
 
 ## Troubleshooting
 
