@@ -133,6 +133,45 @@ public sealed class TelegramTurnOutputRelayTests
     }
 
     [Fact]
+    public async Task PublishTurnEventAsync_LiveCardShowsWaitingActivityForRetryNotice()
+    {
+        FakeOutboundTelegramQueue queue = new();
+        TelegramThreadFollowRegistry followRegistry = FollowThread();
+        TestTelegramBotMessageSender sender = new();
+        TelegramTurnOutputRelay relay = CreateRelay(
+            queue,
+            followRegistry,
+            outputOptions: new TelegramOutputOptions
+            {
+                PresentationMode = TelegramOutputPresentationMode.LiveCard,
+                LiveCardMinEditIntervalSeconds = 0,
+            },
+            messageSender: sender);
+
+        await relay.PublishTurnEventAsync(
+            CreateEntry(type: "item.tool_output", title: "Tool output", body: "Initial update."),
+            CancellationToken.None);
+        await relay.PublishTurnEventAsync(
+            CreateEntry(
+                type: "turn.retry",
+                title: "Codex completed without visible output",
+                subtitle: "Retrying in 5s (1/3).",
+                body: "The original message is still pending.",
+                severity: "warning"),
+            CancellationToken.None);
+
+        Assert.Empty(queue.Messages);
+        Assert.Single(sender.Sent);
+        Assert.Single(sender.Edited);
+
+        string cardText = sender.Edited.Single().Text;
+        Assert.Contains("Activity: No visible output yet. Retrying in 5s (1/3).", cardText);
+        Assert.EndsWith("Latest: Tool output Initial update.", cardText);
+        Assert.DoesNotContain("Codex completed without visible output", cardText, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("The original message is still pending.", cardText, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public async Task PublishTurnEventAsync_LiveCardReusesSameMessageAcrossTurnChanges()
     {
         FakeOutboundTelegramQueue queue = new();
@@ -249,7 +288,7 @@ public sealed class TelegramTurnOutputRelayTests
     }
 
     [Fact]
-    public async Task PublishTurnEventAsync_LiveCardEditFailureCreatesReplacementAndKeepsFinalDelivery()
+    public async Task PublishTurnEventAsync_LiveCardEditFailureKeepsPinnedCardAndFinalDelivery()
     {
         FakeOutboundTelegramQueue queue = new();
         TelegramThreadFollowRegistry followRegistry = FollowThread();
@@ -271,10 +310,11 @@ public sealed class TelegramTurnOutputRelayTests
             CreateEntry(type: "turn.finalResponse", title: "Final response", body: "Final answer after replacement."),
             CancellationToken.None);
 
-        Assert.Equal(2, sender.Sent.Count);
+        Assert.Single(sender.Sent);
         EditedTelegramMessage edit = Assert.Single(sender.Edited);
         Assert.Equal(1, edit.MessageId);
-        Assert.Contains("Final response: captured", sender.Sent[1].Text);
+        Assert.Contains("Initial update.", sender.Sent.Single().Text);
+        Assert.Contains("Final response: captured", edit.Text);
         OutboundTelegramMessage message = Assert.Single(queue.Messages);
         Assert.Equal(CodexOutboundMessageKind.Completion, message.Kind);
         Assert.Equal("Final answer after replacement.", message.Text);

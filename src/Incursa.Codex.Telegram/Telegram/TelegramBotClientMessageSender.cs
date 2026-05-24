@@ -224,17 +224,27 @@ internal sealed class TelegramBotClientMessageSender : ITelegramBotMessageSender
             cancellationToken,
             debugContext).ConfigureAwait(false);
 
-    public async Task<int?> EditTextMessageOrSendReplacementAsync(
+    public async Task<bool> TryEditTextMessageAsync(
         TelegramConversationScope conversation,
         int messageId,
         string text,
         IReadOnlyList<IReadOnlyList<TelegramReplyButton>>? buttons,
         CancellationToken cancellationToken,
         TelegramDebugMessageContext? debugContext = null)
+        => await TryEditTextMessageCoreAsync(conversation, messageId, text, buttons, cancellationToken, debugContext, logFallback: false).ConfigureAwait(false);
+
+    private async Task<bool> TryEditTextMessageCoreAsync(
+        TelegramConversationScope conversation,
+        int messageId,
+        string text,
+        IReadOnlyList<IReadOnlyList<TelegramReplyButton>>? buttons,
+        CancellationToken cancellationToken,
+        TelegramDebugMessageContext? debugContext,
+        bool logFallback)
     {
         if (!_options.Enabled)
         {
-            return null;
+            return false;
         }
 
         try
@@ -286,7 +296,7 @@ internal sealed class TelegramBotClientMessageSender : ITelegramBotMessageSender
                 conversation.MessageThreadId,
                 sendText.Length,
                 buttons?.Count ?? 0);
-            return messageId;
+            return true;
         }
         catch (ApiRequestException exception) when (IsMessageNotModified(exception))
         {
@@ -305,7 +315,7 @@ internal sealed class TelegramBotClientMessageSender : ITelegramBotMessageSender
                 "Telegram edit for chat {ChatId} message {MessageId} was a no-op because the content did not change.",
                 conversation.ChatId,
                 messageId);
-            return messageId;
+            return true;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -323,13 +333,45 @@ internal sealed class TelegramBotClientMessageSender : ITelegramBotMessageSender
                 exception.Message,
                 null,
                 cancellationToken).ConfigureAwait(false);
-            _logger.LogWarning(
-                exception,
-                "Telegram edit failed for chat {ChatId} message {MessageId}; falling back to a new message.",
-                conversation.ChatId,
-                messageId);
-            return await SendTextMessageAndGetIdAsync(conversation, text, buttons, cancellationToken, debugContext).ConfigureAwait(false);
+            if (logFallback)
+            {
+                _logger.LogWarning(
+                    exception,
+                    "Telegram edit failed for chat {ChatId} message {MessageId}; falling back to a new message.",
+                    conversation.ChatId,
+                    messageId);
+            }
+            else
+            {
+                _logger.LogWarning(
+                    exception,
+                    "Telegram edit failed for chat {ChatId} message {MessageId}; keeping the existing live card pinned.",
+                    conversation.ChatId,
+                    messageId);
+            }
+            return false;
         }
+    }
+
+    public async Task<int?> EditTextMessageOrSendReplacementAsync(
+        TelegramConversationScope conversation,
+        int messageId,
+        string text,
+        IReadOnlyList<IReadOnlyList<TelegramReplyButton>>? buttons,
+        CancellationToken cancellationToken,
+        TelegramDebugMessageContext? debugContext = null)
+    {
+        if (!_options.Enabled)
+        {
+            return null;
+        }
+
+        if (await TryEditTextMessageCoreAsync(conversation, messageId, text, buttons, cancellationToken, debugContext, logFallback: true).ConfigureAwait(false))
+        {
+            return messageId;
+        }
+
+        return await SendTextMessageAndGetIdAsync(conversation, text, buttons, cancellationToken, debugContext).ConfigureAwait(false);
     }
 
     public async Task AnswerCallbackQueryAsync(string callbackQueryId, string? text, CancellationToken cancellationToken)

@@ -48,6 +48,29 @@ internal interface ITelegramBotMessageSender
         CancellationToken cancellationToken,
         TelegramDebugMessageContext? debugContext = null);
 
+    async Task<bool> TryEditTextMessageAsync(
+        TelegramConversationScope conversation,
+        int messageId,
+        string text,
+        IReadOnlyList<IReadOnlyList<TelegramReplyButton>>? buttons,
+        CancellationToken cancellationToken,
+        TelegramDebugMessageContext? debugContext = null)
+    {
+        try
+        {
+            await EditTextMessageAsync(conversation, messageId, text, buttons, cancellationToken, debugContext).ConfigureAwait(false);
+            return true;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
     async Task<int?> EditTextMessageOrSendReplacementAsync(
         TelegramConversationScope conversation,
         int messageId,

@@ -300,7 +300,7 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
             TelegramLiveTurnCardKey key = new(entry.ThreadId, target);
             TelegramLiveTurnCardState state = _liveCards.GetOrAdd(key, _ => new TelegramLiveTurnCardState(entry.ThreadId, entry.TurnId, target));
             TelegramLiveTurnCardSnapshot snapshot = state.Record(entry, kind, text, isTerminal);
-            bool forceEdit = force || snapshot.TurnChanged;
+            bool forceEdit = force || snapshot.TurnChanged || IsRetryNotice(entry);
             DateTimeOffset now = DateTimeOffset.UtcNow;
             if (!forceEdit && snapshot.LastEditUtc is { } lastEdit && now - lastEdit < TimeSpan.FromSeconds(_outputOptions.LiveCardMinEditIntervalSeconds))
             {
@@ -323,9 +323,30 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
             try
             {
                 int? previousMessageId = snapshot.MessageId;
-                int? messageId = previousMessageId.HasValue
-                    ? await _messageSender.EditTextMessageOrSendReplacementAsync(target, previousMessageId.Value, cardText, buttons, cancellationToken, debugContext).ConfigureAwait(false)
-                    : await _messageSender.SendTextMessageAndGetIdAsync(target, cardText, buttons, cancellationToken, debugContext).ConfigureAwait(false);
+                int? messageId;
+                if (previousMessageId.HasValue)
+                {
+                    bool edited = await _messageSender.TryEditTextMessageAsync(
+                        target,
+                        previousMessageId.Value,
+                        cardText,
+                        buttons,
+                        cancellationToken,
+                        debugContext).ConfigureAwait(false);
+                    if (!edited)
+                    {
+                        state.MarkEdited(previousMessageId, now);
+                        await RecordLiveCardTraceAsync(snapshot, "telegram.live_card.edit_failed", previousMessageId, cancellationToken).ConfigureAwait(false);
+                        continue;
+                    }
+
+                    messageId = previousMessageId;
+                }
+                else
+                {
+                    messageId = await _messageSender.SendTextMessageAndGetIdAsync(target, cardText, buttons, cancellationToken, debugContext).ConfigureAwait(false);
+                }
+
                 if (messageId.HasValue)
                 {
                     state.MarkEdited(messageId.Value, now);
@@ -645,6 +666,11 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
             return "Turn started.";
         }
 
+        if (string.Equals(entry.Type, "turn.retry", StringComparison.OrdinalIgnoreCase))
+        {
+            return entry.Subtitle ?? entry.Body ?? "Retrying.";
+        }
+
         if (TryGetMetadata(entry, "command", out string? command))
         {
             string status = GetMetadata(entry, "status") ?? string.Empty;
@@ -912,6 +938,22 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
 
     private static string? ResolveActivitySummary(CodexTimelineEntryVm entry, CodexOutboundMessageKind kind, string? text)
     {
+        if (IsRetryNotice(entry))
+        {
+            string details = entry.Subtitle ?? entry.Body ?? "Retrying.";
+            if (ContainsAny(entry.Title, "visible output"))
+            {
+                return $"No visible output yet. {details}";
+            }
+
+            if (ContainsAny(entry.Title, "capacity"))
+            {
+                return $"Selected model is at capacity. {details}";
+            }
+
+            return details;
+        }
+
         string? progress = kind == CodexOutboundMessageKind.Progress
             ? FormatInternalProgressEntry(entry)
             : null;
@@ -1293,7 +1335,7 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
                     _failed = false;
                 }
 
-                if (kind == CodexOutboundMessageKind.Progress || entry.IsInternal)
+                if (kind == CodexOutboundMessageKind.Progress || entry.IsInternal || IsRetryNotice(entry))
                 {
                     _progressCount++;
                 }
@@ -1324,7 +1366,7 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
                     _failed = true;
                 }
 
-                if (entry.IsInternal)
+                if (entry.IsInternal || IsRetryNotice(entry))
                 {
                     _activity = ResolveActivitySummary(entry, kind, text) ?? _activity;
                 }
@@ -1364,6 +1406,9 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
                 _terminalEventSeen,
                 _failed);
     }
+
+    private static bool IsRetryNotice(CodexTimelineEntryVm entry)
+        => string.Equals(entry.Type, "turn.retry", StringComparison.OrdinalIgnoreCase);
 
     private sealed record AgentMessageFlush(string FullText, string? PublishedText, string? UnpublishedText, bool PublishedAny);
 

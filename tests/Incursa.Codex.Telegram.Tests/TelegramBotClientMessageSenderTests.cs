@@ -666,6 +666,25 @@ public sealed class TelegramBotClientMessageSenderTests
     }
 
     [Fact]
+    public async Task TryEditTextMessageAsync_GenericFailureReturnsFalseWithoutReplacement()
+    {
+        FakeTelegramBotApiClient client = new();
+        client.EditFailures.Enqueue(new InvalidOperationException("telegram edit transport failed"));
+        TelegramBotClientMessageSender sender = CreateSender(client);
+
+        bool edited = await sender.TryEditTextMessageAsync(
+            new TelegramConversationScope(1234, 55),
+            42,
+            "replacement card",
+            null,
+            CancellationToken.None);
+
+        Assert.False(edited);
+        Assert.Single(client.EditedMessages);
+        Assert.Empty(client.SentMessages);
+    }
+
+    [Fact]
     public async Task EditTextMessageOrSendReplacementAsync_GenericFailureReturnsReplacementMessageId()
     {
         FakeTelegramBotApiClient client = new();
