@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+## 1.0.20 - 2026-05-23
+
+- Added session-pinned live cards that keep one editable card per conversation, hide internal turn IDs, and reuse the same card across internal turn restarts.
 - Stopped publishing bare successful `Turn completed` messages; successful terminal events now only flush real assistant text.
 - Tightened empty-output retry handling so turns that complete without assistant response text retry instead of treating tool, background-agent, or marker-only output as the response.
 - Added an in-memory session event projection so `/status` and `/tail` can show the last turn closeout, including a warning when assistant text reached Telegram but Codex ended without a final response item.
