@@ -86,10 +86,10 @@ public sealed class TelegramTurnOutputRelayTests
         SentTelegramMessage card = Assert.Single(sender.Sent);
         Assert.Contains("Codex is working", card.Text);
         Assert.Contains("Mode: LiveCard", card.Text);
-        Assert.Contains("Latest: Tool output", card.Text);
         Assert.Contains("Updates: 1 captured", card.Text);
         Assert.Contains("Progress: 0 suppressed", card.Text);
         Assert.Contains("Final response: not yet", card.Text);
+        Assert.EndsWith("Latest: Tool output dotnet test Tests passed.", card.Text);
         Assert.Contains(card.Buttons!.SelectMany(row => row).Select(button => button.Text), text => text == "Show Updates");
         Assert.Contains(card.Buttons!.SelectMany(row => row).Select(button => button.Text), text => text == "Show Full Turn");
         Assert.All(card.Buttons!.SelectMany(row => row), button => Assert.True(button.CallbackData.Length <= 64, button.CallbackData));
@@ -123,8 +123,9 @@ public sealed class TelegramTurnOutputRelayTests
         Assert.Single(sender.Edited);
 
         string cardText = sender.Edited.Single().Text;
-        Assert.Contains("Latest: Tool output", cardText);
         Assert.Contains("Activity: Thinking", cardText);
+        Assert.EndsWith("Latest: Tool output dotnet test Tests passed.", cardText);
+        Assert.True(cardText.IndexOf("Activity: Thinking", StringComparison.Ordinal) < cardText.LastIndexOf("Latest: Tool output dotnet test Tests passed.", StringComparison.Ordinal));
         Assert.DoesNotContain("item.reasoning", cardText, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("checking", cardText, StringComparison.OrdinalIgnoreCase);
     }

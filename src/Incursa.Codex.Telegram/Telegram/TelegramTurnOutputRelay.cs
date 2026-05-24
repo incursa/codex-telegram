@@ -405,10 +405,6 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
         builder.AppendLine($"Session: {ShortId(snapshot.ThreadId)}");
         builder.AppendLine($"Turn: {ShortId(snapshot.TurnId)}");
         builder.AppendLine($"Mode: {presentationMode}");
-        if (!string.IsNullOrWhiteSpace(snapshot.Latest))
-        {
-            builder.AppendLine($"Latest: {snapshot.Latest}");
-        }
         if (!string.IsNullOrWhiteSpace(snapshot.Activity))
         {
             builder.AppendLine($"Activity: {snapshot.Activity}");
@@ -421,6 +417,10 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
         builder.AppendLine(draining
             ? $"Telegram delivery: draining ({destination!.PendingMessageCount.ToString(System.Globalization.CultureInfo.InvariantCulture)} messages, {destination.PendingChunkCount.ToString(System.Globalization.CultureInfo.InvariantCulture)} chunks)"
             : "Telegram delivery: idle");
+        if (!string.IsNullOrWhiteSpace(snapshot.Latest))
+        {
+            builder.AppendLine($"Latest: {snapshot.Latest}");
+        }
         return builder.ToString().TrimEnd();
     }
 
@@ -901,7 +901,7 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
             return null;
         }
 
-        string normalized = NormalizeText(candidate).Replace(Environment.NewLine, " ", StringComparison.Ordinal);
+        string normalized = NormalizeText(candidate).Replace("\n", " ", StringComparison.Ordinal);
         if (kind == CodexOutboundMessageKind.Progress && normalized.StartsWith("Progress:", StringComparison.OrdinalIgnoreCase))
         {
             normalized = normalized["Progress:".Length..].Trim();
