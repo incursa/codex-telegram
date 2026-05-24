@@ -78,6 +78,8 @@ builder.Services.AddOptions<TelegramDebugTraceOptions>()
     .Bind(builder.Configuration.GetSection("TelegramDebugTrace"));
 builder.Services.AddOptions<TelegramOutboundOptions>()
     .Bind(builder.Configuration.GetSection("TelegramBot:Outbound"));
+builder.Services.AddOptions<TelegramOutputOptions>()
+    .Bind(builder.Configuration.GetSection("TelegramOutput"));
 builder.Services.AddOptions<OpenAiSpeechToTextOptions>()
     .Bind(builder.Configuration.GetSection("OpenAI"));
 
@@ -94,6 +96,10 @@ builder.Services.PostConfigure<CodexClientOptions>(options =>
     options.CodexPathOverride = DefaultIfWhiteSpace(
         options.CodexPathOverride,
         DefaultIfWhiteSpace(builder.Configuration["TelegramBot:CodexExecutablePath"], Environment.GetEnvironmentVariable("CODEX_PATH")));
+
+    CodexClientOptionsPlanModeBridge.ApplyReasoningEffort(
+        options,
+        DefaultIfWhiteSpace(builder.Configuration["Codex:PlanMode:ReasoningEffort"], null));
 });
 
 builder.Services.PostConfigure<CodexTelegramOptions>(options =>
@@ -222,6 +228,29 @@ builder.Services.PostConfigure<TelegramInputOptions>(options =>
         options.MediaGroupDebounceMilliseconds,
         TelegramInputLimits.MinMediaGroupDebounceMilliseconds,
         TelegramInputLimits.MaxMediaGroupDebounceMilliseconds);
+    if (options.AutoDispatchAfterSeconds > 0)
+    {
+        options.AutoDispatchAfterSeconds = Math.Clamp(
+            options.AutoDispatchAfterSeconds,
+            TelegramInputLimits.MinAutoDispatchAfterSeconds,
+            TelegramInputLimits.MaxAutoDispatchAfterSeconds);
+    }
+});
+
+builder.Services.PostConfigure<TelegramOutputOptions>(options =>
+{
+    options.HistoryRetentionDays = Math.Clamp(
+        options.HistoryRetentionDays,
+        TelegramOutputLimits.MinHistoryRetentionDays,
+        TelegramOutputLimits.MaxHistoryRetentionDays);
+    options.MaxHistoryEventsPerTurn = Math.Clamp(
+        options.MaxHistoryEventsPerTurn,
+        TelegramOutputLimits.MinHistoryEventsPerTurn,
+        TelegramOutputLimits.MaxHistoryEventsPerTurn);
+    options.LiveCardMinEditIntervalSeconds = Math.Clamp(
+        options.LiveCardMinEditIntervalSeconds,
+        TelegramOutputLimits.MinLiveCardEditIntervalSeconds,
+        TelegramOutputLimits.MaxLiveCardEditIntervalSeconds);
 });
 
 builder.Services.PostConfigure<TelegramDebugTraceOptions>(options =>
@@ -234,6 +263,10 @@ builder.Services.PostConfigure<TelegramDebugTraceOptions>(options =>
         options.RetentionDays,
         TelegramDebugTraceLimits.MinRetentionDays,
         TelegramDebugTraceLimits.MaxRetentionDays);
+    options.FullCaptureTtlMinutes = Math.Clamp(
+        options.FullCaptureTtlMinutes,
+        TelegramDebugTraceLimits.MinFullCaptureTtlMinutes,
+        TelegramDebugTraceLimits.MaxFullCaptureTtlMinutes);
     if (!string.IsNullOrWhiteSpace(options.TraceDirectory))
     {
         options.TraceDirectory = Path.GetFullPath(options.TraceDirectory);
@@ -259,6 +292,7 @@ builder.Services.AddSingleton<ITelegramThreadFollowRegistry, TelegramThreadFollo
 builder.Services.AddSingleton<ITelegramTypingIndicatorRegistry, TelegramTypingIndicatorRegistry>();
 builder.Services.AddSingleton<ITelegramTurnReactionRegistry, TelegramTurnReactionRegistry>();
 builder.Services.AddSingleton<ITelegramDebugPreambleMode, TelegramDebugPreambleMode>();
+builder.Services.AddSingleton<ITelegramOutputModeState, TelegramOutputModeState>();
 builder.Services.AddSingleton<ITelegramForumTopicService, TelegramForumTopicService>();
 builder.Services.AddSingleton<ITelegramMessageContextStore, TelegramMessageContextStore>();
 builder.Services.AddSingleton<ITelegramBotMessageSender, TelegramBotClientMessageSender>();
@@ -288,6 +322,7 @@ builder.Services.AddSingleton<TelegramCodexBotCommandHandler>();
 builder.Services.AddSingleton<ITelegramCodexBotUpdateHandler>(sp => sp.GetRequiredService<TelegramCodexBotCommandHandler>());
 builder.Services.AddHostedService<CodexWarmupHostedService>();
 builder.Services.AddHostedService<TelegramCodexBotHostedService>();
+builder.Services.AddHostedService<TelegramInputBundleAutoDispatchHostedService>();
 builder.Services.AddHostedService<TelegramQueuedPromptProcessorHostedService>();
 builder.Services.AddHostedService<TelegramTypingHeartbeatHostedService>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<OutboundTelegramScheduler>());

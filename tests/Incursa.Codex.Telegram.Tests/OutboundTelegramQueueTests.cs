@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Incursa.Codex.Telegram.Options;
 using Incursa.Codex.Telegram.Telegram;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -177,6 +178,36 @@ public sealed class OutboundTelegramQueueTests
     }
 
     [Fact]
+    public async Task ProcessNextAsync_FullCaptureRecordsOutboundQueuedAndSentText()
+    {
+        using TemporaryDirectory dataRoot = TemporaryDirectory.Create();
+        TestTimeProvider timeProvider = new(TestNow);
+        TestTelegramSender sender = new();
+        TelegramDebugTraceStore traceStore = CreateTraceStore(dataRoot.Path);
+        traceStore.EnableFullCapture(TimeSpan.FromMinutes(30));
+        string traceId = traceStore.CreateTraceId();
+        OutboundTelegramScheduler scheduler = CreateScheduler(sender, new TelegramOutboundOptions
+        {
+            BatchWindowSeconds = 0,
+            PrivateMinimumSendIntervalSeconds = 0,
+            GroupMinimumSendIntervalSeconds = 0,
+        }, timeProvider, traceStore);
+
+        await scheduler.EnqueueAsync(CreateMessage(CodexOutboundMessageKind.Completion, "final chunk", turnId: "turn-1", traceId: traceId), CancellationToken.None);
+
+        Assert.True(await scheduler.ProcessNextAsync(CancellationToken.None));
+        string[] lines = await File.ReadAllLinesAsync(traceStore.GetTracePath(traceId, TestNow), CancellationToken.None);
+        Assert.Equal(2, lines.Length);
+        Assert.All(lines, line =>
+        {
+            using JsonDocument document = JsonDocument.Parse(line);
+            Assert.Equal("final chunk", document.RootElement.GetProperty("textBody").GetString());
+        });
+        Assert.Contains(lines, line => line.Contains("\"kind\":\"telegram.outbound.enqueue\"", StringComparison.Ordinal));
+        Assert.Contains(lines, line => line.Contains("\"kind\":\"telegram.outbound.sent\"", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task ProcessNextAsync_RespectsBatchWindowAfterWakeSignal()
     {
         TestTelegramSender sender = new();
@@ -265,7 +296,7 @@ public sealed class OutboundTelegramQueueTests
     }
 
     [Fact]
-    public async Task ProcessNextAsync_BatchesSameDestinationMessagesIntoOneSend()
+    public async Task ProcessNextAsync_SendsSameDestinationMessagesIndividually()
     {
         TestTelegramSender sender = new();
         OutboundTelegramScheduler scheduler = CreateScheduler(sender, new TelegramOutboundOptions
@@ -279,20 +310,25 @@ public sealed class OutboundTelegramQueueTests
         await scheduler.EnqueueAsync(CreateMessage(CodexOutboundMessageKind.Update, "first update"), CancellationToken.None);
         await scheduler.EnqueueAsync(CreateMessage(CodexOutboundMessageKind.Completion, "second update"), CancellationToken.None);
 
-        bool processed = await scheduler.ProcessNextAsync(CancellationToken.None);
+        Assert.True(await scheduler.ProcessNextAsync(CancellationToken.None));
+        Assert.True(await scheduler.ProcessNextAsync(CancellationToken.None));
 
-        Assert.True(processed);
-        SentTelegramMessage sent = Assert.Single(sender.Sent);
-        Assert.Equal(1234, sent.Conversation.ChatId);
-        Assert.StartsWith("first update", sent.Text, StringComparison.Ordinal);
-        Assert.Contains("first update", sent.Text);
-        Assert.Contains("second update", sent.Text);
-        Assert.DoesNotContain("2 updates", sent.Text);
-        Assert.DoesNotContain("Use /tail", sent.Text);
+        Assert.Collection(
+            sender.Sent,
+            message =>
+            {
+                Assert.Equal(1234, message.Conversation.ChatId);
+                Assert.Equal("first update", message.Text);
+            },
+            message =>
+            {
+                Assert.Equal(1234, message.Conversation.ChatId);
+                Assert.Equal("second update", message.Text);
+            });
     }
 
     [Fact]
-    public async Task ProcessNextAsync_SendsFilePayloadAsStandaloneItemBetweenTextBatches()
+    public async Task ProcessNextAsync_SendsFilePayloadAsStandaloneItemBetweenTextMessages()
     {
         TestTelegramSender sender = new();
         OutboundTelegramScheduler scheduler = CreateScheduler(sender, new TelegramOutboundOptions
@@ -326,7 +362,7 @@ public sealed class OutboundTelegramQueueTests
     }
 
     [Fact]
-    public async Task ProcessNextAsync_PassesDebugContextForBatchedMessages()
+    public async Task ProcessNextAsync_PassesDebugContextForIndividualMessages()
     {
         TestTelegramSender sender = new();
         OutboundTelegramScheduler scheduler = CreateScheduler(sender, new TelegramOutboundOptions
@@ -347,11 +383,11 @@ public sealed class OutboundTelegramQueueTests
         Assert.Equal("thread-1", context.SessionId);
         Assert.Equal("turn-1", context.TurnId);
         Assert.Equal("Update", context.Kind);
-        Assert.Equal(2, context.ItemCount);
+        Assert.Equal(1, context.ItemCount);
     }
 
     [Fact]
-    public async Task ProcessNextAsync_SendsFinishedMarkerAsStandaloneMessageAfterBatchedContent()
+    public async Task ProcessNextAsync_SendsFinishedMarkerAsStandaloneMessageAfterContent()
     {
         TestTelegramSender sender = new();
         OutboundTelegramScheduler scheduler = CreateScheduler(sender, new TelegramOutboundOptions
@@ -368,20 +404,17 @@ public sealed class OutboundTelegramQueueTests
 
         Assert.True(await scheduler.ProcessNextAsync(CancellationToken.None));
         Assert.True(await scheduler.ProcessNextAsync(CancellationToken.None));
+        Assert.True(await scheduler.ProcessNextAsync(CancellationToken.None));
 
         Assert.Collection(
             sender.Sent,
-            message =>
-            {
-                Assert.Contains("first update", message.Text);
-                Assert.Contains("second update", message.Text);
-                Assert.DoesNotContain("~~ turn complete ~~", message.Text);
-            },
+            message => Assert.Equal("first update", message.Text),
+            message => Assert.Equal("second update", message.Text),
             message => Assert.Equal("~~ turn complete ~~", message.Text));
     }
 
     [Fact]
-    public async Task ProcessNextAsync_BatchedReleaseSectionsPreserveNumberedLists()
+    public async Task ProcessNextAsync_IndividualReleaseSectionsPreserveNumberedLists()
     {
         TestTelegramSender sender = new();
         OutboundTelegramScheduler scheduler = CreateScheduler(sender, new TelegramOutboundOptions
@@ -410,18 +443,18 @@ public sealed class OutboundTelegramQueueTests
         await scheduler.EnqueueAsync(CreateMessage(CodexOutboundMessageKind.Completion, notDone), CancellationToken.None);
 
         Assert.True(await scheduler.ProcessNextAsync(CancellationToken.None));
+        Assert.True(await scheduler.ProcessNextAsync(CancellationToken.None));
 
-        string text = Assert.Single(sender.Sent).Text;
-        Assert.Contains("1. Decide support boundary.", text);
-        Assert.Contains("2. Run and record live Telegram private-chat checks at minimum.", text);
-        Assert.Contains("3. Confirm BotFather settings, privacy mode, and workspace roots.", text);
-        Assert.Contains("- Push current head and capture workflow URLs.", text);
-        Assert.Contains("- Record owner evidence.", text);
-        Assert.DoesNotContain(Environment.NewLine + "---" + Environment.NewLine, text);
+        Assert.Contains("1. Decide support boundary.", sender.Sent[0].Text);
+        Assert.Contains("2. Run and record live Telegram private-chat checks at minimum.", sender.Sent[0].Text);
+        Assert.Contains("3. Confirm BotFather settings, privacy mode, and workspace roots.", sender.Sent[0].Text);
+        Assert.Contains("- Push current head and capture workflow URLs.", sender.Sent[1].Text);
+        Assert.Contains("- Record owner evidence.", sender.Sent[1].Text);
+        Assert.DoesNotContain(Environment.NewLine + "---" + Environment.NewLine, string.Join(Environment.NewLine, sender.Sent.Select(message => message.Text)));
     }
 
     [Fact]
-    public async Task ProcessNextAsync_BatchedMessagesWithoutSessionIdStartWithContent()
+    public async Task ProcessNextAsync_IndividualMessagesWithoutSessionIdStartWithContent()
     {
         TestTelegramSender sender = new();
         OutboundTelegramScheduler scheduler = CreateScheduler(sender, new TelegramOutboundOptions
@@ -437,13 +470,13 @@ public sealed class OutboundTelegramQueueTests
 
         string text = Assert.Single(sender.Sent).Text;
         Assert.StartsWith("first", text, StringComparison.Ordinal);
-        Assert.Contains("second", text);
+        Assert.DoesNotContain("second", text);
         Assert.DoesNotContain("[Codex]", text);
         Assert.DoesNotContain("2 updates", text);
     }
 
     [Fact]
-    public async Task ProcessNextAsync_PreservesBatchedMultilineItemsWithoutSessionHeader()
+    public async Task ProcessNextAsync_PreservesIndividualMultilineItemsWithoutSessionHeader()
     {
         TestTelegramSender sender = new();
         OutboundTelegramScheduler scheduler = CreateScheduler(sender, new TelegramOutboundOptions
@@ -458,11 +491,13 @@ public sealed class OutboundTelegramQueueTests
 
         Assert.True(await scheduler.ProcessNextAsync(CancellationToken.None));
 
-        string text = Assert.Single(sender.Sent).Text;
+        Assert.True(await scheduler.ProcessNextAsync(CancellationToken.None));
+
+        string text = sender.Sent[0].Text;
         Assert.StartsWith("first line", text, StringComparison.Ordinal);
         Assert.Contains("first line", text);
         Assert.Contains("second line", text);
-        Assert.Contains(longLine, text);
+        Assert.Equal(longLine, sender.Sent[1].Text);
         Assert.DoesNotContain("[thread-a]", text);
     }
 
@@ -525,10 +560,8 @@ public sealed class OutboundTelegramQueueTests
         await scheduler.EnqueueAsync(CreateMessage(CodexOutboundMessageKind.Error, "urgent update", priority: OutboundPriority.High), CancellationToken.None);
 
         Assert.True(await scheduler.ProcessNextAsync(CancellationToken.None));
-        string text = Assert.Single(sender.Sent).Text;
-        Assert.StartsWith("normal update", text, StringComparison.Ordinal);
-        Assert.Contains("urgent update", text);
-        Assert.DoesNotContain("2 updates", text);
+        Assert.True(await scheduler.ProcessNextAsync(CancellationToken.None));
+        Assert.Equal(["normal update", "urgent update"], sender.Sent.Select(message => message.Text));
     }
 
     [Fact]
@@ -751,8 +784,10 @@ public sealed class OutboundTelegramQueueTests
         await scheduler.EnqueueAsync(CreateMessage(CodexOutboundMessageKind.Error, "critical update", priority: OutboundPriority.Critical), CancellationToken.None);
 
         Assert.True(await scheduler.ProcessNextAsync(CancellationToken.None));
+        Assert.True(await scheduler.ProcessNextAsync(CancellationToken.None));
+        Assert.True(await scheduler.ProcessNextAsync(CancellationToken.None));
 
-        string text = Assert.Single(sender.Sent).Text;
+        string text = string.Join(Environment.NewLine, sender.Sent.Select(message => message.Text));
         Assert.Contains("older outbound updates compacted", text);
         Assert.Contains("normal update", text);
         Assert.Contains("high update", text);
@@ -777,8 +812,10 @@ public sealed class OutboundTelegramQueueTests
         await scheduler.EnqueueAsync(CreateMessage(CodexOutboundMessageKind.Error, "critical update", priority: OutboundPriority.Critical), CancellationToken.None);
 
         Assert.True(await scheduler.ProcessNextAsync(CancellationToken.None));
+        Assert.True(await scheduler.ProcessNextAsync(CancellationToken.None));
+        Assert.True(await scheduler.ProcessNextAsync(CancellationToken.None));
 
-        string text = Assert.Single(sender.Sent).Text;
+        string text = string.Join(Environment.NewLine, sender.Sent.Select(message => message.Text));
         Assert.Contains("older outbound updates compacted", text);
         Assert.Contains("progress one", text);
         Assert.Contains("useful update", text);
@@ -802,8 +839,10 @@ public sealed class OutboundTelegramQueueTests
         await scheduler.EnqueueAsync(CreateMessage(CodexOutboundMessageKind.Error, "critical update", priority: OutboundPriority.Critical), CancellationToken.None);
 
         Assert.True(await scheduler.ProcessNextAsync(CancellationToken.None));
+        Assert.True(await scheduler.ProcessNextAsync(CancellationToken.None));
+        Assert.True(await scheduler.ProcessNextAsync(CancellationToken.None));
 
-        string text = Assert.Single(sender.Sent).Text;
+        string text = string.Join(Environment.NewLine, sender.Sent.Select(message => message.Text));
         Assert.Contains("older outbound updates compacted", text);
         Assert.Contains("normal update one", text);
         Assert.Contains("normal update two", text);
@@ -826,8 +865,9 @@ public sealed class OutboundTelegramQueueTests
         await scheduler.EnqueueAsync(CreateMessage(CodexOutboundMessageKind.Error, "critical two", priority: OutboundPriority.Critical), CancellationToken.None);
 
         Assert.True(await scheduler.ProcessNextAsync(CancellationToken.None));
+        Assert.True(await scheduler.ProcessNextAsync(CancellationToken.None));
 
-        string text = Assert.Single(sender.Sent).Text;
+        string text = string.Join(Environment.NewLine, sender.Sent.Select(message => message.Text));
         Assert.DoesNotContain("older outbound updates compacted", text);
         Assert.Contains("high one", text);
         Assert.Contains("critical two", text);
@@ -912,24 +952,42 @@ public sealed class OutboundTelegramQueueTests
         Assert.Equal(1, stuck.PendingChunkCount);
     }
 
-    private static OutboundTelegramScheduler CreateScheduler(TestTelegramSender sender, TelegramOutboundOptions options, TimeProvider? timeProvider = null)
+    private static OutboundTelegramScheduler CreateScheduler(
+        TestTelegramSender sender,
+        TelegramOutboundOptions options,
+        TimeProvider? timeProvider = null,
+        ITelegramDebugTraceStore? traceStore = null)
         => new(
             sender,
             new TelegramMessageChunker(),
             timeProvider ?? TimeProvider.System,
             new StaticOptionsMonitor<TelegramOutboundOptions>(options),
-            NullLogger<OutboundTelegramScheduler>.Instance);
+            NullLogger<OutboundTelegramScheduler>.Instance,
+            traceStore);
 
     private static OutboundTelegramScheduler CreateScheduler(
         TestTelegramSender sender,
         IOptionsMonitor<TelegramOutboundOptions> options,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        ITelegramDebugTraceStore? traceStore = null)
         => new(
             sender,
             new TelegramMessageChunker(),
             timeProvider ?? TimeProvider.System,
             options,
-            NullLogger<OutboundTelegramScheduler>.Instance);
+            NullLogger<OutboundTelegramScheduler>.Instance,
+            traceStore);
+
+    private static TelegramDebugTraceStore CreateTraceStore(string dataRoot)
+        => new(
+            Microsoft.Extensions.Options.Options.Create(new CodexTelegramOptions
+            {
+                Workspace = new CodexWorkspaceOptions
+                {
+                    DataRoot = dataRoot,
+                },
+            }),
+            Microsoft.Extensions.Options.Options.Create(new TelegramDebugTraceOptions()));
 
     private static OutboundTelegramMessage CreateMessage(
         CodexOutboundMessageKind kind,
@@ -940,7 +998,8 @@ public sealed class OutboundTelegramQueueTests
         string? turnId = null,
         DateTimeOffset? createdUtc = null,
         OutboundPriority priority = OutboundPriority.Normal,
-        bool omitCreatedUtc = false)
+        bool omitCreatedUtc = false,
+        string? traceId = null)
         => new()
         {
             MessageId = Guid.NewGuid().ToString("n"),
@@ -948,6 +1007,7 @@ public sealed class OutboundTelegramQueueTests
             MessageThreadId = messageThreadId,
             SessionId = sessionId,
             TurnId = turnId,
+            TraceId = traceId,
             Kind = kind,
             Text = text,
             CreatedUtc = omitCreatedUtc ? default : createdUtc ?? TestNow,

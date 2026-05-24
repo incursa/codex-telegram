@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Text.RegularExpressions;
 using Incursa.Codex.Telegram.Options;
 using Microsoft.Extensions.Options;
 
@@ -27,7 +28,25 @@ internal sealed record TelegramDebugTraceEvent(
     int? ChunkLength = null,
     int? CompactedCount = null,
     string? Error = null,
-    IReadOnlyDictionary<string, string>? Metadata = null);
+    IReadOnlyDictionary<string, string>? Metadata = null,
+    string? TextBody = null,
+    string? Source = null);
+
+internal enum TelegramDebugCaptureMode
+{
+    Off,
+    Metadata,
+    Full,
+}
+
+internal sealed record TelegramDebugCaptureStatus(
+    TelegramDebugCaptureMode Mode,
+    bool FileTraceEnabled,
+    bool FullCaptureEnabled,
+    bool? RuntimeEnabledOverride,
+    bool? RuntimeFullCaptureOverride,
+    DateTimeOffset? FullCaptureExpiresUtc,
+    string? LatestTraceId);
 
 internal sealed record TelegramTurnDiagnostics(
     string? SessionId,
@@ -106,13 +125,29 @@ internal interface ITelegramDebugTraceStore
 {
     bool IsFileTraceEnabled { get; }
 
+    bool IsFullCaptureEnabled { get; }
+
     bool? RuntimeEnabledOverride { get; }
+
+    bool? RuntimeFullCaptureOverride { get; }
+
+    DateTimeOffset? FullCaptureExpiresUtc { get; }
+
+    TelegramDebugCaptureStatus CaptureStatus { get; }
 
     string CreateTraceId();
 
     void SetRuntimeEnabledOverride(bool enabled);
 
     void ClearRuntimeEnabledOverride();
+
+    void EnableMetadataCapture();
+
+    void DisableCapture();
+
+    void EnableFullCapture(TimeSpan? ttl = null);
+
+    void DisableFullCapture();
 
     Task RecordAsync(TelegramDebugTraceEvent evt, CancellationToken cancellationToken);
 
@@ -127,6 +162,22 @@ internal interface ITelegramDebugTraceStore
 
 internal sealed class TelegramDebugTraceStore : ITelegramDebugTraceStore
 {
+    private static readonly Regex SecretAssignmentRegex = new(
+        @"(?i)\b((?:authorization|api[_-]?key|token|secret|password|cookie)\s*[:=]\s*)([^\s;,'""]+)",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+    private static readonly Regex BearerRegex = new(
+        @"(?i)\b(Bearer\s+)([A-Za-z0-9._~+/=-]{12,})",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+    private static readonly Regex OpenAiKeyRegex = new(
+        @"\bsk-[A-Za-z0-9_-]{16,}\b",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+    private static readonly Regex SlackTokenRegex = new(
+        @"\bxox[aboprs]-[A-Za-z0-9-]{12,}\b",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+    private static readonly Regex TelegramBotTokenRegex = new(
+        @"\b\d{6,}:[A-Za-z0-9_-]{24,}\b",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
     private readonly JsonSerializerOptions _jsonOptions = new(JsonSerializerDefaults.Web)
     {
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
@@ -136,21 +187,40 @@ internal sealed class TelegramDebugTraceStore : ITelegramDebugTraceStore
     private readonly ConcurrentDictionary<string, string> _turnTraceIds = new(StringComparer.OrdinalIgnoreCase);
     private readonly IOptions<CodexTelegramOptions> _codexOptions;
     private readonly IOptions<TelegramDebugTraceOptions> _traceOptions;
+    private readonly TimeProvider _timeProvider;
     private readonly object _runtimeGate = new();
     private string? _latestTraceId;
     private bool? _runtimeEnabledOverride;
+    private bool? _runtimeFullCaptureOverride;
+    private DateTimeOffset? _fullCaptureExpiresUtc;
+    private DateTimeOffset _lastRetentionCleanupUtc = DateTimeOffset.MinValue;
 
     public TelegramDebugTraceStore(
         IOptions<CodexTelegramOptions> codexOptions,
-        IOptions<TelegramDebugTraceOptions> traceOptions)
+        IOptions<TelegramDebugTraceOptions> traceOptions,
+        TimeProvider? timeProvider = null)
     {
         _codexOptions = codexOptions;
         _traceOptions = traceOptions;
+        _timeProvider = timeProvider ?? TimeProvider.System;
     }
 
     public string? LatestTraceId => _latestTraceId;
 
     public bool IsFileTraceEnabled => RuntimeEnabledOverride ?? _traceOptions.Value.Enabled;
+
+    public bool IsFullCaptureEnabled
+    {
+        get
+        {
+            lock (_runtimeGate)
+            {
+                ExpireFullCaptureIfNeededLocked();
+                return _runtimeFullCaptureOverride
+                    ?? (_traceOptions.Value.CaptureInputText || _traceOptions.Value.CaptureOutputText);
+            }
+        }
+    }
 
     public bool? RuntimeEnabledOverride
     {
@@ -163,11 +233,100 @@ internal sealed class TelegramDebugTraceStore : ITelegramDebugTraceStore
         }
     }
 
+    public bool? RuntimeFullCaptureOverride
+    {
+        get
+        {
+            lock (_runtimeGate)
+            {
+                ExpireFullCaptureIfNeededLocked();
+                return _runtimeFullCaptureOverride;
+            }
+        }
+    }
+
+    public DateTimeOffset? FullCaptureExpiresUtc
+    {
+        get
+        {
+            lock (_runtimeGate)
+            {
+                ExpireFullCaptureIfNeededLocked();
+                return _fullCaptureExpiresUtc;
+            }
+        }
+    }
+
+    public TelegramDebugCaptureStatus CaptureStatus
+    {
+        get
+        {
+            bool fileEnabled = IsFileTraceEnabled;
+            bool fullEnabled = IsFullCaptureEnabled;
+            return new TelegramDebugCaptureStatus(
+                fileEnabled ? fullEnabled ? TelegramDebugCaptureMode.Full : TelegramDebugCaptureMode.Metadata : TelegramDebugCaptureMode.Off,
+                fileEnabled,
+                fullEnabled,
+                RuntimeEnabledOverride,
+                RuntimeFullCaptureOverride,
+                FullCaptureExpiresUtc,
+                LatestTraceId);
+        }
+    }
+
     public void SetRuntimeEnabledOverride(bool enabled)
     {
         lock (_runtimeGate)
         {
             _runtimeEnabledOverride = enabled;
+        }
+    }
+
+    public void EnableMetadataCapture()
+    {
+        lock (_runtimeGate)
+        {
+            _runtimeEnabledOverride = true;
+            _runtimeFullCaptureOverride = false;
+            _fullCaptureExpiresUtc = null;
+        }
+    }
+
+    public void DisableCapture()
+    {
+        lock (_runtimeGate)
+        {
+            _runtimeEnabledOverride = false;
+            _runtimeFullCaptureOverride = false;
+            _fullCaptureExpiresUtc = null;
+        }
+    }
+
+    public void EnableFullCapture(TimeSpan? ttl = null)
+    {
+        lock (_runtimeGate)
+        {
+            _runtimeEnabledOverride = true;
+            _runtimeFullCaptureOverride = true;
+            TimeSpan effectiveTtl = ttl ?? TimeSpan.FromMinutes(Math.Clamp(
+                _traceOptions.Value.FullCaptureTtlMinutes,
+                TelegramDebugTraceLimits.MinFullCaptureTtlMinutes,
+                TelegramDebugTraceLimits.MaxFullCaptureTtlMinutes));
+            if (effectiveTtl <= TimeSpan.Zero)
+            {
+                effectiveTtl = TimeSpan.FromMinutes(TelegramDebugTraceLimits.MinFullCaptureTtlMinutes);
+            }
+
+            _fullCaptureExpiresUtc = _timeProvider.GetUtcNow() + effectiveTtl;
+        }
+    }
+
+    public void DisableFullCapture()
+    {
+        lock (_runtimeGate)
+        {
+            _runtimeFullCaptureOverride = false;
+            _fullCaptureExpiresUtc = null;
         }
     }
 
@@ -194,16 +353,23 @@ internal sealed class TelegramDebugTraceStore : ITelegramDebugTraceStore
             return;
         }
 
-        _latestTraceId = evt.TraceId;
-        TelegramTraceAccumulator accumulator = _traces.GetOrAdd(evt.TraceId, traceId => new TelegramTraceAccumulator(traceId));
-        accumulator.Apply(evt);
+        TelegramDebugTraceEvent memoryEvent = RedactSensitiveFields(
+            evt,
+            includeBody: false,
+            includeAttachmentMetadata: _traceOptions.Value.CaptureAttachmentMetadata);
+        _latestTraceId = memoryEvent.TraceId;
+        TelegramTraceAccumulator accumulator = _traces.GetOrAdd(memoryEvent.TraceId, traceId => new TelegramTraceAccumulator(traceId));
+        accumulator.Apply(memoryEvent);
 
         if (!IsFileTraceEnabled)
         {
             return;
         }
 
-        string path = GetTracePath(evt.TraceId, evt.TimestampUtc);
+        DateTimeOffset now = _timeProvider.GetUtcNow();
+        CleanupRetainedTraceFiles(now);
+        TelegramDebugTraceEvent fileEvent = SanitizeForFile(evt);
+        string path = GetTracePath(memoryEvent.TraceId, memoryEvent.TimestampUtc);
         long maxBytes = Math.Clamp(
             _traceOptions.Value.MaxTraceFileBytes,
             TelegramDebugTraceLimits.MinTraceFileBytes,
@@ -214,7 +380,7 @@ internal sealed class TelegramDebugTraceStore : ITelegramDebugTraceStore
             Directory.CreateDirectory(directory);
         }
 
-        string line = JsonSerializer.Serialize(evt, _jsonOptions);
+        string line = JsonSerializer.Serialize(fileEvent, _jsonOptions);
         await _fileGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
@@ -293,19 +459,348 @@ internal sealed class TelegramDebugTraceStore : ITelegramDebugTraceStore
 
     internal string GetTracePath(string traceId, DateTimeOffset timestampUtc)
     {
-        string root = _traceOptions.Value.TraceDirectory ?? string.Empty;
-        if (string.IsNullOrWhiteSpace(root))
-        {
-            string? configuredDataRoot = _codexOptions.Value.Workspace.DataRoot;
-            root = string.IsNullOrWhiteSpace(configuredDataRoot)
-                ? Path.Combine(AppContext.BaseDirectory, "App_Data", "codex-telegram", "telegram-traces")
-                : Path.Combine(configuredDataRoot, "telegram-traces");
-        }
-
         return Path.Combine(
-            Path.GetFullPath(root),
+            GetTraceRoot(),
             timestampUtc.ToString("yyyyMMdd", System.Globalization.CultureInfo.InvariantCulture),
             traceId + ".jsonl");
+    }
+
+    private TelegramDebugTraceEvent SanitizeForFile(TelegramDebugTraceEvent evt)
+    {
+        TelegramDebugTraceEvent sanitized = RedactSensitiveFields(
+            evt,
+            includeBody: IsFullCaptureEnabled,
+            includeAttachmentMetadata: _traceOptions.Value.CaptureAttachmentMetadata);
+        if (!IsFullCaptureEnabled || !_traceOptions.Value.CaptureAttachmentCopies)
+        {
+            return sanitized;
+        }
+
+        IReadOnlyDictionary<string, string> attachmentCopyMetadata = CaptureAttachmentCopies(evt);
+        if (attachmentCopyMetadata.Count == 0)
+        {
+            return sanitized;
+        }
+
+        Dictionary<string, string> metadata = sanitized.Metadata is null
+            ? new Dictionary<string, string>(StringComparer.Ordinal)
+            : new Dictionary<string, string>(sanitized.Metadata, StringComparer.Ordinal);
+        foreach (KeyValuePair<string, string> pair in attachmentCopyMetadata)
+        {
+            metadata[pair.Key] = Redact(pair.Value) ?? string.Empty;
+        }
+
+        return sanitized with { Metadata = metadata };
+    }
+
+    private static TelegramDebugTraceEvent RedactSensitiveFields(
+        TelegramDebugTraceEvent evt,
+        bool includeBody,
+        bool includeAttachmentMetadata)
+    {
+        IReadOnlyDictionary<string, string>? metadata = evt.Metadata is null
+            ? null
+            : evt.Metadata
+                .Where(pair => includeAttachmentMetadata || !IsAttachmentMetadataKey(pair.Key))
+                .ToDictionary(pair => Redact(pair.Key) ?? string.Empty, pair => Redact(pair.Value) ?? string.Empty, StringComparer.Ordinal);
+        return evt with
+        {
+            Error = Redact(evt.Error),
+            Metadata = metadata,
+            TextBody = includeBody ? Redact(evt.TextBody) : null,
+            Source = string.IsNullOrWhiteSpace(evt.Source) ? InferSource(evt.Kind, evt.Direction) : Redact(evt.Source),
+        };
+    }
+
+    private void ExpireFullCaptureIfNeededLocked()
+    {
+        if (_runtimeFullCaptureOverride != true || _fullCaptureExpiresUtc is null)
+        {
+            return;
+        }
+
+        if (_timeProvider.GetUtcNow() >= _fullCaptureExpiresUtc.Value)
+        {
+            _runtimeFullCaptureOverride = false;
+            _fullCaptureExpiresUtc = null;
+        }
+    }
+
+    private void CleanupRetainedTraceFiles(DateTimeOffset now)
+    {
+        if (now - _lastRetentionCleanupUtc < TimeSpan.FromHours(1))
+        {
+            return;
+        }
+
+        _lastRetentionCleanupUtc = now;
+        int retentionDays = Math.Clamp(
+            _traceOptions.Value.RetentionDays,
+            TelegramDebugTraceLimits.MinRetentionDays,
+            TelegramDebugTraceLimits.MaxRetentionDays);
+        DateTimeOffset cutoff = now.AddDays(-retentionDays);
+        string root = GetTraceRoot();
+        if (!Directory.Exists(root))
+        {
+            return;
+        }
+
+        foreach (string directory in Directory.EnumerateDirectories(root))
+        {
+            string name = Path.GetFileName(directory);
+            if (!DateTimeOffset.TryParseExact(
+                name,
+                "yyyyMMdd",
+                System.Globalization.CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.AssumeUniversal,
+                out DateTimeOffset traceDate))
+            {
+                continue;
+            }
+
+            if (traceDate.UtcDateTime.Date >= cutoff.UtcDateTime.Date)
+            {
+                continue;
+            }
+
+            try
+            {
+                Directory.Delete(directory, recursive: true);
+            }
+            catch
+            {
+                // Retention cleanup is best effort; trace writing must never fail because cleanup did.
+            }
+        }
+    }
+
+    private string GetTraceRoot()
+    {
+        string root = _traceOptions.Value.TraceDirectory ?? string.Empty;
+        if (!string.IsNullOrWhiteSpace(root))
+        {
+            return Path.GetFullPath(root);
+        }
+
+        string? configuredDataRoot = _codexOptions.Value.Workspace.DataRoot;
+        return string.IsNullOrWhiteSpace(configuredDataRoot)
+            ? Path.Combine(AppContext.BaseDirectory, "App_Data", "codex-telegram", "telegram-traces")
+            : Path.Combine(configuredDataRoot, "telegram-traces");
+    }
+
+    private IReadOnlyDictionary<string, string> CaptureAttachmentCopies(TelegramDebugTraceEvent evt)
+    {
+        List<string> paths = ResolveAttachmentCopySources(evt.Metadata).ToList();
+        if (paths.Count == 0)
+        {
+            return new Dictionary<string, string>(StringComparer.Ordinal);
+        }
+
+        Dictionary<string, string> metadata = new(StringComparer.Ordinal)
+        {
+            ["attachmentCopySourceCount"] = paths.Count.ToString(System.Globalization.CultureInfo.InvariantCulture),
+        };
+        string directory = GetTraceAttachmentDirectory(evt.TraceId, evt.TimestampUtc);
+        int copyIndex = 0;
+        int failureIndex = 0;
+        foreach (string path in paths)
+        {
+            if (!File.Exists(path))
+            {
+                failureIndex++;
+                metadata[$"attachmentCopyFailure.{failureIndex.ToString(System.Globalization.CultureInfo.InvariantCulture)}"] = $"missing:{path}";
+                continue;
+            }
+
+            try
+            {
+                Directory.CreateDirectory(directory);
+                copyIndex++;
+                string destination = Path.Combine(directory, CreateAttachmentCopyFileName(copyIndex, path));
+                File.Copy(path, destination, overwrite: false);
+                metadata[$"attachmentCopyPath.{copyIndex.ToString(System.Globalization.CultureInfo.InvariantCulture)}"] = destination;
+            }
+            catch (Exception exception)
+            {
+                failureIndex++;
+                metadata[$"attachmentCopyFailure.{failureIndex.ToString(System.Globalization.CultureInfo.InvariantCulture)}"] = $"{exception.GetType().Name}:{exception.Message}";
+            }
+        }
+
+        metadata["attachmentCopyCount"] = copyIndex.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        if (failureIndex > 0)
+        {
+            metadata["attachmentCopyFailureCount"] = failureIndex.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        }
+
+        return metadata;
+    }
+
+    private string GetTraceAttachmentDirectory(string traceId, DateTimeOffset timestampUtc)
+        => Path.Combine(
+            GetTraceRoot(),
+            timestampUtc.ToString("yyyyMMdd", System.Globalization.CultureInfo.InvariantCulture),
+            traceId + ".attachments");
+
+    private static IEnumerable<string> ResolveAttachmentCopySources(IReadOnlyDictionary<string, string>? metadata)
+    {
+        if (metadata is null)
+        {
+            yield break;
+        }
+
+        HashSet<string> seen = new(StringComparer.OrdinalIgnoreCase);
+        foreach (KeyValuePair<string, string> pair in metadata)
+        {
+            if (!IsAttachmentPathMetadataKey(pair.Key))
+            {
+                continue;
+            }
+
+            foreach (string candidate in SplitAttachmentPathValue(pair.Key, pair.Value))
+            {
+                if (string.IsNullOrWhiteSpace(candidate))
+                {
+                    continue;
+                }
+
+                string path;
+                try
+                {
+                    path = Path.GetFullPath(candidate.Trim());
+                }
+                catch
+                {
+                    continue;
+                }
+
+                if (seen.Add(path))
+                {
+                    yield return path;
+                }
+            }
+        }
+    }
+
+    private static IEnumerable<string> SplitAttachmentPathValue(string key, string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            yield break;
+        }
+
+        if (key.EndsWith("Paths", StringComparison.OrdinalIgnoreCase))
+        {
+            foreach (string part in value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                yield return part;
+            }
+
+            yield break;
+        }
+
+        yield return value;
+    }
+
+    private static bool IsAttachmentPathMetadataKey(string key)
+    {
+        if (string.IsNullOrWhiteSpace(key))
+        {
+            return false;
+        }
+
+        return key.EndsWith("Path", StringComparison.OrdinalIgnoreCase)
+            || key.EndsWith("Paths", StringComparison.OrdinalIgnoreCase)
+            || key.Contains("audioPath", StringComparison.OrdinalIgnoreCase)
+            || key.Contains("filePath", StringComparison.OrdinalIgnoreCase)
+            || key.Contains("localPath", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string CreateAttachmentCopyFileName(int index, string sourcePath)
+    {
+        string fileName = Path.GetFileName(sourcePath);
+        if (string.IsNullOrWhiteSpace(fileName))
+        {
+            fileName = "attachment";
+        }
+
+        foreach (char invalid in Path.GetInvalidFileNameChars())
+        {
+            fileName = fileName.Replace(invalid, '_');
+        }
+
+        if (fileName.Length > 120)
+        {
+            string extension = Path.GetExtension(fileName);
+            int stemLength = Math.Max(1, 120 - extension.Length);
+            fileName = fileName[..stemLength] + extension;
+        }
+
+        return index.ToString("D2", System.Globalization.CultureInfo.InvariantCulture) + "-" + fileName;
+    }
+
+    private static string InferSource(string kind, string? direction)
+    {
+        if (kind.StartsWith("telegram.inbound.", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(direction, "inbound", StringComparison.OrdinalIgnoreCase))
+        {
+            return "TelegramInbound";
+        }
+
+        if (kind.StartsWith("telegram.outbound.", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(direction, "outbound", StringComparison.OrdinalIgnoreCase))
+        {
+            return "TelegramOutbound";
+        }
+
+        if (kind.StartsWith("codex.", StringComparison.OrdinalIgnoreCase))
+        {
+            return kind.Contains("event", StringComparison.OrdinalIgnoreCase)
+                || kind.Contains("terminal", StringComparison.OrdinalIgnoreCase)
+                    ? "CodexEvent"
+                    : "CodexRequest";
+        }
+
+        if (kind.StartsWith("telegram.bundle.", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Bundle";
+        }
+
+        if (kind.StartsWith("telegram.input.", StringComparison.OrdinalIgnoreCase))
+        {
+            return "TelegramInbound";
+        }
+
+        return string.IsNullOrWhiteSpace(direction) ? "Diagnostics" : direction;
+    }
+
+    private static string? Redact(string? value)
+    {
+        if (string.IsNullOrEmpty(value))
+        {
+            return value;
+        }
+
+        string redacted = SecretAssignmentRegex.Replace(value, match => $"{match.Groups[1].Value}<redacted>");
+        redacted = BearerRegex.Replace(redacted, "$1<redacted>");
+        redacted = OpenAiKeyRegex.Replace(redacted, "<redacted-openai-key>");
+        redacted = SlackTokenRegex.Replace(redacted, "<redacted-token>");
+        redacted = TelegramBotTokenRegex.Replace(redacted, "<redacted-telegram-token>");
+        return redacted;
+    }
+
+    private static bool IsAttachmentMetadataKey(string key)
+    {
+        if (string.IsNullOrWhiteSpace(key))
+        {
+            return false;
+        }
+
+        return key.Contains("attachment", StringComparison.OrdinalIgnoreCase)
+            || key.Contains("file", StringComparison.OrdinalIgnoreCase)
+            || key.Contains("audioPath", StringComparison.OrdinalIgnoreCase)
+            || key.Contains("localPath", StringComparison.OrdinalIgnoreCase)
+            || key.Contains("contentType", StringComparison.OrdinalIgnoreCase);
     }
 
     private static string CreateTurnKey(string sessionId, string turnId)
@@ -401,6 +896,7 @@ internal sealed class TelegramDebugTraceStore : ITelegramDebugTraceStore
                         CodexRequestStarted = true;
                         break;
                     case "codex.steer.start":
+                    case "codex.steer.text_only.start":
                         TelegramInputReceived = true;
                         TelegramInputSteered = true;
                         CodexSteerCalled = true;
@@ -518,7 +1014,22 @@ internal sealed class NullTelegramDebugTraceStore : ITelegramDebugTraceStore
 
     public bool IsFileTraceEnabled => false;
 
+    public bool IsFullCaptureEnabled => false;
+
     public bool? RuntimeEnabledOverride => null;
+
+    public bool? RuntimeFullCaptureOverride => null;
+
+    public DateTimeOffset? FullCaptureExpiresUtc => null;
+
+    public TelegramDebugCaptureStatus CaptureStatus => new(
+        TelegramDebugCaptureMode.Off,
+        FileTraceEnabled: false,
+        FullCaptureEnabled: false,
+        RuntimeEnabledOverride: null,
+        RuntimeFullCaptureOverride: null,
+        FullCaptureExpiresUtc: null,
+        LatestTraceId: null);
 
     public string CreateTraceId()
         => Guid.NewGuid().ToString("n");
@@ -528,6 +1039,22 @@ internal sealed class NullTelegramDebugTraceStore : ITelegramDebugTraceStore
     }
 
     public void ClearRuntimeEnabledOverride()
+    {
+    }
+
+    public void EnableMetadataCapture()
+    {
+    }
+
+    public void DisableCapture()
+    {
+    }
+
+    public void EnableFullCapture(TimeSpan? ttl = null)
+    {
+    }
+
+    public void DisableFullCapture()
     {
     }
 

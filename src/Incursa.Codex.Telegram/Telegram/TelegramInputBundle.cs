@@ -512,7 +512,6 @@ internal sealed class TelegramInputBundleStore : ITelegramInputBundleStore
         => UpdateOwnedAsync(bundleId, ownerUserId, bundle => bundle with
         {
             StatusMessageId = messageId,
-            UpdatedAt = _timeProvider.GetUtcNow(),
         }, cancellationToken);
 
     public Task<TelegramInputBundle?> TryClearAsync(

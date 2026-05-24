@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Incursa.Codex.Telegram.Options;
 using Incursa.Codex.Telegram.Telegram;
 using Microsoft.Extensions.Options;
@@ -144,10 +145,182 @@ public sealed class TelegramDebugTraceStoreTests
         Assert.Equal(TelegramDebugTraceLimits.MinTraceFileBytes, new FileInfo(tracePath).Length);
     }
 
+    [Fact]
+    public async Task RecordAsync_DefaultCaptureIsOffAndDoesNotWriteFiles()
+    {
+        using TemporaryDirectory dataRoot = TemporaryDirectory.Create();
+        TelegramDebugTraceStore store = CreateStore(dataRoot.Path, enabled: false);
+        string traceId = store.CreateTraceId();
+        DateTimeOffset timestamp = DateTimeOffset.Parse("2026-05-23T12:00:00Z");
+
+        await store.RecordAsync(
+            CreateEvent(traceId, timestamp, "telegram.input.captured", textLength: 11, textBody: "hello world"),
+            CancellationToken.None);
+
+        Assert.Equal(TelegramDebugCaptureMode.Off, store.CaptureStatus.Mode);
+        Assert.False(File.Exists(store.GetTracePath(traceId, timestamp)));
+        Assert.True(store.GetDiagnostics(traceId).TelegramInputReceived);
+    }
+
+    [Fact]
+    public async Task RecordAsync_MetadataCaptureWritesLengthsButNotBodies()
+    {
+        using TemporaryDirectory dataRoot = TemporaryDirectory.Create();
+        TelegramDebugTraceStore store = CreateStore(dataRoot.Path, enabled: true);
+        string traceId = store.CreateTraceId();
+        DateTimeOffset timestamp = DateTimeOffset.Parse("2026-05-23T12:00:00Z");
+
+        await store.RecordAsync(
+            CreateEvent(traceId, timestamp, "telegram.inbound.message", textLength: 11, textBody: "hello world"),
+            CancellationToken.None);
+
+        JsonElement json = await ReadSingleTraceEventAsync(store.GetTracePath(traceId, timestamp));
+        Assert.Equal("telegram.inbound.message", json.GetProperty("kind").GetString());
+        Assert.Equal(11, json.GetProperty("textLength").GetInt32());
+        Assert.False(json.TryGetProperty("textBody", out _));
+    }
+
+    [Fact]
+    public async Task RecordAsync_FullCaptureWritesRedactedBodies()
+    {
+        using TemporaryDirectory dataRoot = TemporaryDirectory.Create();
+        TelegramDebugTraceStore store = CreateStore(dataRoot.Path, enabled: false);
+        string traceId = store.CreateTraceId();
+        DateTimeOffset timestamp = DateTimeOffset.Parse("2026-05-23T12:00:00Z");
+
+        store.EnableFullCapture(TimeSpan.FromMinutes(30));
+        await store.RecordAsync(
+            CreateEvent(
+                traceId,
+                timestamp,
+                "codex.event",
+                status: "turn.finalResponse",
+                textLength: 59,
+                textBody: "final answer token=super-secret Bearer abcdefghijklmnop"),
+            CancellationToken.None);
+
+        JsonElement json = await ReadSingleTraceEventAsync(store.GetTracePath(traceId, timestamp));
+        string body = Assert.IsType<string>(json.GetProperty("textBody").GetString());
+        Assert.Contains("final answer", body);
+        Assert.Contains("<redacted>", body);
+        Assert.DoesNotContain("super-secret", body);
+        Assert.DoesNotContain("abcdefghijklmnop", body);
+        Assert.Equal(TelegramDebugCaptureMode.Full, store.CaptureStatus.Mode);
+    }
+
+    [Fact]
+    public async Task RecordAsync_FullCaptureAutoExpiresToMetadataMode()
+    {
+        using TemporaryDirectory dataRoot = TemporaryDirectory.Create();
+        ManualTimeProvider clock = new(DateTimeOffset.Parse("2026-05-23T12:00:00Z"));
+        TelegramDebugTraceStore store = CreateStore(dataRoot.Path, enabled: false, timeProvider: clock);
+        string traceId = store.CreateTraceId();
+        DateTimeOffset timestamp = DateTimeOffset.Parse("2026-05-23T12:02:00Z");
+
+        store.EnableFullCapture(TimeSpan.FromMinutes(1));
+        clock.Advance(TimeSpan.FromMinutes(2));
+        await store.RecordAsync(
+            CreateEvent(traceId, timestamp, "telegram.outbound.sent", textLength: 12, textBody: "hidden body"),
+            CancellationToken.None);
+
+        Assert.Equal(TelegramDebugCaptureMode.Metadata, store.CaptureStatus.Mode);
+        JsonElement json = await ReadSingleTraceEventAsync(store.GetTracePath(traceId, timestamp));
+        Assert.False(json.TryGetProperty("textBody", out _));
+    }
+
+    [Fact]
+    public async Task RecordAsync_WhenAttachmentMetadataDisabledStripsAttachmentPaths()
+    {
+        using TemporaryDirectory dataRoot = TemporaryDirectory.Create();
+        TelegramDebugTraceStore store = CreateStore(dataRoot.Path, enabled: true, captureAttachmentMetadata: false);
+        string traceId = store.CreateTraceId();
+        DateTimeOffset timestamp = DateTimeOffset.Parse("2026-05-23T12:00:00Z");
+
+        await store.RecordAsync(
+            CreateEvent(traceId, timestamp, "telegram.input.captured") with
+            {
+                Metadata = new Dictionary<string, string>
+                {
+                    ["source"] = "photo",
+                    ["attachmentPaths"] = @"C:\temp\secret.png",
+                    ["fileName"] = "secret.png",
+                    ["contentType"] = "image/png",
+                },
+            },
+            CancellationToken.None);
+
+        JsonElement metadata = (await ReadSingleTraceEventAsync(store.GetTracePath(traceId, timestamp))).GetProperty("metadata");
+        Assert.Equal("photo", metadata.GetProperty("source").GetString());
+        Assert.False(metadata.TryGetProperty("attachmentPaths", out _));
+        Assert.False(metadata.TryGetProperty("fileName", out _));
+        Assert.False(metadata.TryGetProperty("contentType", out _));
+    }
+
+    [Fact]
+    public async Task RecordAsync_WhenAttachmentCopiesEnabledWithFullCaptureCopiesFilesAndAnnotatesTrace()
+    {
+        using TemporaryDirectory dataRoot = TemporaryDirectory.Create();
+        string source = Path.Combine(dataRoot.Path, "source-image.png");
+        await File.WriteAllTextAsync(source, "image-bytes", CancellationToken.None);
+        TelegramDebugTraceStore store = CreateStore(dataRoot.Path, enabled: false, captureAttachmentCopies: true);
+        string traceId = store.CreateTraceId();
+        DateTimeOffset timestamp = DateTimeOffset.Parse("2026-05-23T12:00:00Z");
+
+        store.EnableFullCapture(TimeSpan.FromMinutes(30));
+        await store.RecordAsync(
+            CreateEvent(traceId, timestamp, "telegram.inbound.message") with
+            {
+                Metadata = new Dictionary<string, string>
+                {
+                    ["filePath"] = source,
+                    ["fileName"] = "source-image.png",
+                },
+            },
+            CancellationToken.None);
+
+        JsonElement metadata = (await ReadSingleTraceEventAsync(store.GetTracePath(traceId, timestamp))).GetProperty("metadata");
+        Assert.Equal("1", metadata.GetProperty("attachmentCopyCount").GetString());
+        string copiedPath = Assert.IsType<string>(metadata.GetProperty("attachmentCopyPath.1").GetString());
+        Assert.True(File.Exists(copiedPath));
+        Assert.Equal("image-bytes", await File.ReadAllTextAsync(copiedPath, CancellationToken.None));
+        Assert.Contains(Path.Combine("telegram-traces", "20260523", traceId + ".attachments"), copiedPath);
+    }
+
+    [Fact]
+    public async Task RecordAsync_WhenAttachmentCopiesEnabledWithoutFullCaptureDoesNotCopyFiles()
+    {
+        using TemporaryDirectory dataRoot = TemporaryDirectory.Create();
+        string source = Path.Combine(dataRoot.Path, "source-image.png");
+        await File.WriteAllTextAsync(source, "image-bytes", CancellationToken.None);
+        TelegramDebugTraceStore store = CreateStore(dataRoot.Path, enabled: true, captureAttachmentCopies: true);
+        string traceId = store.CreateTraceId();
+        DateTimeOffset timestamp = DateTimeOffset.Parse("2026-05-23T12:00:00Z");
+
+        await store.RecordAsync(
+            CreateEvent(traceId, timestamp, "telegram.inbound.message") with
+            {
+                Metadata = new Dictionary<string, string>
+                {
+                    ["filePath"] = source,
+                },
+            },
+            CancellationToken.None);
+
+        JsonElement metadata = (await ReadSingleTraceEventAsync(store.GetTracePath(traceId, timestamp))).GetProperty("metadata");
+        Assert.False(metadata.TryGetProperty("attachmentCopyCount", out _));
+        Assert.False(Directory.Exists(Path.Combine(dataRoot.Path, "telegram-traces", "20260523", traceId + ".attachments")));
+    }
+
     private static TelegramDebugTraceStore CreateStore(
         string dataRoot,
         bool enabled,
-        long? maxTraceFileBytes = null)
+        long? maxTraceFileBytes = null,
+        bool captureInputText = false,
+        bool captureOutputText = false,
+        bool captureAttachmentMetadata = true,
+        bool captureAttachmentCopies = false,
+        int? fullCaptureTtlMinutes = null,
+        TimeProvider? timeProvider = null)
         => new(
             Microsoft.Extensions.Options.Options.Create(new CodexTelegramOptions
             {
@@ -159,8 +332,14 @@ public sealed class TelegramDebugTraceStoreTests
             Microsoft.Extensions.Options.Options.Create(new TelegramDebugTraceOptions
             {
                 Enabled = enabled,
+                CaptureInputText = captureInputText,
+                CaptureOutputText = captureOutputText,
+                CaptureAttachmentMetadata = captureAttachmentMetadata,
+                CaptureAttachmentCopies = captureAttachmentCopies,
+                FullCaptureTtlMinutes = fullCaptureTtlMinutes ?? new TelegramDebugTraceOptions().FullCaptureTtlMinutes,
                 MaxTraceFileBytes = maxTraceFileBytes ?? new TelegramDebugTraceOptions().MaxTraceFileBytes,
-            }));
+            }),
+            timeProvider);
 
     private static TelegramDebugTraceEvent CreateEvent(
         string traceId,
@@ -171,7 +350,8 @@ public sealed class TelegramDebugTraceStoreTests
         int? chunkCount = null,
         int? chunkLength = null,
         int? compactedCount = null,
-        string? error = null)
+        string? error = null,
+        string? textBody = null)
         => new(
             traceId,
             timestamp,
@@ -185,5 +365,24 @@ public sealed class TelegramDebugTraceStoreTests
             ChunkCount: chunkCount,
             ChunkLength: chunkLength,
             CompactedCount: compactedCount,
-            Error: error);
+            Error: error,
+            TextBody: textBody);
+
+    private static async Task<JsonElement> ReadSingleTraceEventAsync(string path)
+    {
+        string json = Assert.Single(await File.ReadAllLinesAsync(path, CancellationToken.None));
+        using JsonDocument document = JsonDocument.Parse(json);
+        return document.RootElement.Clone();
+    }
+
+    private sealed class ManualTimeProvider(DateTimeOffset utcNow) : TimeProvider
+    {
+        private DateTimeOffset _utcNow = utcNow;
+
+        public override DateTimeOffset GetUtcNow()
+            => _utcNow;
+
+        public void Advance(TimeSpan delta)
+            => _utcNow += delta;
+    }
 }

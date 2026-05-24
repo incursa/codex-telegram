@@ -116,7 +116,8 @@ internal sealed record TelegramInboundCallback(
     string ChatType,
     string? Data,
     int? MessageThreadId = null,
-    int? SourceMessageId = null)
+    int? SourceMessageId = null,
+    string? TraceId = null)
 {
     public TelegramConversationScope ConversationScope => new(ChatId, MessageThreadId);
 }
@@ -155,6 +156,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
     private readonly ITelegramTurnReactionRegistry _turnReactionRegistry;
     private readonly ITelegramPlanInputCoordinator _planInputCoordinator;
     private readonly ITelegramDebugPreambleMode _debugPreambleMode;
+    private readonly ITelegramOutputModeState _outputModeState;
     private readonly ITelegramForumTopicService _topicService;
     private readonly IAudioTranscriptionService _audioTranscriptionService;
     private readonly IOutboundTelegramQueue _outboundQueue;
@@ -162,6 +164,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
     private readonly ITelegramInputBundleStore _inputBundleStore;
     private readonly TelegramInputBundleCardRenderer _inputBundleCardRenderer;
     private readonly ITelegramDebugTraceStore _traceStore;
+    private readonly ICodexSessionEventLog _eventLog;
     private readonly TelegramBotOptions _options;
     private readonly TelegramInputOptions _inputOptions;
     private readonly ILogger<TelegramCodexBotCommandHandler> _logger;
@@ -184,6 +187,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         ITelegramTurnReactionRegistry turnReactionRegistry,
         ITelegramPlanInputCoordinator planInputCoordinator,
         ITelegramDebugPreambleMode debugPreambleMode,
+        ITelegramOutputModeState outputModeState,
         ITelegramForumTopicService topicService,
         IAudioTranscriptionService audioTranscriptionService,
         IOutboundTelegramQueue outboundQueue,
@@ -191,6 +195,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         ITelegramInputBundleStore inputBundleStore,
         TelegramInputBundleCardRenderer inputBundleCardRenderer,
         ITelegramDebugTraceStore traceStore,
+        ICodexSessionEventLog eventLog,
         IOptions<TelegramBotOptions> options,
         IOptions<TelegramInputOptions> inputOptions,
         ILogger<TelegramCodexBotCommandHandler> logger)
@@ -208,6 +213,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         _turnReactionRegistry = turnReactionRegistry;
         _planInputCoordinator = planInputCoordinator;
         _debugPreambleMode = debugPreambleMode;
+        _outputModeState = outputModeState;
         _topicService = topicService;
         _audioTranscriptionService = audioTranscriptionService;
         _outboundQueue = outboundQueue;
@@ -215,6 +221,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         _inputBundleStore = inputBundleStore;
         _inputBundleCardRenderer = inputBundleCardRenderer;
         _traceStore = traceStore;
+        _eventLog = eventLog;
         _options = options.Value;
         _inputOptions = inputOptions.Value;
         _logger = logger;
@@ -370,6 +377,12 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
                 case "tail":
                     await HandleTailAsync(message, command.Arguments, sender, cancellationToken).ConfigureAwait(false);
                     break;
+                case "turn":
+                    await HandleTurnAsync(message, command.Arguments, sender, cancellationToken).ConfigureAwait(false);
+                    break;
+                case "output":
+                    await HandleOutputAsync(message, command.Arguments, sender, cancellationToken).ConfigureAwait(false);
+                    break;
                 case "status":
                     await HandleStatusAsync(message, command.Arguments, sender, cancellationToken).ConfigureAwait(false);
                     break;
@@ -469,6 +482,13 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
                     await sender.AnswerCallbackQueryAsync(callback.Id, "Selected project.", cancellationToken).ConfigureAwait(false);
                     await HandleProjectSelectAsync(callbackMessage, parts[1], sender, cancellationToken).ConfigureAwait(false);
                     break;
+                case "new":
+                    await sender.AnswerCallbackQueryAsync(callback.Id, "Creating session.", cancellationToken).ConfigureAwait(false);
+                    await HandleNewAsync(callbackMessage, parts[1] == "_" ? string.Empty : parts[1], sender, cancellationToken).ConfigureAwait(false);
+                    break;
+                case "input":
+                    await HandleSessionInputActionCallbackAsync(callbackMessage, callback.Id, parts[1], sender, cancellationToken).ConfigureAwait(false);
+                    break;
                 case "status":
                     await sender.AnswerCallbackQueryAsync(callback.Id, "Status.", cancellationToken).ConfigureAwait(false);
                     await HandleStatusAsync(callbackMessage, parts[1], sender, cancellationToken).ConfigureAwait(false);
@@ -499,32 +519,42 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
                     await sender.AnswerCallbackQueryAsync(callback.Id, "Tail.", cancellationToken).ConfigureAwait(false);
                     await HandleTailAsync(callbackMessage, parts[1], sender, cancellationToken).ConfigureAwait(false);
                     break;
+                case "turn":
+                    await sender.AnswerCallbackQueryAsync(callback.Id, "Turn history.", cancellationToken).ConfigureAwait(false);
+                    await HandleTurnCallbackAsync(callbackMessage, parts[1], sender, cancellationToken).ConfigureAwait(false);
+                    break;
+                case "output":
+                    await sender.AnswerCallbackQueryAsync(callback.Id, "Output mode.", cancellationToken).ConfigureAwait(false);
+                    await HandleOutputAsync(callbackMessage, parts[1], sender, cancellationToken).ConfigureAwait(false);
+                    break;
+                case "outmode":
+                    await sender.AnswerCallbackQueryAsync(callback.Id, "Output mode updated.", cancellationToken).ConfigureAwait(false);
+                    await HandleOutputAsync(callbackMessage, "mode " + parts[1], sender, cancellationToken).ConfigureAwait(false);
+                    break;
                 case "trace":
                     await sender.AnswerCallbackQueryAsync(callback.Id, "Trace.", cancellationToken).ConfigureAwait(false);
                     await HandleTraceAsync(callbackMessage, parts[1], sender, cancellationToken).ConfigureAwait(false);
                     break;
                 case "bsend":
-                    await sender.AnswerCallbackQueryAsync(callback.Id, "Sending bundle.", cancellationToken).ConfigureAwait(false);
-                    await HandleBundleSendNowCallbackAsync(callbackMessage, parts[1], sender, cancellationToken).ConfigureAwait(false);
+                    await HandleBundleSendNowCallbackAsync(callbackMessage, callback.Id, parts[1], sender, cancellationToken).ConfigureAwait(false);
                     break;
                 case "bqueue":
-                    await sender.AnswerCallbackQueryAsync(callback.Id, "Queueing bundle.", cancellationToken).ConfigureAwait(false);
-                    await HandleBundleQueueCallbackAsync(callbackMessage, parts[1], sender, cancellationToken).ConfigureAwait(false);
+                    await HandleBundleQueueCallbackAsync(callbackMessage, callback.Id, parts[1], sender, cancellationToken).ConfigureAwait(false);
                     break;
                 case "bsteer":
-                    await sender.AnswerCallbackQueryAsync(callback.Id, "Steering.", cancellationToken).ConfigureAwait(false);
-                    await HandleBundleSteerCallbackAsync(callbackMessage, parts[1], sender, cancellationToken).ConfigureAwait(false);
+                    await HandleBundleSteerCallbackAsync(callbackMessage, callback.Id, parts[1], textOnly: false, sender, cancellationToken).ConfigureAwait(false);
+                    break;
+                case "bsteertext":
+                    await HandleBundleSteerCallbackAsync(callbackMessage, callback.Id, parts[1], textOnly: true, sender, cancellationToken).ConfigureAwait(false);
                     break;
                 case "badd":
-                    await sender.AnswerCallbackQueryAsync(callback.Id, "Send more messages to add to this bundle.", cancellationToken).ConfigureAwait(false);
+                    await HandleBundleAddCallbackAsync(callbackMessage, callback.Id, parts[1], sender, cancellationToken).ConfigureAwait(false);
                     break;
                 case "bclear":
-                    await sender.AnswerCallbackQueryAsync(callback.Id, "Clearing bundle.", cancellationToken).ConfigureAwait(false);
-                    await HandleBundleClearCallbackAsync(callbackMessage, parts[1], sender, cancellationToken).ConfigureAwait(false);
+                    await HandleBundleClearCallbackAsync(callbackMessage, callback.Id, parts[1], sender, cancellationToken).ConfigureAwait(false);
                     break;
                 case "bcancel":
-                    await sender.AnswerCallbackQueryAsync(callback.Id, "Cancelling bundle.", cancellationToken).ConfigureAwait(false);
-                    await HandleBundleCancelCallbackAsync(callbackMessage, parts[1], sender, cancellationToken).ConfigureAwait(false);
+                    await HandleBundleCancelCallbackAsync(callbackMessage, callback.Id, parts[1], sender, cancellationToken).ConfigureAwait(false);
                     break;
                 case "btrace":
                     await sender.AnswerCallbackQueryAsync(callback.Id, "Trace.", cancellationToken).ConfigureAwait(false);
@@ -1024,6 +1054,25 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
                     modelControl.Model,
                     modelControl.ReasoningEffort,
                     cancellationToken).ConfigureAwait(false);
+                string traceId = message.TraceId ?? _traceStore.CreateTraceId();
+                await _traceStore.RecordAsync(
+                    new TelegramDebugTraceEvent(
+                        traceId,
+                        DateTimeOffset.UtcNow,
+                        "codex.settings.updated",
+                        SessionId: session.Id,
+                        ChatId: message.ChatId,
+                        MessageThreadId: message.MessageThreadId,
+                        SourceMessageId: message.SourceMessageId,
+                        UserId: message.UserId,
+                        Direction: "codex",
+                        Status: "updated",
+                        Metadata: new Dictionary<string, string>
+                        {
+                            ["model"] = settings.Model ?? string.Empty,
+                            ["reasoningEffort"] = settings.ReasoningEffort ?? string.Empty,
+                        }),
+                    cancellationToken).ConfigureAwait(false);
                 string? usageSummary = await TryBuildAccountUsageSummaryAsync(cancellationToken).ConfigureAwait(false);
                 await ReplyAsync(sender, message, "Updated model settings:" + Environment.NewLine + FormatModelSettings(settings, usageSummary), null, cancellationToken).ConfigureAwait(false);
 
@@ -1055,13 +1104,56 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             return;
         }
 
+        string traceId = message.TraceId ?? _traceStore.CreateTraceId();
+        message = message with { TraceId = traceId };
+        await _traceStore.RecordAsync(
+            new TelegramDebugTraceEvent(
+                traceId,
+                DateTimeOffset.UtcNow,
+                "telegram.voice.transcription.start",
+                ChatId: message.ChatId,
+                MessageThreadId: message.MessageThreadId,
+                SourceMessageId: message.SourceMessageId,
+                UserId: message.UserId,
+                Direction: "inbound",
+                Metadata: new Dictionary<string, string>
+                {
+                    ["audioPath"] = message.AudioFilePath,
+                }),
+            cancellationToken).ConfigureAwait(false);
+
         string transcript;
         try
         {
             transcript = await _audioTranscriptionService.TranscribeAsync(message.AudioFilePath, cancellationToken).ConfigureAwait(false);
+            await _traceStore.RecordAsync(
+                new TelegramDebugTraceEvent(
+                    traceId,
+                    DateTimeOffset.UtcNow,
+                    "telegram.voice.transcription.completed",
+                    ChatId: message.ChatId,
+                    MessageThreadId: message.MessageThreadId,
+                    SourceMessageId: message.SourceMessageId,
+                    UserId: message.UserId,
+                    Direction: "inbound",
+                    TextLength: transcript.Length,
+                    TextBody: transcript),
+                cancellationToken).ConfigureAwait(false);
         }
         catch (Exception exception)
         {
+            await _traceStore.RecordAsync(
+                new TelegramDebugTraceEvent(
+                    traceId,
+                    DateTimeOffset.UtcNow,
+                    "telegram.voice.transcription.failed",
+                    ChatId: message.ChatId,
+                    MessageThreadId: message.MessageThreadId,
+                    SourceMessageId: message.SourceMessageId,
+                    UserId: message.UserId,
+                    Direction: "inbound",
+                    Error: exception.Message),
+                cancellationToken).ConfigureAwait(false);
             _logger.LogError(exception, "Audio transcription failed for Telegram user {UserId} in chat {ChatId}.", message.UserId, message.ChatId);
             await ReplyAsync(sender, message, $"Audio transcription failed: {exception.Message}", null, cancellationToken).ConfigureAwait(false);
             return;
@@ -1082,7 +1174,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             Text = transcript,
             AudioFilePath = null,
             Attachments = null,
-            TraceId = message.TraceId ?? _traceStore.CreateTraceId(),
+            TraceId = traceId,
         };
         if (await TryCaptureInputBundleAsync(transcriptMessage, transcript, hasMedia: true, "voice transcript", sender, cancellationToken).ConfigureAwait(false))
         {
@@ -1118,13 +1210,14 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
 
         CodexSessionSummary session = await ResolveOrCreateChatSessionAsync(message, cancellationToken).ConfigureAwait(false);
         TelegramOutboundQueueStatus outboundStatus = await _outboundQueue.GetStatusAsync(cancellationToken).ConfigureAwait(false);
-        bool hasActiveTurn = _turnCoordinator.HasActiveTurnForThread(session.Id)
-            || IsLive(session.Status)
+        bool hasSteerableTurn = _turnCoordinator.HasActiveTurnForThread(session.Id);
+        bool shouldQueueForLater = IsLive(session.Status)
             || HasPendingOutboundForConversation(outboundStatus, message.ConversationScope);
+        bool hasInFlightWork = hasSteerableTurn || shouldQueueForLater;
 
         bool shouldCapture = existing is not null
             || _inputOptions.DefaultCaptureMode == TelegramInputCaptureMode.BundleAlways
-            || (_inputOptions.DefaultCaptureMode == TelegramInputCaptureMode.BundleWhenActiveOrMedia && (hasActiveTurn || hasMedia));
+            || (_inputOptions.DefaultCaptureMode == TelegramInputCaptureMode.BundleWhenActiveOrMedia && (hasInFlightWork || hasMedia));
         if (!shouldCapture)
         {
             return false;
@@ -1148,7 +1241,8 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
                 Direction: "inbound",
                 TextLength: text?.Length ?? 0,
                 AttachmentCount: durableAttachments?.Count ?? 0,
-                Metadata: BuildInputTraceMetadata(textSource, durableAttachments)),
+                Metadata: BuildInputTraceMetadata(textSource, durableAttachments),
+                TextBody: BuildCodexInputText(message, text)),
             cancellationToken).ConfigureAwait(false);
 
         TelegramInputBundle bundle = await _inputBundleStore.AppendAsync(
@@ -1157,7 +1251,9 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
                 message.UserId,
                 session.Id,
                 session.Name,
-                hasActiveTurn ? TelegramInputBundleIntent.SteerCurrentTurn : TelegramInputBundleIntent.SendNow,
+                hasSteerableTurn
+                    ? TelegramInputBundleIntent.SteerCurrentTurn
+                    : shouldQueueForLater ? TelegramInputBundleIntent.QueueNext : TelegramInputBundleIntent.SendNow,
                 BuildCodexInputText(message, text),
                 textSource,
                 durableAttachments,
@@ -1181,36 +1277,209 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
                 {
                     ["intent"] = bundle.Intent.ToString(),
                     ["sourceCount"] = bundle.SourceMessageIds.Count.ToString(CultureInfo.InvariantCulture),
-                }),
+                },
+                TextBody: bundle.CombinedText),
             cancellationToken).ConfigureAwait(false);
-        await PublishInputBundleCardAsync(bundle, hasActiveTurn, sender, cancellationToken).ConfigureAwait(false);
+
+        await PublishInputBundleCardAsync(
+            bundle,
+            new TelegramInputBundleCardContext(
+                hasSteerableTurn,
+                shouldQueueForLater,
+                _inputOptions.AllowAttachmentSteering),
+            sender,
+            cancellationToken).ConfigureAwait(false);
         _followRegistry.FollowThread(message.ConversationScope, session.Id);
         return true;
     }
 
-    private async Task PublishInputBundleCardAsync(
-        TelegramInputBundle bundle,
-        bool hasActiveTurn,
+    internal async Task<bool> ProcessDueInputBundleAsync(
         ITelegramBotMessageSender sender,
         CancellationToken cancellationToken)
     {
-        TelegramInputBundleCard card = _inputBundleCardRenderer.Render(bundle);
-        TelegramDebugMessageContext debugContext = CreateDebugContext("input-bundle", bundle.SessionId, kind: bundle.Intent.ToString(), messageId: bundle.Id);
+        int autoDispatchAfterSeconds = _inputOptions.AutoDispatchAfterSeconds;
+        if (autoDispatchAfterSeconds <= 0)
+        {
+            return false;
+        }
+
+        await _inputBundleStore.ExpireAsync(cancellationToken).ConfigureAwait(false);
+        DateTimeOffset cutoff = DateTimeOffset.UtcNow.AddSeconds(-autoDispatchAfterSeconds);
+        TelegramInputBundle? bundle = (await _inputBundleStore.ListAsync(null, cancellationToken).ConfigureAwait(false))
+            .Where(candidate => candidate.Status == TelegramInputBundleStatus.Capturing
+                && candidate.HasContent
+                && candidate.UpdatedAt <= cutoff)
+            .OrderBy(candidate => candidate.UpdatedAt)
+            .ThenBy(candidate => candidate.Id, StringComparer.OrdinalIgnoreCase)
+            .FirstOrDefault();
+        if (bundle is null)
+        {
+            return false;
+        }
+
+        TelegramInputBundle? latest = await _inputBundleStore.TryGetBundleAsync(bundle.Id, bundle.UserId, cancellationToken).ConfigureAwait(false);
+        if (latest is null
+            || latest.Status != TelegramInputBundleStatus.Capturing
+            || !latest.HasContent
+            || latest.UpdatedAt > cutoff)
+        {
+            return false;
+        }
+
+        await AutoDispatchInputBundleAsync(latest, sender, cancellationToken).ConfigureAwait(false);
+        return true;
+    }
+
+    private async Task AutoDispatchInputBundleAsync(
+        TelegramInputBundle bundle,
+        ITelegramBotMessageSender sender,
+        CancellationToken cancellationToken)
+    {
+        TelegramInboundMessage message = MessageFromBundle(CreateSyntheticBundleMessage(bundle), bundle);
+        CodexSessionSummary? session = await TryResolveBundleSessionAsync(message, bundle, sender, cancellationToken).ConfigureAwait(false);
+        if (session is null)
+        {
+            return;
+        }
+
+        TelegramOutboundQueueStatus outboundStatus = await _outboundQueue.GetStatusAsync(cancellationToken).ConfigureAwait(false);
+        bool shouldQueue = _turnCoordinator.HasActiveTurnForThread(session.Id)
+            || IsLive(session.Status)
+            || HasPendingOutboundForConversation(outboundStatus, bundle.ConversationScope);
+        TelegramInputBundleIntent intent = shouldQueue
+            ? TelegramInputBundleIntent.QueueNext
+            : TelegramInputBundleIntent.SendNow;
+        TelegramInputBundleStatus completedStatus = shouldQueue
+            ? TelegramInputBundleStatus.Queued
+            : TelegramInputBundleStatus.Sent;
+
+        await _traceStore.RecordAsync(
+            new TelegramDebugTraceEvent(
+                bundle.TraceId,
+                DateTimeOffset.UtcNow,
+                "telegram.bundle.auto_dispatch.start",
+                SessionId: session.Id,
+                ChatId: bundle.ConversationScope.ChatId,
+                MessageThreadId: bundle.ConversationScope.MessageThreadId,
+                UserId: bundle.UserId,
+                BundleId: bundle.Id,
+                Direction: "telegram",
+                Status: intent.ToString(),
+                TextLength: bundle.CombinedText.Length,
+                AttachmentCount: bundle.Attachments.Count),
+            cancellationToken).ConfigureAwait(false);
+
+        TelegramInputBundle? updatedBundle = await TrySetBundleIntentForDispatchAsync(message, bundle, intent, sender, cancellationToken).ConfigureAwait(false);
+        if (updatedBundle is null)
+        {
+            return;
+        }
+
+        bundle = updatedBundle;
+        TelegramInputBundle? prepared = await TryPrepareBundleForDispatchAsync(
+            message,
+            bundle,
+            shouldQueue ? "auto-queued" : "auto-sent",
+            sender,
+            cancellationToken).ConfigureAwait(false);
+        if (prepared is null)
+        {
+            return;
+        }
+
+        try
+        {
+            if (shouldQueue)
+            {
+                await QueuePromptAsync(MessageFromBundle(message, prepared), session, prepared.CombinedText, sender, cancellationToken).ConfigureAwait(false);
+            }
+            else
+            {
+                await SendOrQueueAsync(MessageFromBundle(message, prepared), session, prepared.CombinedText, sender, cancellationToken).ConfigureAwait(false);
+            }
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+        {
+            await HandleBundleDispatchFailureAsync(
+                message,
+                prepared,
+                shouldQueue ? "auto-queued" : "auto-sent",
+                exception,
+                sender,
+                cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        TelegramInputBundle? completed = await _inputBundleStore.TryCompleteBundleAsync(
+            prepared.Id,
+            prepared.UserId,
+            intent,
+            completedStatus,
+            deleteAttachments: false,
+            cancellationToken).ConfigureAwait(false);
+        if (completed is not null)
+        {
+            await PublishInputBundleCardAsync(
+                completed,
+                await BuildInputBundleCardContextAsync(completed, cancellationToken).ConfigureAwait(false),
+                sender,
+                cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private static TelegramInboundMessage CreateSyntheticBundleMessage(TelegramInputBundle bundle)
+        => new(
+            bundle.UserId,
+            bundle.ConversationScope.ChatId,
+            "private",
+            bundle.CombinedText,
+            bundle.ConversationScope.MessageThreadId,
+            Attachments: bundle.Attachments.ToArray(),
+            TraceId: bundle.TraceId,
+            SourceMessageIds: bundle.SourceMessageIds.ToArray());
+
+    private async Task PublishInputBundleCardAsync(
+        TelegramInputBundle bundle,
+        TelegramInputBundleCardContext context,
+        ITelegramBotMessageSender sender,
+        CancellationToken cancellationToken)
+    {
+        TelegramInputBundleCard card = _inputBundleCardRenderer.Render(bundle, context);
+        TelegramDebugMessageContext debugContext = CreateDebugContext("input-bundle", bundle.SessionId, kind: bundle.Intent.ToString(), messageId: bundle.Id, traceId: bundle.TraceId);
         if (bundle.StatusCardMessageId.HasValue)
         {
+            int previousMessageId = bundle.StatusCardMessageId.Value;
             int? currentMessageId = await sender.EditTextMessageOrSendReplacementAsync(
                 bundle.ConversationScope,
-                bundle.StatusCardMessageId.Value,
+                previousMessageId,
                 card.Text,
                 card.Buttons,
                 cancellationToken,
                 debugContext).ConfigureAwait(false);
-            if (currentMessageId.HasValue && currentMessageId.Value != bundle.StatusCardMessageId.Value)
+            if (currentMessageId.HasValue && currentMessageId.Value != previousMessageId)
             {
                 await _inputBundleStore.TrySetStatusCardMessageIdAsync(
                     bundle.Id,
                     bundle.UserId,
                     currentMessageId.Value,
+                    cancellationToken).ConfigureAwait(false);
+                await _traceStore.RecordAsync(
+                    new TelegramDebugTraceEvent(
+                        bundle.TraceId,
+                        DateTimeOffset.UtcNow,
+                        "telegram.card.edit_replaced",
+                        SessionId: bundle.SessionId,
+                        ChatId: bundle.ConversationScope.ChatId,
+                        MessageThreadId: bundle.ConversationScope.MessageThreadId,
+                        UserId: bundle.UserId,
+                        BundleId: bundle.Id,
+                        Direction: "telegram",
+                        Metadata: new Dictionary<string, string>
+                        {
+                            ["card"] = "input-bundle",
+                            ["previousMessageId"] = previousMessageId.ToString(CultureInfo.InvariantCulture),
+                            ["replacementMessageId"] = currentMessageId.Value.ToString(CultureInfo.InvariantCulture),
+                        }),
                     cancellationToken).ConfigureAwait(false);
             }
 
@@ -1225,12 +1494,30 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             debugContext).ConfigureAwait(false);
         if (statusMessageId.HasValue)
         {
-            await _inputBundleStore.TryUpdateBundleAsync(
+            await _inputBundleStore.TrySetStatusCardMessageIdAsync(
                 bundle.Id,
                 bundle.UserId,
-                new TelegramInputBundleUpdate(StatusMessageId: statusMessageId.Value),
+                statusMessageId.Value,
                 cancellationToken).ConfigureAwait(false);
         }
+    }
+
+    private async Task<TelegramInputBundleCardContext> BuildInputBundleCardContextAsync(
+        TelegramInputBundle bundle,
+        CancellationToken cancellationToken)
+    {
+        CodexSessionSummary? session = string.IsNullOrWhiteSpace(bundle.SessionId)
+            ? null
+            : await _sessionManager.GetSessionAsync(bundle.SessionId, cancellationToken).ConfigureAwait(false);
+        TelegramOutboundQueueStatus outboundStatus = await _outboundQueue.GetStatusAsync(cancellationToken).ConfigureAwait(false);
+        bool hasSteerableTurn = !string.IsNullOrWhiteSpace(bundle.SessionId)
+            && _turnCoordinator.HasActiveTurnForThread(bundle.SessionId);
+        bool shouldQueueForLater = (session is not null && IsLive(session.Status))
+            || HasPendingOutboundForConversation(outboundStatus, bundle.ConversationScope);
+        return new TelegramInputBundleCardContext(
+            hasSteerableTurn,
+            shouldQueueForLater,
+            _inputOptions.AllowAttachmentSteering);
     }
 
     private static IReadOnlyDictionary<string, string>? BuildInputTraceMetadata(
@@ -1249,6 +1536,25 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
                 attachments.Select(attachment => attachment.IsImage ? "image" : attachment.ContentType ?? "file"));
             metadata["attachmentNames"] = string.Join(",", attachments.Select(attachment => attachment.FileName));
         }
+
+        return metadata;
+    }
+
+    private static IReadOnlyDictionary<string, string>? BuildCodexRequestTraceMetadata(
+        IReadOnlyList<TelegramAttachmentDescriptor>? attachments)
+    {
+        if (attachments is not { Count: > 0 })
+        {
+            return null;
+        }
+
+        Dictionary<string, string> metadata = new(StringComparer.Ordinal)
+        {
+            ["inputItemTypes"] = "text," + string.Join(
+                ",",
+                attachments.Select(attachment => attachment.IsImage ? "local_image" : "mention")),
+            ["attachmentPaths"] = string.Join(",", attachments.Select(attachment => attachment.FilePath)),
+        };
 
         return metadata;
     }
@@ -1328,7 +1634,9 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
                     AttachmentCount: message.Attachments?.Count ?? 0,
                     InputItemCount: message.Attachments is { Count: > 0 }
                         ? TelegramAttachmentInputBuilder.BuildInputItems(trimmed, message.Attachments).Count
-                        : 1),
+                        : 1,
+                    Metadata: BuildCodexRequestTraceMetadata(message.Attachments),
+                    TextBody: trimmed),
                 cancellationToken).ConfigureAwait(false);
             Task<CodexThreadExecutionVm> sendTask = StartSessionSendAsync(message, session, trimmed, planMode, cancellationToken);
             Task timeoutTask = Task.Delay(TelegramSendStartTimeout, cancellationToken);
@@ -1560,7 +1868,9 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
                 Status: planMode ? "plan" : "prompt",
                 TextLength: text.Length,
                 AttachmentCount: durableAttachments?.Count ?? 0,
-                OutboundQueueItemId: promptId),
+                OutboundQueueItemId: promptId,
+                Metadata: BuildInputTraceMetadata("queued", durableAttachments),
+                TextBody: text),
             cancellationToken).ConfigureAwait(false);
 
         _followRegistry.FollowThread(message.ConversationScope, session.Id);
@@ -1610,6 +1920,87 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         _followRegistry.FollowThread(message.ConversationScope, resolved.Session.Id);
         string tail = await _sessionManager.TailAsync(resolved.Session.Id, lineCount, cancellationToken).ConfigureAwait(false);
         await ReplyAsync(sender, message, tail, BuildSessionButtons([resolved.Session]), cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task HandleOutputAsync(TelegramInboundMessage message, string arguments, ITelegramBotMessageSender sender, CancellationToken cancellationToken)
+    {
+        string[] parts = SplitArguments(arguments, 2);
+        string command = parts.FirstOrDefault() ?? "mode";
+        if (command.Equals("mode", StringComparison.OrdinalIgnoreCase))
+        {
+            if (parts.Length < 2)
+            {
+                await ReplyAsync(sender, message, FormatOutputModeStatus(), BuildOutputModeButtons(), cancellationToken, includeNavigationButtons: false).ConfigureAwait(false);
+                return;
+            }
+
+            if (parts[1].Equals("reset", StringComparison.OrdinalIgnoreCase)
+                || parts[1].Equals("config", StringComparison.OrdinalIgnoreCase)
+                || parts[1].Equals("default", StringComparison.OrdinalIgnoreCase))
+            {
+                _outputModeState.ClearRuntimeMode();
+                await ReplyAsync(sender, message, FormatOutputModeStatus("Output mode reset to configuration."), BuildOutputModeButtons(), cancellationToken, includeNavigationButtons: false).ConfigureAwait(false);
+                return;
+            }
+
+            if (!TryParseOutputMode(parts[1], out TelegramOutputPresentationMode mode))
+            {
+                await ReplyAsync(sender, message, "Usage: /output mode [verbose|live|final|reset]", BuildOutputModeButtons(), cancellationToken, includeNavigationButtons: false).ConfigureAwait(false);
+                return;
+            }
+
+            _outputModeState.SetRuntimeMode(mode);
+            await ReplyAsync(sender, message, FormatOutputModeStatus($"Output mode set to {mode}."), BuildOutputModeButtons(), cancellationToken, includeNavigationButtons: false).ConfigureAwait(false);
+            return;
+        }
+
+        await ReplyAsync(sender, message, "Usage: /output mode [verbose|live|final|reset]", BuildOutputModeButtons(), cancellationToken, includeNavigationButtons: false).ConfigureAwait(false);
+    }
+
+    private async Task HandleTurnAsync(TelegramInboundMessage message, string arguments, ITelegramBotMessageSender sender, CancellationToken cancellationToken)
+    {
+        string[] parts = SplitArguments(arguments, 3);
+        string view = parts.FirstOrDefault() ?? "updates";
+        string sessionArgument = parts.Length > 1 ? parts[1] : string.Empty;
+        string? turnId = parts.Length > 2 ? parts[2] : null;
+        ResolvedSession resolved = string.IsNullOrWhiteSpace(sessionArgument)
+            ? await ResolveActiveSessionAsync(message.ConversationScope, cancellationToken).ConfigureAwait(false)
+            : await ResolveSessionAsync(message.ConversationScope, sessionArgument, cancellationToken).ConfigureAwait(false);
+        if (resolved.Session is null)
+        {
+            await ReplyAsync(sender, message, resolved.Message, null, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        await ReplyAsync(
+            sender,
+            message,
+            FormatTurnHistory(resolved.Session, view, turnId),
+            BuildTurnHistoryButtons(resolved.Session.Id),
+            cancellationToken,
+            includeNavigationButtons: false).ConfigureAwait(false);
+    }
+
+    private async Task HandleTurnCallbackAsync(TelegramInboundMessage message, string payload, ITelegramBotMessageSender sender, CancellationToken cancellationToken)
+    {
+        string[] parts = payload.Split('|', 3, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        string view = parts.Length > 0 ? parts[0] : "updates";
+        string sessionId = parts.Length > 1 ? parts[1] : string.Empty;
+        string? turnId = parts.Length > 2 ? parts[2] : null;
+        ResolvedSession resolved = await ResolveSessionAsync(message.ConversationScope, sessionId, cancellationToken).ConfigureAwait(false);
+        if (resolved.Session is null)
+        {
+            await ReplyAsync(sender, message, resolved.Message, null, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        await ReplyAsync(
+            sender,
+            message,
+            FormatTurnHistory(resolved.Session, view, turnId),
+            BuildTurnHistoryButtons(resolved.Session.Id),
+            cancellationToken,
+            includeNavigationButtons: false).ConfigureAwait(false);
     }
 
     private async Task HandleSteerAsync(TelegramInboundMessage message, string arguments, ITelegramBotMessageSender sender, CancellationToken cancellationToken)
@@ -1931,14 +2322,88 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             : await ResolveSessionAsync(message.ConversationScope, arguments, cancellationToken).ConfigureAwait(false);
         if (resolved.Session is null)
         {
-            await ReplyAsync(sender, message, resolved.Message, null, cancellationToken).ConfigureAwait(false);
+            await ReplyAsync(sender, message, resolved.Message, BuildNoSessionButtons(), cancellationToken, includeNavigationButtons: false).ConfigureAwait(false);
             return;
         }
 
         CodexSessionModelSettings settings = await _sessionManager.GetModelSettingsAsync(resolved.Session.Id, cancellationToken).ConfigureAwait(false);
         string? usageSummary = await TryBuildStatusAccountUsageSummaryAsync(cancellationToken).ConfigureAwait(false);
-        string statusCard = await FormatSessionStatusCardAsync(resolved.Session, settings, usageSummary, message.ConversationScope, cancellationToken).ConfigureAwait(false);
-        await ReplyAsync(sender, message, statusCard, BuildSessionCardButtons(resolved.Session), cancellationToken).ConfigureAwait(false);
+        TelegramSessionStatusCard statusCard = await FormatSessionStatusCardAsync(resolved.Session, settings, usageSummary, message.ConversationScope, cancellationToken).ConfigureAwait(false);
+        await ReplyAsync(sender, message, statusCard.Text, statusCard.Buttons, cancellationToken, includeNavigationButtons: false).ConfigureAwait(false);
+    }
+
+    private async Task HandleSessionInputActionCallbackAsync(
+        TelegramInboundMessage message,
+        string callbackQueryId,
+        string arguments,
+        ITelegramBotMessageSender sender,
+        CancellationToken cancellationToken)
+    {
+        string[] parts = arguments.Split('|', 2, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (parts.Length != 2)
+        {
+            await sender.AnswerCallbackQueryAsync(callbackQueryId, "Unsupported input action.", cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        ResolvedSession resolved = await ResolveSessionAsync(message.ConversationScope, parts[0], cancellationToken).ConfigureAwait(false);
+        if (resolved.Session is null)
+        {
+            await sender.AnswerCallbackQueryAsync(callbackQueryId, "Session unavailable.", cancellationToken).ConfigureAwait(false);
+            await ReplyAsync(sender, message, resolved.Message, BuildNoSessionButtons(), cancellationToken, includeNavigationButtons: false).ConfigureAwait(false);
+            return;
+        }
+
+        TelegramInputBundleIntent intent = parts[1].ToLowerInvariant() switch
+        {
+            "steer" => TelegramInputBundleIntent.SteerCurrentTurn,
+            "queue" => TelegramInputBundleIntent.QueueNext,
+            _ => TelegramInputBundleIntent.SendNow,
+        };
+        string traceId = message.TraceId ?? _traceStore.CreateTraceId();
+        await _stateStore.SetActiveSessionIdAsync(message.ConversationScope, resolved.Session.Id, cancellationToken).ConfigureAwait(false);
+        TelegramInputBundle bundle = await _inputBundleStore.AppendAsync(
+            new TelegramInputBundleAppendRequest(
+                message.ConversationScope,
+                message.UserId,
+                resolved.Session.Id,
+                resolved.Session.Name,
+                intent,
+                null,
+                "button",
+                null,
+                message.SourceMessageId,
+                traceId),
+            cancellationToken).ConfigureAwait(false);
+        bundle = await _inputBundleStore.TrySetIntentAsync(
+            bundle.Id,
+            message.UserId,
+            intent,
+            cancellationToken).ConfigureAwait(false) ?? bundle;
+        await _traceStore.RecordAsync(
+            new TelegramDebugTraceEvent(
+                traceId,
+                DateTimeOffset.UtcNow,
+                "telegram.bundle.opened",
+                SessionId: resolved.Session.Id,
+                ChatId: message.ChatId,
+                MessageThreadId: message.MessageThreadId,
+                UserId: message.UserId,
+                BundleId: bundle.Id,
+                Direction: "telegram",
+                Metadata: new Dictionary<string, string>
+                {
+                    ["intent"] = intent.ToString(),
+                    ["source"] = "session-card",
+                }),
+            cancellationToken).ConfigureAwait(false);
+
+        await sender.AnswerCallbackQueryAsync(callbackQueryId, "Input card ready.", cancellationToken).ConfigureAwait(false);
+        await PublishInputBundleCardAsync(
+            bundle,
+            await BuildInputBundleCardContextAsync(bundle, cancellationToken).ConfigureAwait(false),
+            sender,
+            cancellationToken).ConfigureAwait(false);
     }
 
     private async Task HandleUsageAsync(TelegramInboundMessage message, ITelegramBotMessageSender sender, CancellationToken cancellationToken)
@@ -2122,11 +2587,12 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
 
     private async Task HandleBundleSendNowCallbackAsync(
         TelegramInboundMessage message,
+        string callbackQueryId,
         string bundleId,
         ITelegramBotMessageSender sender,
         CancellationToken cancellationToken)
     {
-        TelegramInputBundle? bundle = await TryGetActiveBundleForCallbackAsync(message, bundleId, sender, cancellationToken).ConfigureAwait(false);
+        TelegramInputBundle? bundle = await TryGetActiveBundleForCallbackAsync(message, callbackQueryId, bundleId, sender, cancellationToken).ConfigureAwait(false);
         if (bundle is null)
         {
             return;
@@ -2138,6 +2604,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             return;
         }
 
+        await sender.AnswerCallbackQueryAsync(callbackQueryId, "Sending bundle.", cancellationToken).ConfigureAwait(false);
         bundle = await TrySetBundleIntentForDispatchAsync(message, bundle, TelegramInputBundleIntent.SendNow, sender, cancellationToken).ConfigureAwait(false);
         if (bundle is null)
         {
@@ -2172,11 +2639,12 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
 
     private async Task HandleBundleQueueCallbackAsync(
         TelegramInboundMessage message,
+        string callbackQueryId,
         string bundleId,
         ITelegramBotMessageSender sender,
         CancellationToken cancellationToken)
     {
-        TelegramInputBundle? bundle = await TryGetActiveBundleForCallbackAsync(message, bundleId, sender, cancellationToken).ConfigureAwait(false);
+        TelegramInputBundle? bundle = await TryGetActiveBundleForCallbackAsync(message, callbackQueryId, bundleId, sender, cancellationToken).ConfigureAwait(false);
         if (bundle is null)
         {
             return;
@@ -2188,6 +2656,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             return;
         }
 
+        await sender.AnswerCallbackQueryAsync(callbackQueryId, "Queued for next turn.", cancellationToken).ConfigureAwait(false);
         bundle = await TrySetBundleIntentForDispatchAsync(message, bundle, TelegramInputBundleIntent.QueueNext, sender, cancellationToken).ConfigureAwait(false);
         if (bundle is null)
         {
@@ -2221,11 +2690,13 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
 
     private async Task HandleBundleSteerCallbackAsync(
         TelegramInboundMessage message,
+        string callbackQueryId,
         string bundleId,
+        bool textOnly,
         ITelegramBotMessageSender sender,
         CancellationToken cancellationToken)
     {
-        TelegramInputBundle? bundle = await TryGetActiveBundleForCallbackAsync(message, bundleId, sender, cancellationToken).ConfigureAwait(false);
+        TelegramInputBundle? bundle = await TryGetActiveBundleForCallbackAsync(message, callbackQueryId, bundleId, sender, cancellationToken).ConfigureAwait(false);
         if (bundle is null)
         {
             return;
@@ -2237,6 +2708,44 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             return;
         }
 
+        if (!_turnCoordinator.HasActiveTurnForThread(session.Id))
+        {
+            TelegramInputBundle? updated = await _inputBundleStore.TrySetIntentAsync(
+                bundle.Id,
+                message.UserId,
+                TelegramInputBundleIntent.SendNow,
+                cancellationToken).ConfigureAwait(false);
+            bundle = updated ?? bundle;
+            await sender.AnswerCallbackQueryAsync(callbackQueryId, "Turn finished.", cancellationToken).ConfigureAwait(false);
+            await ReplyAsync(sender, message, "That turn has finished. I refreshed the bundle; use Send now or Queue next.", null, cancellationToken).ConfigureAwait(false);
+            await PublishInputBundleCardAsync(
+                bundle,
+                await BuildInputBundleCardContextAsync(bundle, cancellationToken).ConfigureAwait(false),
+                sender,
+                cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        if (!textOnly && bundle.Attachments.Count > 0 && !_inputOptions.AllowAttachmentSteering)
+        {
+            await sender.AnswerCallbackQueryAsync(callbackQueryId, "Attachment steering is not supported.", cancellationToken).ConfigureAwait(false);
+            await ReplyAsync(sender, message, "Attachment steering is not supported; queue the full bundle or steer text only.", null, cancellationToken).ConfigureAwait(false);
+            await PublishInputBundleCardAsync(
+                bundle,
+                await BuildInputBundleCardContextAsync(bundle, cancellationToken).ConfigureAwait(false),
+                sender,
+                cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        if (textOnly && string.IsNullOrWhiteSpace(bundle.CombinedText))
+        {
+            await sender.AnswerCallbackQueryAsync(callbackQueryId, "No text to steer.", cancellationToken).ConfigureAwait(false);
+            await ReplyAsync(sender, message, "This bundle has no text or transcript to steer. Queue the full bundle or add text first.", null, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        await sender.AnswerCallbackQueryAsync(callbackQueryId, textOnly ? "Steering text." : "Steering.", cancellationToken).ConfigureAwait(false);
         bundle = await TrySetBundleIntentForDispatchAsync(message, bundle, TelegramInputBundleIntent.SteerCurrentTurn, sender, cancellationToken).ConfigureAwait(false);
         if (bundle is null)
         {
@@ -2249,34 +2758,14 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             return;
         }
 
-        if (!_turnCoordinator.HasActiveTurnForThread(session.Id) && !IsLive(session.Status))
-        {
-            try
-            {
-                await QueuePromptAsync(MessageFromBundle(message, bundle), session, bundle.CombinedText, sender, cancellationToken).ConfigureAwait(false);
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
-            {
-                await HandleBundleDispatchFailureAsync(message, bundle, "queued", ex, sender, cancellationToken).ConfigureAwait(false);
-                return;
-            }
-
-            await _inputBundleStore.TryCompleteBundleAsync(
-                bundle.Id,
-                message.UserId,
-                TelegramInputBundleIntent.QueueNext,
-                TelegramInputBundleStatus.Queued,
-                deleteAttachments: false,
-                cancellationToken).ConfigureAwait(false);
-            return;
-        }
-
-        IReadOnlyList<CodexInputItem> input = TelegramAttachmentInputBuilder.BuildInputItems(bundle.CombinedText, bundle.Attachments);
+        IReadOnlyList<CodexInputItem> input = textOnly
+            ? [new CodexTextInput { Text = bundle.CombinedText }]
+            : TelegramAttachmentInputBuilder.BuildInputItems(bundle.CombinedText, bundle.Attachments);
         await _traceStore.RecordAsync(
             new TelegramDebugTraceEvent(
                 bundle.TraceId,
                 DateTimeOffset.UtcNow,
-                "codex.steer.start",
+                textOnly ? "codex.steer.text_only.start" : "codex.steer.start",
                 SessionId: session.Id,
                 ChatId: bundle.ConversationScope.ChatId,
                 MessageThreadId: bundle.ConversationScope.MessageThreadId,
@@ -2285,7 +2774,9 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
                 Direction: "codex",
                 TextLength: bundle.CombinedText.Length,
                 AttachmentCount: bundle.Attachments.Count,
-                InputItemCount: input.Count),
+                InputItemCount: input.Count,
+                Metadata: BuildCodexRequestTraceMetadata(bundle.Attachments),
+                TextBody: bundle.CombinedText),
             cancellationToken).ConfigureAwait(false);
 
         try
@@ -2295,6 +2786,17 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
         {
             await HandleBundleDispatchFailureAsync(message, bundle, "steered", ex, sender, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        if (textOnly && bundle.Attachments.Count > 0)
+        {
+            await ReplyAsync(sender, message, "Steered the text. The bundle is still open so the attachments can be queued or cancelled.", null, cancellationToken).ConfigureAwait(false);
+            await PublishInputBundleCardAsync(
+                bundle,
+                await BuildInputBundleCardContextAsync(bundle, cancellationToken).ConfigureAwait(false),
+                sender,
+                cancellationToken).ConfigureAwait(false);
             return;
         }
 
@@ -2311,18 +2813,52 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
 
     private async Task<TelegramInputBundle?> TryGetActiveBundleForCallbackAsync(
         TelegramInboundMessage message,
-        string bundleId,
+        string callbackQueryId,
+        string bundleReference,
         ITelegramBotMessageSender sender,
         CancellationToken cancellationToken)
     {
-        TelegramInputBundle? bundle = await _inputBundleStore.TryGetBundleAsync(bundleId, message.UserId, cancellationToken).ConfigureAwait(false);
+        TelegramInputBundleCallback callback = TelegramInputBundleCardBehavior.ParseCallback(bundleReference);
+        TelegramInputBundle? bundle = await _inputBundleStore.TryGetBundleAsync(callback.BundleId, message.UserId, cancellationToken).ConfigureAwait(false);
         if (bundle is null || bundle.Status != TelegramInputBundleStatus.Capturing)
         {
+            await sender.AnswerCallbackQueryAsync(callbackQueryId, "Bundle is no longer active.", cancellationToken).ConfigureAwait(false);
             await ReplyAsync(sender, message, "That input bundle was already sent, cancelled, or expired.", null, cancellationToken).ConfigureAwait(false);
             return null;
         }
 
+        if (IsStaleBundleCallback(message, bundle, callback))
+        {
+            await sender.AnswerCallbackQueryAsync(callbackQueryId, "Card refreshed.", cancellationToken).ConfigureAwait(false);
+            await ReplyAsync(sender, message, "That input card is stale. I refreshed the current bundle card.", null, cancellationToken).ConfigureAwait(false);
+            await PublishInputBundleCardAsync(
+                bundle,
+                await BuildInputBundleCardContextAsync(bundle, cancellationToken).ConfigureAwait(false),
+                sender,
+                cancellationToken).ConfigureAwait(false);
+            return null;
+        }
+
         return bundle;
+    }
+
+    private static bool IsStaleBundleCallback(
+        TelegramInboundMessage message,
+        TelegramInputBundle bundle,
+        TelegramInputBundleCallback callback)
+    {
+        if (message.SourceMessageId.HasValue
+            && bundle.StatusCardMessageId.HasValue
+            && message.SourceMessageId.Value != bundle.StatusCardMessageId.Value)
+        {
+            return true;
+        }
+
+        return !string.IsNullOrWhiteSpace(callback.Revision)
+            && !string.Equals(
+                callback.Revision,
+                TelegramInputBundleCardBehavior.Revision(bundle),
+                StringComparison.Ordinal);
     }
 
     private async Task<CodexSessionSummary?> TryResolveBundleSessionAsync(
@@ -2452,18 +2988,44 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
                 Error: exception.Message),
             cancellationToken).ConfigureAwait(false);
         await ReplyAsync(sender, message, $"The input bundle could not be {attemptedAction}. It is still open. Error: {exception.Message}", null, cancellationToken).ConfigureAwait(false);
-        bool hasActiveTurn = _turnCoordinator.HasActiveTurnForThread(bundle.SessionId);
-        await PublishInputBundleCardAsync(bundle, hasActiveTurn, sender, cancellationToken).ConfigureAwait(false);
+        await PublishInputBundleCardAsync(
+            bundle,
+            await BuildInputBundleCardContextAsync(bundle, cancellationToken).ConfigureAwait(false),
+            sender,
+            cancellationToken).ConfigureAwait(false);
     }
 
-    private async Task HandleBundleCancelCallbackAsync(
+    private async Task HandleBundleAddCallbackAsync(
         TelegramInboundMessage message,
+        string callbackQueryId,
         string bundleId,
         ITelegramBotMessageSender sender,
         CancellationToken cancellationToken)
     {
+        TelegramInputBundle? bundle = await TryGetActiveBundleForCallbackAsync(message, callbackQueryId, bundleId, sender, cancellationToken).ConfigureAwait(false);
+        if (bundle is null)
+        {
+            return;
+        }
+
+        await sender.AnswerCallbackQueryAsync(callbackQueryId, "Send more messages to add to this bundle.", cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task HandleBundleCancelCallbackAsync(
+        TelegramInboundMessage message,
+        string callbackQueryId,
+        string bundleId,
+        ITelegramBotMessageSender sender,
+        CancellationToken cancellationToken)
+    {
+        TelegramInputBundle? active = await TryGetActiveBundleForCallbackAsync(message, callbackQueryId, bundleId, sender, cancellationToken).ConfigureAwait(false);
+        if (active is null)
+        {
+            return;
+        }
+
         TelegramInputBundle? bundle = await _inputBundleStore.TryCompleteBundleAsync(
-            bundleId,
+            active.Id,
             message.UserId,
             TelegramInputBundleIntent.SendNow,
             TelegramInputBundleStatus.Cancelled,
@@ -2471,10 +3033,12 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             cancellationToken).ConfigureAwait(false);
         if (bundle is null)
         {
+            await sender.AnswerCallbackQueryAsync(callbackQueryId, "Bundle is no longer active.", cancellationToken).ConfigureAwait(false);
             await ReplyAsync(sender, message, "That input bundle was already sent, cancelled, or expired.", null, cancellationToken).ConfigureAwait(false);
             return;
         }
 
+        await sender.AnswerCallbackQueryAsync(callbackQueryId, "Bundle cancelled.", cancellationToken).ConfigureAwait(false);
         await _traceStore.RecordAsync(
             new TelegramDebugTraceEvent(
                 bundle.TraceId,
@@ -2492,20 +3056,29 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
 
     private async Task HandleBundleClearCallbackAsync(
         TelegramInboundMessage message,
+        string callbackQueryId,
         string bundleId,
         ITelegramBotMessageSender sender,
         CancellationToken cancellationToken)
     {
+        TelegramInputBundle? active = await TryGetActiveBundleForCallbackAsync(message, callbackQueryId, bundleId, sender, cancellationToken).ConfigureAwait(false);
+        if (active is null)
+        {
+            return;
+        }
+
         TelegramInputBundle? bundle = await _inputBundleStore.TryClearAsync(
-            bundleId,
+            active.Id,
             message.UserId,
             cancellationToken).ConfigureAwait(false);
         if (bundle is null)
         {
+            await sender.AnswerCallbackQueryAsync(callbackQueryId, "Bundle is no longer active.", cancellationToken).ConfigureAwait(false);
             await ReplyAsync(sender, message, "That input bundle was already sent, cancelled, or expired.", null, cancellationToken).ConfigureAwait(false);
             return;
         }
 
+        await sender.AnswerCallbackQueryAsync(callbackQueryId, "Bundle cleared.", cancellationToken).ConfigureAwait(false);
         await _traceStore.RecordAsync(
             new TelegramDebugTraceEvent(
                 bundle.TraceId,
@@ -2520,8 +3093,11 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
                 Status: "cleared"),
             cancellationToken).ConfigureAwait(false);
 
-        bool hasActiveTurn = _turnCoordinator.HasActiveTurnForThread(bundle.SessionId);
-        await PublishInputBundleCardAsync(bundle, hasActiveTurn, sender, cancellationToken).ConfigureAwait(false);
+        await PublishInputBundleCardAsync(
+            bundle,
+            await BuildInputBundleCardContextAsync(bundle, cancellationToken).ConfigureAwait(false),
+            sender,
+            cancellationToken).ConfigureAwait(false);
     }
 
     private async Task HandleBundleTraceCallbackAsync(
@@ -2631,6 +3207,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
 
         try
         {
+            EnsureAttachmentFilesExist(removed.Attachments);
             if (removed.Attachments is { Count: > 0 })
             {
                 await _sessionManager.SteerAsync(
@@ -2661,6 +3238,17 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
                 includeAll: false,
                 $"Could not send queued item {GetShortQueuedPromptId(removed.Id)} now: {exception.Message} It is still queued.",
                 cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private static void EnsureAttachmentFilesExist(IReadOnlyList<TelegramAttachmentDescriptor>? attachments)
+    {
+        foreach (TelegramAttachmentDescriptor attachment in attachments ?? [])
+        {
+            if (!File.Exists(attachment.FilePath))
+            {
+                throw new FileNotFoundException("Queued attachment file is missing; the queued item was not sent.", attachment.FilePath);
+            }
         }
     }
 
@@ -2748,6 +3336,12 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             return;
         }
 
+        if (command.Equals("capture", StringComparison.OrdinalIgnoreCase))
+        {
+            await HandleDebugCaptureAsync(message, parts.Length > 1 ? string.Join(' ', parts.Skip(1)) : "status", sender, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
         if (command.Equals("on", StringComparison.OrdinalIgnoreCase)
             || command.Equals("enable", StringComparison.OrdinalIgnoreCase)
             || command.Equals("enabled", StringComparison.OrdinalIgnoreCase))
@@ -2782,7 +3376,61 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             return;
         }
 
-        await ReplyAsync(sender, message, "Usage: /debug [status|on|off|reset]", null, cancellationToken).ConfigureAwait(false);
+        await ReplyAsync(sender, message, "Usage: /debug [status|on|off|reset], /debug trace <status|on|off|latest>, or /debug capture <status|on|off|full on|full off|latest|traceId>", null, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task HandleDebugCaptureAsync(TelegramInboundMessage message, string arguments, ITelegramBotMessageSender sender, CancellationToken cancellationToken)
+    {
+        string[] parts = SplitArguments(arguments, 3);
+        string command = parts.FirstOrDefault() ?? "status";
+        if (command.Equals("on", StringComparison.OrdinalIgnoreCase)
+            || command.Equals("metadata", StringComparison.OrdinalIgnoreCase))
+        {
+            _traceStore.EnableMetadataCapture();
+            await ReplyAsync(sender, message, FormatCaptureStatus("Metadata capture enabled."), null, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        if (command.Equals("off", StringComparison.OrdinalIgnoreCase)
+            || command.Equals("disable", StringComparison.OrdinalIgnoreCase))
+        {
+            _traceStore.DisableCapture();
+            await ReplyAsync(sender, message, FormatCaptureStatus("Debug capture disabled."), null, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        if (command.Equals("full", StringComparison.OrdinalIgnoreCase))
+        {
+            string subcommand = parts.Length > 1 ? parts[1] : "status";
+            if (subcommand.Equals("on", StringComparison.OrdinalIgnoreCase)
+                || subcommand.Equals("enable", StringComparison.OrdinalIgnoreCase))
+            {
+                TimeSpan? ttl = parts.Length > 2 ? ParseCaptureTtl(parts[2]) : null;
+                _traceStore.EnableFullCapture(ttl);
+                await ReplyAsync(sender, message, FormatCaptureStatus("Full debug capture enabled."), null, cancellationToken).ConfigureAwait(false);
+                return;
+            }
+
+            if (subcommand.Equals("off", StringComparison.OrdinalIgnoreCase)
+                || subcommand.Equals("disable", StringComparison.OrdinalIgnoreCase))
+            {
+                _traceStore.DisableFullCapture();
+                await ReplyAsync(sender, message, FormatCaptureStatus("Full debug capture disabled; metadata capture remains controlled separately."), null, cancellationToken).ConfigureAwait(false);
+                return;
+            }
+
+            await ReplyAsync(sender, message, FormatCaptureStatus("Full capture status."), null, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        if (command.Equals("status", StringComparison.OrdinalIgnoreCase)
+            || string.IsNullOrWhiteSpace(arguments))
+        {
+            await ReplyAsync(sender, message, FormatCaptureStatus("Debug capture status."), null, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        await HandleTraceAsync(message, arguments, sender, cancellationToken).ConfigureAwait(false);
     }
 
     private async Task HandleTraceAsync(TelegramInboundMessage message, string arguments, ITelegramBotMessageSender sender, CancellationToken cancellationToken)
@@ -3227,12 +3875,13 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         string? turnId = null,
         string? kind = null,
         string? messageId = null,
-        int? itemCount = null)
+        int? itemCount = null,
+        string? traceId = null)
     {
         string? activeTurnId = string.IsNullOrWhiteSpace(sessionId)
             ? null
             : _turnCoordinator.GetActiveTurnId(sessionId);
-        return new TelegramDebugMessageContext(source, sessionId, turnId, activeTurnId, kind, messageId, itemCount);
+        return new TelegramDebugMessageContext(source, sessionId, turnId, activeTurnId, kind, messageId, itemCount, traceId);
     }
 
     private async Task<bool> IsAuthorizedAsync(TelegramInboundCallback callback, CancellationToken cancellationToken)
@@ -3368,6 +4017,8 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             "/debug [status|on|off|reset] - show or change diagnostic message preambles",
             "/debug trace <on|off|status|latest> - control or inspect local trace diagnostics",
             "/trace [latest|traceId|status|on|off|reset] - inspect turn delivery diagnostics",
+            "/output mode [verbose|live|final|reset] - show or change Telegram output presentation mode",
+            "/turn [updates|progress|full|final] [sessionId] [turnId] - show operational turn history",
             "/outbound - show outbound Telegram queue status",
             "/stop [sessionId] - gracefully stop a session",
             "/restart confirm - explain how to restart this standalone process",
@@ -3421,6 +4072,66 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             $"Latest trace: {_traceStore.LatestTraceId ?? "(none)"}",
             "In-memory diagnostics remain available for recent turns even when file tracing is disabled."
         ]);
+    }
+
+    private string FormatCaptureStatus(string heading)
+    {
+        TelegramDebugCaptureStatus status = _traceStore.CaptureStatus;
+        string runtimeTrace = status.RuntimeEnabledOverride switch
+        {
+            true => "on",
+            false => "off",
+            null => "(none)",
+        };
+        string runtimeFull = status.RuntimeFullCaptureOverride switch
+        {
+            true => "on",
+            false => "off",
+            null => "(none)",
+        };
+
+        List<string> lines =
+        [
+            heading,
+            $"Mode: {status.Mode}",
+            $"Trace files: {(status.FileTraceEnabled ? "on" : "off")}",
+            $"Full bodies: {(status.FullCaptureEnabled ? "on" : "off")}",
+            $"Runtime trace override: {runtimeTrace}",
+            $"Runtime full override: {runtimeFull}",
+            $"Full capture expires: {status.FullCaptureExpiresUtc?.ToString("u", CultureInfo.InvariantCulture) ?? "(not set)"}",
+            $"Latest trace: {status.LatestTraceId ?? "(none)"}",
+            "Metadata capture records ids, counts, lengths, event types, paths, and errors. Full capture also records redacted text bodies.",
+        ];
+
+        if (status.FullCaptureEnabled)
+        {
+            lines.Add("FULL CAPTURE IS ENABLED. Message bodies and Codex/output text are being written to local trace files with secret redaction.");
+        }
+
+        return string.Join(Environment.NewLine, lines);
+    }
+
+    private static TimeSpan? ParseCaptureTtl(string value)
+    {
+        string trimmed = value.Trim();
+        if (string.IsNullOrWhiteSpace(trimmed))
+        {
+            return null;
+        }
+
+        char suffix = trimmed[^1];
+        string numberText = char.IsLetter(suffix) ? trimmed[..^1] : trimmed;
+        if (!double.TryParse(numberText, NumberStyles.Float, CultureInfo.InvariantCulture, out double amount) || amount <= 0)
+        {
+            return null;
+        }
+
+        return char.ToLowerInvariant(suffix) switch
+        {
+            'h' => TimeSpan.FromHours(amount),
+            'm' => TimeSpan.FromMinutes(amount),
+            _ => TimeSpan.FromMinutes(amount),
+        };
     }
 
     private static string FormatTurnDiagnostics(TelegramTurnDiagnostics diagnostics)
@@ -3664,7 +4375,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         return builder.ToString().TrimEnd();
     }
 
-    private async Task<string> FormatSessionStatusCardAsync(
+    private async Task<TelegramSessionStatusCard> FormatSessionStatusCardAsync(
         CodexSessionSummary session,
         CodexSessionModelSettings? settings,
         string? usageSummary,
@@ -3682,8 +4393,10 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             && item.MessageThreadId == conversation.MessageThreadId);
         IReadOnlyList<TelegramQueuedPrompt> queued = await _stateStore.ListQueuedPromptsAsync(null, conversation, cancellationToken).ConfigureAwait(false);
         TelegramTurnDiagnostics diagnostics = _traceStore.GetDiagnostics(sessionId: session.Id, turnId: diagnosticTurnId);
+        CodexActiveTurnStateVm? activeTurn = _turnCoordinator.TryGetActiveTurnState(session.Id);
+        TelegramSessionCardBehavior behavior = TelegramSessionCardBehavior.Resolve(session, activeTurnId, activeTurn, destination, diagnostics);
 
-        builder.AppendLine($"State: {ResolveSessionCardState(session, activeTurnId, destination, diagnostics)}");
+        builder.AppendLine($"State: {behavior.StateText}");
         builder.AppendLine($"Active turn: {activeTurnId ?? "(none)"}");
         builder.AppendLine($"Status: {FormatStatusValue(session.Status)}");
         builder.AppendLine($"Queue count: {queued.Count.ToString(CultureInfo.InvariantCulture)}");
@@ -3729,50 +4442,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             builder.AppendLine($"Last error: {session.LastError}");
         }
 
-        return builder.ToString().TrimEnd();
-    }
-
-    private static string ResolveSessionCardState(
-        CodexSessionSummary session,
-        string? activeTurnId,
-        TelegramOutboundDestinationStatus? destination,
-        TelegramTurnDiagnostics diagnostics)
-    {
-        if (diagnostics.TerminalEventType?.Contains("failed", StringComparison.OrdinalIgnoreCase) == true)
-        {
-            return "Codex failed";
-        }
-
-        if (!diagnostics.TerminalEventSeen && (!string.IsNullOrWhiteSpace(activeTurnId) || IsLive(session.Status)))
-        {
-            return "Codex is working";
-        }
-
-        if (diagnostics.RateLimited || diagnostics.SendTimedOut || diagnostics.SendFailed)
-        {
-            return "Telegram delivery delayed";
-        }
-
-        bool telegramDrainPending = (destination is not null && (destination.PendingMessageCount > 0 || destination.PendingChunkCount > 0))
-            || diagnostics.PendingChunks > 0;
-        if (telegramDrainPending)
-        {
-            return diagnostics.TerminalEventSeen
-                ? "Codex finished; sending remaining Telegram output"
-                : "Telegram output still draining";
-        }
-
-        if (diagnostics.Compacted)
-        {
-            return "Output compacted; open trace/history for full details";
-        }
-
-        if (diagnostics.TerminalEventSeen)
-        {
-            return "Codex finished; Telegram delivery complete";
-        }
-
-        return FormatStatusValue(session.Status);
+        return new TelegramSessionStatusCard(builder.ToString().TrimEnd(), behavior.Buttons);
     }
 
     private static string FormatTurnCloseout(CodexTurnCloseoutSummary closeout)
@@ -3781,6 +4451,138 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             ? "warning"
             : closeout.FinalResponseSeen ? "final response" : "no final response";
         return $"{closeout.Status} {FormatRelativeAge(closeout.CompletedAtUtc)} ({flags})";
+    }
+
+    private string FormatOutputModeStatus(string? heading = null)
+    {
+        StringBuilder builder = new();
+        if (!string.IsNullOrWhiteSpace(heading))
+        {
+            builder.AppendLine(heading);
+        }
+
+        builder.AppendLine($"Output mode: {_outputModeState.CurrentMode}");
+        builder.AppendLine($"Source: {(_outputModeState.HasRuntimeOverride ? "runtime override" : "configuration")}");
+        builder.AppendLine();
+        builder.AppendLine("Verbose: durable progress/update/final messages.");
+        builder.AppendLine("LiveCard: progress/update events update a card; final output stays durable.");
+        builder.AppendLine("FinalOnly: only final output, errors, approvals, and artifacts are pushed.");
+        return builder.ToString().TrimEnd();
+    }
+
+    private static IReadOnlyList<IReadOnlyList<TelegramReplyButton>> BuildOutputModeButtons()
+        =>
+        [
+            [
+                new TelegramReplyButton("Verbose", "outmode:verbose"),
+                new TelegramReplyButton("LiveCard", "outmode:live"),
+                new TelegramReplyButton("FinalOnly", "outmode:final"),
+            ],
+            [
+                new TelegramReplyButton("Reset", "outmode:reset"),
+            ],
+        ];
+
+    private static bool TryParseOutputMode(string value, out TelegramOutputPresentationMode mode)
+    {
+        string normalized = value.Trim();
+        if (normalized.Equals("live", StringComparison.OrdinalIgnoreCase)
+            || normalized.Equals("card", StringComparison.OrdinalIgnoreCase))
+        {
+            mode = TelegramOutputPresentationMode.LiveCard;
+            return true;
+        }
+
+        if (normalized.Equals("final", StringComparison.OrdinalIgnoreCase)
+            || normalized.Equals("finalonly", StringComparison.OrdinalIgnoreCase)
+            || normalized.Equals("final-only", StringComparison.OrdinalIgnoreCase))
+        {
+            mode = TelegramOutputPresentationMode.FinalOnly;
+            return true;
+        }
+
+        return Enum.TryParse(normalized, ignoreCase: true, out mode);
+    }
+
+    private string FormatTurnHistory(CodexSessionSummary session, string view, string? turnId)
+    {
+        string normalizedView = string.IsNullOrWhiteSpace(view) ? "updates" : view.Trim().ToLowerInvariant();
+        string? effectiveTurnId = string.IsNullOrWhiteSpace(turnId)
+            ? _turnCoordinator.GetActiveTurnId(session.Id) ?? session.LastTurnCloseout?.TurnId
+            : turnId;
+        IReadOnlyList<CodexSessionEventRecord> events = _eventLog
+            .GetRecent(session.Id, 200)
+            .Where(evt => string.IsNullOrWhiteSpace(effectiveTurnId) || string.Equals(evt.TurnId, effectiveTurnId, StringComparison.OrdinalIgnoreCase))
+            .Where(evt => IncludeHistoryEvent(evt, normalizedView))
+            .TakeLast(40)
+            .ToArray();
+
+        StringBuilder builder = new();
+        builder.AppendLine($"Turn {FormatHistoryViewName(normalizedView)}");
+        builder.AppendLine($"Session: {session.Name} ({GetShortSessionId(session.Id)})");
+        builder.AppendLine($"Turn: {effectiveTurnId ?? "(latest)"}");
+        builder.AppendLine();
+
+        if (events.Count == 0)
+        {
+            builder.AppendLine("No matching operational history is available in this process. Use /tail or /trace for deeper diagnostics.");
+            return builder.ToString().TrimEnd();
+        }
+
+        foreach (CodexSessionEventRecord evt in events)
+        {
+            builder.AppendLine(FormatHistoryEvent(evt));
+        }
+
+        return builder.ToString().TrimEnd();
+    }
+
+    private static IReadOnlyList<IReadOnlyList<TelegramReplyButton>> BuildTurnHistoryButtons(string sessionId)
+    {
+        return
+        [
+            [
+                new TelegramReplyButton("Show Updates", $"turn:updates|{sessionId}"),
+                new TelegramReplyButton("Show Progress", $"turn:progress|{sessionId}"),
+            ],
+            [
+                new TelegramReplyButton("Show Full Turn", $"turn:full|{sessionId}"),
+                new TelegramReplyButton("Final", $"turn:final|{sessionId}"),
+            ],
+            [
+                new TelegramReplyButton("Trace", $"trace:{sessionId}"),
+            ],
+        ];
+    }
+
+    private static bool IncludeHistoryEvent(CodexSessionEventRecord evt, string view)
+        => view switch
+        {
+            "full" => true,
+            "progress" => evt.Kind is CodexSessionEventKind.ToolProgress or CodexSessionEventKind.InternalNoise,
+            "final" => evt.Kind == CodexSessionEventKind.AssistantOutput
+                && (evt.Type.Equals("turn.finalResponse", StringComparison.OrdinalIgnoreCase)
+                    || evt.Type.Equals("telegram.assistant.visible", StringComparison.OrdinalIgnoreCase)
+                    || evt.Type.Equals("turn.assistant.recovered", StringComparison.OrdinalIgnoreCase)),
+            _ => evt.Kind is not (CodexSessionEventKind.ToolProgress or CodexSessionEventKind.InternalNoise),
+        };
+
+    private static string FormatHistoryViewName(string view)
+        => view switch
+        {
+            "full" => "full history",
+            "progress" => "progress history",
+            "final" => "final response",
+            _ => "updates",
+        };
+
+    private static string FormatHistoryEvent(CodexSessionEventRecord evt)
+    {
+        string age = FormatRelativeAge(evt.Timestamp);
+        string summary = string.IsNullOrWhiteSpace(evt.Summary)
+            ? evt.Title
+            : $"{evt.Title}: {evt.Summary}";
+        return $"- {age} [{evt.Kind}] {summary}";
     }
 
     private static string FormatGoal(CodexThreadGoalVm goal)
@@ -4600,25 +5402,6 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         return rows;
     }
 
-    private static IReadOnlyList<IReadOnlyList<TelegramReplyButton>> BuildSessionCardButtons(CodexSessionSummary session)
-        => [
-            [
-                new TelegramReplyButton("Send / Add Input", "nav:help"),
-                new TelegramReplyButton("Steer", "nav:help"),
-                new TelegramReplyButton("Queue", "nav:help"),
-            ],
-            [
-                new TelegramReplyButton("Status / Refresh", $"status:{session.Id}"),
-                new TelegramReplyButton("Tail / History", $"tail:{session.Id}"),
-                new TelegramReplyButton("Debug / Trace", $"trace:{session.Id}"),
-            ],
-            [
-                new TelegramReplyButton("Model", $"model:{session.Id}"),
-                new TelegramReplyButton("Thinking", $"thinking:{session.Id}"),
-                new TelegramReplyButton("Stop / Cancel", $"stop:{session.Id}"),
-            ],
-        ];
-
     internal static IReadOnlyList<IReadOnlyList<TelegramReplyButton>> BuildNavigationButtons()
         => [
             [
@@ -4626,6 +5409,18 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
                 new TelegramReplyButton("Projects", "nav:projects"),
                 new TelegramReplyButton("Help", "nav:help")
             ]
+        ];
+
+    private static IReadOnlyList<IReadOnlyList<TelegramReplyButton>> BuildNoSessionButtons()
+        => [
+            [
+                new TelegramReplyButton("Create session", "new:_"),
+                new TelegramReplyButton("Sessions", "nav:sessions"),
+            ],
+            [
+                new TelegramReplyButton("Projects", "nav:projects"),
+                new TelegramReplyButton("Help", "nav:help"),
+            ],
         ];
 
     private static string BuildDefaultTopicName(ProjectChoice project)
@@ -5163,7 +5958,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
     }
 
     private static TelegramInboundMessage ToMessage(TelegramInboundCallback callback)
-        => new(callback.UserId, callback.ChatId, callback.ChatType, null, callback.MessageThreadId, SourceMessageId: callback.SourceMessageId);
+        => new(callback.UserId, callback.ChatId, callback.ChatType, null, callback.MessageThreadId, SourceMessageId: callback.SourceMessageId, TraceId: callback.TraceId);
 
     private static bool IsLive(CodexSessionStatus status)
         => status is CodexSessionStatus.Running or CodexSessionStatus.Starting;

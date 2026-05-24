@@ -36,6 +36,11 @@ public sealed class TelegramDebugTraceOptions
     public bool CaptureAttachmentCopies { get; set; }
 
     /// <summary>
+    /// Gets or sets the number of minutes a runtime full-capture override remains active.
+    /// </summary>
+    public int FullCaptureTtlMinutes { get; set; } = 240;
+
+    /// <summary>
     /// Gets or sets the maximum trace file size before events are summarized only in memory.
     /// </summary>
     public long MaxTraceFileBytes { get; set; } = 10L * 1024L * 1024L;
@@ -70,4 +75,14 @@ public static class TelegramDebugTraceLimits
     /// Largest retention period.
     /// </summary>
     public const int MaxRetentionDays = 365;
+
+    /// <summary>
+    /// Smallest runtime full-capture TTL.
+    /// </summary>
+    public const int MinFullCaptureTtlMinutes = 1;
+
+    /// <summary>
+    /// Largest runtime full-capture TTL.
+    /// </summary>
+    public const int MaxFullCaptureTtlMinutes = 24 * 60;
 }

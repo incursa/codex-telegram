@@ -167,6 +167,30 @@ Trace controls are also available through `/debug trace ...`:
 
 `/debug trace on` enables local JSONL trace-file writes for this process. In-memory turn diagnostics are still collected for recent turns even when file tracing is off.
 
+Structured interface capture is available through `/debug capture ...`:
+
+```text
+/debug capture status
+/debug capture on
+/debug capture off
+/debug capture full on
+/debug capture full on 30m
+/debug capture full off
+/debug capture latest
+/debug capture <traceId>
+```
+
+Expected behavior:
+
+1. `/debug capture on` enables metadata capture: Telegram/Codex ids, event kinds, counts, text lengths, attachment metadata, local paths, routing decisions, queue/chunk counts, statuses, and errors.
+2. `/debug capture full on` enables full capture for a bounded TTL. Full capture writes redacted message bodies, Codex input text, Codex event bodies, final responses, and outbound Telegram chunk text to local trace files.
+3. `/debug capture full off` returns to metadata capture while trace writing remains enabled.
+4. `/debug capture off` disables trace-file capture for this process. Recent in-memory diagnostics remain available.
+5. Trace files are written as JSONL under `TelegramDebugTrace:TraceDirectory` when set; otherwise under the configured data root in `telegram-traces/yyyyMMdd/<traceId>.jsonl`.
+6. Secret-looking values such as authorization headers, tokens, API keys, cookies, and bot tokens are redacted before trace files are written.
+7. Full capture is intentionally visible in status output so it is not left on accidentally.
+8. Attachment file copies are only written when full capture is enabled and `TelegramDebugTrace:CaptureAttachmentCopies` is `true`. Copies are placed beside the trace file under `telegram-traces/yyyyMMdd/<traceId>.attachments/`, and the JSONL event records the copied paths.
+
 ### `/trace`
 
 Shows local trace and turn-delivery diagnostics.
@@ -189,6 +213,53 @@ Expected behavior:
 2. `/trace on` and `/trace off` control trace-file writing for the current process.
 3. Diagnostics distinguish Telegram input receipt, bundling, queueing, steering, Codex send/plan requests, actual Codex turn start, Codex terminal events, and Telegram outbound delivery.
 4. Diagnostics show Codex event counts, assistant-output character counts, queued outbound characters, sent chunks, pending chunks, compaction, rate limits, timeouts, and last Telegram API/send errors.
+5. `/debug capture latest` and `/debug capture <traceId>` reuse the same diagnostics view.
+
+### `/output`
+
+Shows or changes the Telegram output presentation mode.
+
+Syntax:
+
+```text
+/output mode
+/output mode verbose
+/output mode live
+/output mode final
+/output mode reset
+```
+
+Expected behavior:
+
+1. `/output mode` shows the effective mode and whether it came from configuration or a runtime override.
+2. `verbose` sends progress and update events as durable Telegram messages according to the normal filters.
+3. `live` uses an editable live turn card for progress/update events while final output remains durable Telegram history.
+4. `final` suppresses normal progress/update chatter and sends final output, errors, approval requests, and artifacts.
+5. `reset` clears the runtime override and returns to `TelegramOutput:PresentationMode`.
+6. The same choices are available from the `Output Mode` button on session cards.
+
+### `/turn`
+
+Shows operational turn history retained by the bot.
+
+Syntax:
+
+```text
+/turn updates [sessionId] [turnId]
+/turn progress [sessionId] [turnId]
+/turn full [sessionId] [turnId]
+/turn final [sessionId] [turnId]
+```
+
+Expected behavior:
+
+1. `updates` shows user-facing normalized events and omits low-value progress noise.
+2. `progress` shows retained progress history when progress capture is enabled or summarized.
+3. `full` shows all retained operational events for the turn.
+4. `final` shows retained final-response events.
+5. The `Show Updates`, `Show Progress`, `Show Full Turn`, and `Final` buttons use the same operational history path for the selected session.
+6. Use the slash form with an explicit `turnId` when inspecting an older turn; button payloads stay compact for Telegram callback limits.
+7. Operational history is not full debug capture. Use `/debug capture full on` when raw Telegram/Codex interface traffic is needed.
 
 ### `/projects`
 
@@ -312,9 +383,10 @@ Expected behavior:
 2. Creates a project-based default session if no session is selected.
 3. Sends attachments with the prompt when attachments are present.
 4. With `TelegramInput:DefaultCaptureMode` set to `BundleWhenActiveOrMedia`, creates or updates an editable input bundle when a turn is active or when media is present.
-5. The input bundle card includes Send now, Queue next, Steer current turn, Add more, Clear, Cancel, and Trace buttons.
-6. Telegram albums/media groups are debounced by `TelegramInput:MediaGroupDebounceMilliseconds` and forwarded as one inbound bundle candidate with all collected media.
-7. Slash commands remain available as fallbacks.
+5. The input bundle card shows only the current useful actions, such as Send now, Queue next, Steer current turn, Add more, Clear, and Cancel.
+6. If `TelegramInput:AutoDispatchAfterSeconds` is greater than 0, an open bundle is automatically sent or queued after that many idle seconds with no new captured input.
+7. Telegram albums/media groups are debounced by `TelegramInput:MediaGroupDebounceMilliseconds` and forwarded as one inbound bundle candidate with all collected media.
+8. Slash commands remain available as fallbacks.
 
 Cards are the live mobile control surface. Editing a session or input-bundle card does not replace the durable Telegram message history: assistant output is still delivered as normal Telegram messages after a bundle is sent, queued, or steered.
 
@@ -679,6 +751,7 @@ Expected behavior:
 1. Shows current model and thinking effort.
 2. Shows available thinking-effort buttons when known.
 3. Marks the selected effort with `[x]`.
+4. Controls the standard thinking effort for active turns; the bootstrap `Codex runtime` menu exposes a separate plan-mode thinking default.
 
 ### `/thinking <effort>`
 
@@ -701,6 +774,51 @@ Expected behavior:
 1. Updates only the thinking effort.
 2. Leaves the model unchanged.
 3. Returns the updated model settings.
+
+### `/plan <request>`
+
+Asks Codex to plan and clarify before implementation for the active session.
+
+Syntax:
+
+```text
+/plan <request>
+```
+
+Example:
+
+```text
+/plan review the current session flow and suggest the safest next implementation step
+```
+
+Expected behavior:
+
+1. Resolves the active session for the current conversation.
+2. Sends the request as a Plan mode turn rather than a normal send turn.
+3. Queues the request when the session is busy, using the same ordering rules as normal prompts.
+4. Starts the plan-mode flow so Codex can ask follow-up questions when needed.
+
+### `/answer <answer>`
+
+Answers a pending Plan mode question for the active conversation.
+
+Syntax:
+
+```text
+/answer <answer>
+```
+
+Example:
+
+```text
+/answer Use the faster implementation path and keep the bootstrap menu change minimal.
+```
+
+Expected behavior:
+
+1. Sends the answer to the pending Plan mode question for the active conversation.
+2. Replies that no Plan mode question is waiting if the conversation has nothing pending.
+3. Leaves the selected session unchanged.
 
 ### `/goal`
 
@@ -1013,7 +1131,8 @@ Expected behavior:
 
 1. Queued prompts run in order.
 2. Separate sessions can progress independently.
-3. Telegram output is rate-limited and may be batched.
-4. Batched output is concatenated with simple spacing and preserves multi-line content.
+3. Telegram output is rate-limited but queued text items are sent as separate messages.
+4. Long individual outputs may still be split into multiple Telegram chunks.
 5. Assistant output is sent as durable Telegram messages/chunks, not by continuously editing the live status card.
-6. `/tail`, `/history`, and `/trace` are the authoritative paths when Telegram scrollback or edited cards are not enough.
+6. Completed turns append a standalone `~~ fin ~~` marker after final output.
+7. `/tail`, `/history`, and `/trace` are the authoritative paths when Telegram scrollback or edited cards are not enough.

@@ -45,6 +45,17 @@ public sealed class TelegramInputOptions
     /// Gets or sets the debounce window used to collect Telegram album/media-group messages.
     /// </summary>
     public int MediaGroupDebounceMilliseconds { get; set; } = 1500;
+
+    /// <summary>
+    /// Gets or sets a value indicating whether active-turn steering can include Telegram attachments.
+    /// </summary>
+    public bool AllowAttachmentSteering { get; set; } = true;
+
+    /// <summary>
+    /// Gets or sets the number of idle seconds after which a captured bundle is automatically sent or queued.
+    /// Set to 0 to disable automatic dispatch.
+    /// </summary>
+    public int AutoDispatchAfterSeconds { get; set; } = 25;
 }
 
 /// <summary>
@@ -81,4 +92,14 @@ public static class TelegramInputLimits
     /// Largest media-group debounce window.
     /// </summary>
     public const int MaxMediaGroupDebounceMilliseconds = 5_000;
+
+    /// <summary>
+    /// Smallest non-zero automatic bundle dispatch delay.
+    /// </summary>
+    public const int MinAutoDispatchAfterSeconds = 5;
+
+    /// <summary>
+    /// Largest automatic bundle dispatch delay.
+    /// </summary>
+    public const int MaxAutoDispatchAfterSeconds = 300;
 }

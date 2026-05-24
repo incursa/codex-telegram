@@ -75,6 +75,7 @@ Common flow:
 2. Tap a model button or send `/model <model>`.
 3. Send `/thinking` to view reasoning-effort choices.
 4. Send `/thinking high` or `/thinking xhigh` when you intentionally want more reasoning.
+5. Use the bootstrap `Codex runtime` menu to set a separate Plan mode thinking default when you want plan turns to use a different effort from normal turns.
 
 You can also include an inline control phrase in a prompt:
 
@@ -97,20 +98,30 @@ If the bot says goals are unavailable, update Codex and confirm the app-server b
 
 ## Reading Output
 
-Telegram output is rate-limited and batched so busy sessions do not flood a chat.
+Telegram output is rate-limited so busy sessions do not flood a chat, but final assistant output and queued text items are delivered as separate Telegram messages. Cards are the live control surface; the final answer is not edited in place.
 
 Expect these behaviors:
 
-1. Live updates may arrive in batches.
-2. Long messages may split across multiple Telegram messages.
-3. Batched messages are concatenated with simple spacing and preserve multi-line content, so numbered lists and headings should remain readable.
+1. The default `TelegramOutput:PresentationMode` is `LiveCard`: progress and updates refresh one editable turn card, while the final response is sent as durable Telegram message chunks.
+2. Long individual messages may split across multiple Telegram messages.
+3. The bot does not combine unrelated queued text items into one visible Telegram message.
 4. If the local outbound buffer is compacted, the bot sends an explicit compaction notice instead of silently pretending older updates are still present.
-5. `/tail` is the best source when you suspect scrollback is incomplete.
-6. `/outbound` shows delayed outbound Telegram messages and chunks.
-7. Terminal turn events are tracked internally; the bot no longer emits a standalone completion marker into the chat.
+5. A completed turn emits a standalone `~~ fin ~~` marker after the final output so Telegram scrollback has an explicit end-of-turn signal.
+6. `/output mode` shows or changes the process-level output presentation mode.
+7. `/turn updates`, `/turn full`, `/turn progress`, and `/turn final` show operational turn history retained by the bot.
+8. `/tail` is the best source when you suspect scrollback is incomplete.
+9. `/outbound` shows delayed outbound Telegram messages and chunks.
 
-If output looks incomplete, send `/tail` first. If `/tail` has the missing text, the issue is Telegram delivery or batching. If `/tail` is missing it too, inspect the Codex session itself.
+If output looks incomplete, send `/tail` first. If `/tail` has the missing text, the issue is Telegram delivery. If `/tail` is missing it too, inspect the Codex session itself.
 Do not use Telegram scrollback alone as evidence that Codex lost content.
+
+Output modes:
+
+1. `Verbose` sends progress, update, and final messages as durable Telegram messages according to the normal filters. Use it when watching the full process is useful.
+2. `LiveCard` summarizes progress and updates into an editable live turn card. The card keeps a stable `Latest` line for assistant-visible output and a separate `Activity` line for ephemeral internal work. Final responses, errors, approval requests, artifacts, and the `~~ fin ~~` marker remain durable messages.
+3. `FinalOnly` suppresses normal progress/update chatter and sends only final output, errors, approval requests, artifacts, and terminal summaries that need attention.
+
+Operational turn history is normalized and user-facing. It is separate from debug capture: history supports buttons such as `Show Updates`, `Show Full Turn`, and `Final`, while `/debug capture full on` records raw interface traffic for deeper diagnostics.
 
 ## Queueing
 
@@ -141,6 +152,8 @@ Queueing is per session and per Telegram conversation. A trusted group root and 
 ## Attachments And Voice
 
 Images and documents can be sent with a prompt. Voice notes are transcribed before they are sent to Codex; Codex receives the transcript, not raw Telegram audio.
+
+When the bot captures text, voice transcripts, images, or documents into an input bundle, each new item resets the bundle's idle timer. By default, the bundle automatically sends or queues after 25 seconds with no additional input, so a forgotten Send tap does not leave the transcript stranded. Use the buttons when you want to send, queue, steer, clear, or cancel earlier.
 
 Voice requirements:
 

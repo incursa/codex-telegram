@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Incursa.Codex.Telegram.Options;
 using Incursa.Codex.Telegram.Telegram;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -72,6 +73,31 @@ public sealed class TelegramHostedServiceUpdateAdapterTests
 
         TelegramInboundMessage message = Assert.Single(harness.Handler.Messages);
         Assert.Equal("use the message text", message.Text);
+    }
+
+    [Fact]
+    public async Task HandleUpdateAsync_FullCaptureRecordsInboundTelegramMessageBody()
+    {
+        using Harness harness = Harness.Create();
+        harness.TraceStore.EnableFullCapture(TimeSpan.FromMinutes(30));
+        Update update = new()
+        {
+            Id = 116,
+            Message = CreateMessage(text: "capture this input", messageThreadId: 77, messageId: 42),
+        };
+
+        await harness.Service.HandleUpdateAsync(harness.FileClient, update, harness.Sender, CancellationToken.None);
+
+        TelegramInboundMessage message = Assert.Single(harness.Handler.Messages);
+        Assert.False(string.IsNullOrWhiteSpace(message.TraceId));
+        string file = Assert.Single(Directory.GetFiles(Path.Combine(harness.Temp.Path, "telegram-traces"), "*.jsonl", SearchOption.AllDirectories));
+        string line = Assert.Single(await File.ReadAllLinesAsync(file, CancellationToken.None));
+        using JsonDocument document = JsonDocument.Parse(line);
+        JsonElement root = document.RootElement;
+        Assert.Equal("telegram.inbound.message", root.GetProperty("kind").GetString());
+        Assert.Equal("TelegramInbound", root.GetProperty("source").GetString());
+        Assert.Equal("capture this input", root.GetProperty("textBody").GetString());
+        Assert.Equal("116", root.GetProperty("metadata").GetProperty("updateId").GetString());
     }
 
     [Fact]
@@ -838,6 +864,7 @@ public sealed class TelegramHostedServiceUpdateAdapterTests
             FakeTelegramUpdateFileClient fileClient,
             TelegramBotStateStore stateStore,
             TelegramMessageContextStore messageContextStore,
+            TelegramDebugTraceStore traceStore,
             TelegramCodexBotHostedService service)
         {
             Temp = temp;
@@ -846,6 +873,7 @@ public sealed class TelegramHostedServiceUpdateAdapterTests
             FileClient = fileClient;
             StateStore = stateStore;
             MessageContextStore = messageContextStore;
+            TraceStore = traceStore;
             Service = service;
         }
 
@@ -861,6 +889,8 @@ public sealed class TelegramHostedServiceUpdateAdapterTests
 
         public TelegramMessageContextStore MessageContextStore { get; }
 
+        public TelegramDebugTraceStore TraceStore { get; }
+
         public TelegramCodexBotHostedService Service { get; }
 
         public static Harness Create(TelegramBotOptions? options = null)
@@ -875,13 +905,17 @@ public sealed class TelegramHostedServiceUpdateAdapterTests
             TestTelegramBotMessageSender sender = new();
             FakeTelegramUpdateFileClient fileClient = new();
             TelegramMessageContextStore messageContextStore = new();
-            TelegramBotStateStore stateStore = new(Microsoft.Extensions.Options.Options.Create(new CodexTelegramOptions
+            IOptions<CodexTelegramOptions> codexOptions = Microsoft.Extensions.Options.Options.Create(new CodexTelegramOptions
             {
                 Workspace = new CodexWorkspaceOptions
                 {
                     DataRoot = temp.Path,
                 },
-            }));
+            });
+            TelegramBotStateStore stateStore = new(codexOptions);
+            TelegramDebugTraceStore traceStore = new(
+                codexOptions,
+                Microsoft.Extensions.Options.Options.Create(new TelegramDebugTraceOptions()));
             options ??= new TelegramBotOptions
             {
                 AllowedUserIds = [1234],
@@ -892,11 +926,12 @@ public sealed class TelegramHostedServiceUpdateAdapterTests
                 sender,
                 stateStore,
                 messageContextStore,
+                traceStore,
                 Microsoft.Extensions.Options.Options.Create(options),
                 Microsoft.Extensions.Options.Options.Create(inputOptions ?? new TelegramInputOptions()),
                 NullLogger<TelegramCodexBotHostedService>.Instance);
 
-            return new Harness(temp, handler, sender, fileClient, stateStore, messageContextStore, service);
+            return new Harness(temp, handler, sender, fileClient, stateStore, messageContextStore, traceStore, service);
         }
 
         public void Dispose()

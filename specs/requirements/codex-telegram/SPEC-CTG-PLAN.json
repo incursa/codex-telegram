@@ -1,0 +1,62 @@
+{
+  "artifact_id": "SPEC-CTG-PLAN",
+  "artifact_type": "specification",
+  "title": "Codex Telegram Plan Mode Bridge",
+  "domain": "codex-telegram",
+  "capability": "plan-mode-bridge",
+  "status": "draft",
+  "owner": "codex-telegram-maintainers",
+  "tags": [
+    "codex",
+    "telegram",
+    "plan",
+    "configuration",
+    "runtime"
+  ],
+  "purpose": "Define how Telegram carries SDK plan-mode configuration through to runtime clients without changing the existing Telegram plan-prompt workflow.",
+  "scope": "This specification covers binding and propagation of SDK plan-mode options, the separation between SDK plan mode and the Telegram plan prompt wrapper, and the expectation that goal mode remains thread-goal state rather than a sibling mode surface.",
+  "context": "The repository already has a Telegram /plan prompt path implemented by CodexPlanModePrompt and CodexSessionManager, and it already clones CodexClientOptions per runtime slot in CodexSessionRuntimeRegistry. The .NET SDK now exposes a nested CodexClientOptions.PlanMode configuration object. This specification makes the Telegram bridge explicit without redefining the Telegram planning workflow itself.",
+  "requirements": [
+    {
+      "id": "REQ-CTG-PLAN-0001",
+      "title": "Preserve the existing Telegram plan prompt workflow",
+      "statement": "Telegram MUST preserve the existing prompt-driven Plan mode workflow, including CodexPlanModePrompt and the /plan command behavior, and MUST NOT replace it with a separate SDK plan-mode command surface or a separate plan-mode client.",
+      "trace": {
+        "upstream_refs": [
+          "`src/Incursa.Codex.Telegram/Services/CodexPlanModePrompt.cs`",
+          "`src/Incursa.Codex.Telegram/Services/CodexSessionManager.cs`",
+          "`src/Incursa.Codex.Telegram/Telegram/TelegramCodexBotCommandHandler.cs`",
+          "`src/Incursa.Codex.Telegram/Telegram/TelegramQueuedPromptProcessor.cs`"
+        ]
+      }
+    },
+    {
+      "id": "REQ-CTG-PLAN-0002",
+      "title": "Propagate SDK plan-mode options through configuration and runtime cloning",
+      "statement": "Telegram MUST bind and propagate the SDK CodexClientOptions.PlanMode object through process configuration and runtime-client cloning so every runtime slot sees the same configured plan-mode defaults.",
+      "trace": {
+        "upstream_refs": [
+          "`src/Incursa.Codex.Telegram/Program.cs`",
+          "`src/Incursa.Codex.Telegram/Services/CodexSessionRuntimeRegistry.cs`",
+          "`src/Incursa.Codex.Telegram/Configuration/LocalSettingsSnapshot.cs`",
+          "`src/Incursa.Codex.Telegram/Configuration/LocalSettingsStore.cs`"
+        ]
+      },
+      "notes": [
+        "The current repo pin is still Incursa.OpenAI.Codex 2.1.0, so this requirement is the porting contract for the next SDK update rather than a statement that the local checkout already exposes the property."
+      ]
+    },
+    {
+      "id": "REQ-CTG-PLAN-0003",
+      "title": "Keep goal mode separate from plan mode",
+      "statement": "Telegram MUST keep goal mode separate from plan-mode configuration and MUST continue to expose goal behavior through the existing thread-goal APIs and /goal controls rather than creating a goal-mode option tree parallel to Plan mode.",
+      "trace": {
+        "upstream_refs": [
+          "`src/Incursa.Codex.Telegram/Services/CodexSessionManager.cs`",
+          "`src/Incursa.Codex.Telegram/Telegram/TelegramSessionCardBehavior.cs`",
+          "`src/Incursa.Codex.Telegram/Telegram/TelegramCodexBotCommandHandler.cs`"
+        ]
+      }
+    }
+  ]
+}

@@ -180,7 +180,7 @@ internal sealed class CodexSessionRuntimeRegistry : ICodexTurnExecutionCoordinat
     {
         CodexClientOptions source = _clientOptions.Value;
         CodexApprovalHandler? configuredHandler = source.ApprovalHandler;
-        return new CodexClientOptions
+        CodexClientOptions destination = new CodexClientOptions
         {
             BackendSelection = source.BackendSelection,
             CodexPathOverride = source.CodexPathOverride,
@@ -195,6 +195,9 @@ internal sealed class CodexSessionRuntimeRegistry : ICodexTurnExecutionCoordinat
                 ?? configuredHandler?.Invoke(action, request)
                 ?? CreateDefaultApprovalResponse(action),
         };
+
+        CodexClientOptionsPlanModeBridge.CopyPlanMode(source, destination);
+        return destination;
     }
 
     private static JsonObject? CreateDefaultApprovalResponse(string action)

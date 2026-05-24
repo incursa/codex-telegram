@@ -19,6 +19,7 @@ internal sealed class TelegramCodexBotHostedService : BackgroundService
     private readonly ITelegramBotMessageSender _sender;
     private readonly ITelegramBotStateStore _stateStore;
     private readonly ITelegramMessageContextStore _messageContextStore;
+    private readonly ITelegramDebugTraceStore _traceStore;
     private readonly TelegramBotOptions _options;
     private readonly TelegramInputOptions _inputOptions;
     private readonly ILogger<TelegramCodexBotHostedService> _logger;
@@ -29,6 +30,7 @@ internal sealed class TelegramCodexBotHostedService : BackgroundService
         ITelegramBotMessageSender sender,
         ITelegramBotStateStore stateStore,
         ITelegramMessageContextStore messageContextStore,
+        ITelegramDebugTraceStore traceStore,
         IOptions<TelegramBotOptions> options,
         IOptions<TelegramInputOptions> inputOptions,
         ILogger<TelegramCodexBotHostedService> logger)
@@ -37,6 +39,7 @@ internal sealed class TelegramCodexBotHostedService : BackgroundService
         _sender = sender;
         _stateStore = stateStore;
         _messageContextStore = messageContextStore;
+        _traceStore = traceStore;
         _options = options.Value;
         _inputOptions = inputOptions.Value;
         _logger = logger;
@@ -262,6 +265,15 @@ internal sealed class TelegramCodexBotHostedService : BackgroundService
             }
 
             TelegramReplyContext? replyContext = await ResolveReplyContextAsync(message, cancellationToken).ConfigureAwait(false);
+            string? traceId = _traceStore.IsFileTraceEnabled ? _traceStore.CreateTraceId() : null;
+            await RecordInboundMessageTraceAsync(
+                traceId,
+                update,
+                message,
+                text,
+                attachments,
+                "telegram.inbound.message",
+                cancellationToken).ConfigureAwait(false);
             TelegramInboundMessage inbound = new(
                 GetSenderId(message),
                 message.Chat.Id,
@@ -269,7 +281,8 @@ internal sealed class TelegramCodexBotHostedService : BackgroundService
                 text,
                 message.MessageThreadId,
                 SourceMessageId: message.MessageId,
-                ReplyContext: replyContext);
+                ReplyContext: replyContext,
+                TraceId: traceId);
 
             if (attachments is { Count: > 0 })
             {
@@ -295,6 +308,8 @@ internal sealed class TelegramCodexBotHostedService : BackgroundService
             callback.Message.MessageThreadId,
             GetCallbackDataPrefix(callback.Data));
 
+        string? callbackTraceId = _traceStore.IsFileTraceEnabled ? _traceStore.CreateTraceId() : null;
+        await RecordInboundCallbackTraceAsync(callbackTraceId, update, callback, cancellationToken).ConfigureAwait(false);
         TelegramInboundCallback inboundCallback = new(
             callback.Id,
             callback.From.Id,
@@ -302,7 +317,8 @@ internal sealed class TelegramCodexBotHostedService : BackgroundService
             callback.Message.Chat.Type.ToString(),
             callback.Data,
             callback.Message.MessageThreadId,
-            callback.Message.MessageId);
+            callback.Message.MessageId,
+            callbackTraceId);
 
         await _handler.HandleCallbackAsync(inboundCallback, sender, cancellationToken).ConfigureAwait(false);
     }
@@ -378,6 +394,8 @@ internal sealed class TelegramCodexBotHostedService : BackgroundService
                 return;
             }
 
+            string? traceId = _traceStore.IsFileTraceEnabled ? _traceStore.CreateTraceId() : null;
+            await RecordMediaGroupTraceAsync(traceId, key, items, text, attachments).ConfigureAwait(false);
             TelegramInboundMessage inbound = new(
                 key.UserId,
                 key.ChatId,
@@ -386,6 +404,7 @@ internal sealed class TelegramCodexBotHostedService : BackgroundService
                 key.MessageThreadId,
                 SourceMessageId: firstMessage.MessageId,
                 ReplyContext: await ResolveReplyContextAsync(firstMessage, CancellationToken.None).ConfigureAwait(false),
+                TraceId: traceId,
                 SourceMessageIds: items.Select(item => item.Message.MessageId).Where(id => id > 0).Distinct().ToArray());
 
             if (attachments.Count > 0)
@@ -420,6 +439,194 @@ internal sealed class TelegramCodexBotHostedService : BackgroundService
         }
     }
 
+    private Task RecordInboundMessageTraceAsync(
+        string? traceId,
+        Update update,
+        Message message,
+        string? text,
+        IReadOnlyList<TelegramAttachmentDescriptor>? attachments,
+        string kind,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(traceId))
+        {
+            return Task.CompletedTask;
+        }
+
+        Dictionary<string, string> metadata = BuildInboundMessageMetadata(update, message);
+        AddAttachmentMetadata(metadata, attachments);
+        if (TryGetCommand(message, out string commandToken, out string arguments))
+        {
+            metadata["command"] = commandToken;
+            metadata["commandArgumentLength"] = arguments.Length.ToString(CultureInfo.InvariantCulture);
+        }
+
+        return _traceStore.RecordAsync(
+            new TelegramDebugTraceEvent(
+                traceId,
+                DateTimeOffset.UtcNow,
+                kind,
+                ChatId: message.Chat.Id,
+                MessageThreadId: message.MessageThreadId,
+                SourceMessageId: message.MessageId,
+                UserId: GetSenderId(message),
+                Direction: "inbound",
+                Status: message.Type.ToString(),
+                TextLength: text?.Length ?? 0,
+                AttachmentCount: attachments?.Count ?? 0,
+                Metadata: metadata,
+                TextBody: text,
+                Source: "TelegramInbound"),
+            cancellationToken);
+    }
+
+    private Task RecordInboundAudioTraceAsync(
+        string? traceId,
+        Message message,
+        TGFile telegramFile,
+        string localPath,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(traceId))
+        {
+            return Task.CompletedTask;
+        }
+
+        Dictionary<string, string> metadata = BuildInboundMessageMetadata(null, message);
+        metadata["telegramFilePath"] = telegramFile.FilePath ?? string.Empty;
+        metadata["localPath"] = localPath;
+        if (File.Exists(localPath))
+        {
+            metadata["localBytes"] = new FileInfo(localPath).Length.ToString(CultureInfo.InvariantCulture);
+        }
+
+        return _traceStore.RecordAsync(
+            new TelegramDebugTraceEvent(
+                traceId,
+                DateTimeOffset.UtcNow,
+                "telegram.inbound.audio",
+                ChatId: message.Chat.Id,
+                MessageThreadId: message.MessageThreadId,
+                SourceMessageId: message.MessageId,
+                UserId: GetSenderId(message),
+                Direction: "inbound",
+                Status: message.Type.ToString(),
+                AttachmentCount: 1,
+                Metadata: metadata,
+                Source: "TelegramInbound"),
+            cancellationToken);
+    }
+
+    private Task RecordMediaGroupTraceAsync(
+        string? traceId,
+        TelegramMediaGroupKey key,
+        IReadOnlyList<PendingTelegramMediaGroupItem> items,
+        string? text,
+        IReadOnlyList<TelegramAttachmentDescriptor> attachments)
+    {
+        if (string.IsNullOrWhiteSpace(traceId))
+        {
+            return Task.CompletedTask;
+        }
+
+        Dictionary<string, string> metadata = new(StringComparer.Ordinal)
+        {
+            ["mediaGroupId"] = key.MediaGroupId,
+            ["sourceMessageIds"] = string.Join(",", items.Select(item => item.Message.MessageId.ToString(CultureInfo.InvariantCulture))),
+            ["itemCount"] = items.Count.ToString(CultureInfo.InvariantCulture),
+        };
+        AddAttachmentMetadata(metadata, attachments);
+        return _traceStore.RecordAsync(
+            new TelegramDebugTraceEvent(
+                traceId,
+                DateTimeOffset.UtcNow,
+                "telegram.inbound.media_group",
+                ChatId: key.ChatId,
+                MessageThreadId: key.MessageThreadId,
+                SourceMessageId: items.FirstOrDefault()?.Message.MessageId,
+                UserId: key.UserId,
+                Direction: "inbound",
+                Status: "media_group",
+                TextLength: text?.Length ?? 0,
+                AttachmentCount: attachments.Count,
+                Metadata: metadata,
+                TextBody: text,
+                Source: "TelegramInbound"),
+            CancellationToken.None);
+    }
+
+    private Task RecordInboundCallbackTraceAsync(
+        string? traceId,
+        Update update,
+        CallbackQuery callback,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(traceId) || callback.Message is null)
+        {
+            return Task.CompletedTask;
+        }
+
+        Dictionary<string, string> metadata = new(StringComparer.Ordinal)
+        {
+            ["updateId"] = update.Id.ToString(CultureInfo.InvariantCulture),
+            ["callbackQueryId"] = callback.Id,
+            ["callbackPrefix"] = GetCallbackDataPrefix(callback.Data ?? string.Empty),
+        };
+        return _traceStore.RecordAsync(
+            new TelegramDebugTraceEvent(
+                traceId,
+                DateTimeOffset.UtcNow,
+                "telegram.inbound.callback",
+                ChatId: callback.Message.Chat.Id,
+                MessageThreadId: callback.Message.MessageThreadId,
+                SourceMessageId: callback.Message.MessageId,
+                UserId: callback.From.Id,
+                Direction: "inbound",
+                Status: "callback_query",
+                TextLength: callback.Data?.Length ?? 0,
+                Metadata: metadata,
+                TextBody: callback.Data,
+                Source: "TelegramInbound"),
+            cancellationToken);
+    }
+
+    private static Dictionary<string, string> BuildInboundMessageMetadata(Update? update, Message message)
+    {
+        Dictionary<string, string> metadata = new(StringComparer.Ordinal)
+        {
+            ["messageType"] = message.Type.ToString(),
+            ["chatType"] = message.Chat.Type.ToString(),
+            ["senderKind"] = GetSenderKind(message),
+            ["hasText"] = (!string.IsNullOrWhiteSpace(message.Text)).ToString(CultureInfo.InvariantCulture),
+            ["hasCaption"] = (!string.IsNullOrWhiteSpace(message.Caption)).ToString(CultureInfo.InvariantCulture),
+        };
+        if (update is not null)
+        {
+            metadata["updateId"] = update.Id.ToString(CultureInfo.InvariantCulture);
+        }
+
+        if (!string.IsNullOrWhiteSpace(message.MediaGroupId))
+        {
+            metadata["mediaGroupId"] = message.MediaGroupId;
+        }
+
+        return metadata;
+    }
+
+    private static void AddAttachmentMetadata(
+        Dictionary<string, string> metadata,
+        IReadOnlyList<TelegramAttachmentDescriptor>? attachments)
+    {
+        if (attachments is not { Count: > 0 })
+        {
+            return;
+        }
+
+        metadata["attachmentNames"] = string.Join(",", attachments.Select(attachment => attachment.FileName));
+        metadata["attachmentTypes"] = string.Join(",", attachments.Select(attachment => attachment.IsImage ? "image" : attachment.ContentType ?? "file"));
+        metadata["attachmentPaths"] = string.Join(",", attachments.Select(attachment => attachment.FilePath));
+    }
+
     private static string GetCallbackDataPrefix(string data)
     {
         int separatorIndex = data.IndexOf(':', StringComparison.Ordinal);
@@ -445,6 +652,8 @@ internal sealed class TelegramCodexBotHostedService : BackgroundService
                 await client.DownloadFileAsync(file, stream, cancellationToken).ConfigureAwait(false);
             }
 
+            string? traceId = _traceStore.IsFileTraceEnabled ? _traceStore.CreateTraceId() : null;
+            await RecordInboundAudioTraceAsync(traceId, message, file, tempAudioPath, cancellationToken).ConfigureAwait(false);
             TelegramInboundMessage inbound = new(
                 GetSenderId(message),
                 message.Chat.Id,
@@ -453,7 +662,8 @@ internal sealed class TelegramCodexBotHostedService : BackgroundService
                 message.MessageThreadId,
                 tempAudioPath,
                 SourceMessageId: message.MessageId,
-                ReplyContext: await ResolveReplyContextAsync(message, cancellationToken).ConfigureAwait(false));
+                ReplyContext: await ResolveReplyContextAsync(message, cancellationToken).ConfigureAwait(false),
+                TraceId: traceId);
 
             await _handler.HandleMessageAsync(inbound, sender, cancellationToken).ConfigureAwait(false);
         }

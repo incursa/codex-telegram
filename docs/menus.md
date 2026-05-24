@@ -14,7 +14,7 @@ Use it to configure:
 2. Optional trusted-chat setup for groups/forums.
 3. OpenAI transcription key and model.
 4. Codex executable path.
-5. Codex default model and thinking effort.
+5. Codex default model, thinking effort, and plan-mode thinking effort.
 6. Workspace roots and default working directory.
 7. Local state root.
 
@@ -171,7 +171,7 @@ Expected content:
 1. Session name.
 2. Session status.
 3. Working directory.
-4. Model and thinking effort.
+4. Model, thinking effort, and plan-mode thinking effort.
 5. Compact rate limits when available.
 6. Created and last-activity age.
 7. Short `/use` command.
@@ -180,7 +180,33 @@ Expected content:
 Buttons:
 
 1. `Use` when viewing a non-selected session.
-2. Navigation buttons for sessions, projects, and help.
+2. `Output Mode` opens the presentation-mode picker.
+3. `Show Updates` opens retained operational turn history for the selected session.
+4. Navigation buttons for sessions, projects, and help.
+
+## Live Turn Card
+
+In `LiveCard` and `FinalOnly` output modes, progress and update events can be projected into one editable live turn card instead of a stream of chat messages. In `LiveCard`, the card keeps a visible `Latest` line for assistant output and a separate `Activity` line for ephemeral internal work.
+
+Expected content:
+
+1. Session and short turn ID.
+2. State such as `Codex is working`, `Codex finished; sending remaining Telegram output`, or `Codex failed`.
+3. Latest meaningful assistant update.
+4. Activity summary for ephemeral internal work, when present.
+5. Captured update count and suppressed progress count.
+6. Artifact count.
+7. Final-response capture status.
+7. Telegram delivery state.
+
+Buttons:
+
+1. `Show Updates` opens retained user-facing turn history.
+2. `Show Full Turn` opens retained operational history for the turn.
+3. `Trace` opens diagnostics when available.
+4. `Refresh` redraws the session status card.
+
+The live card is a control/status surface only. Final assistant output is still sent as normal durable Telegram message chunks, followed by the `~~ fin ~~` marker when the Codex turn completes.
 
 ## Tail Output
 
@@ -255,4 +281,4 @@ Expected content:
 4. Edit instructions that point to `/queue edit <id> <new text>`.
 5. `/queue all` when you need to inspect your queued prompts across conversations.
 
-Use this when output seems delayed, batched, or missing.
+Use this when output seems delayed or missing.

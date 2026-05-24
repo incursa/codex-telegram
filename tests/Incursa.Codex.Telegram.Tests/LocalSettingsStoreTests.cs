@@ -30,6 +30,7 @@ public sealed class LocalSettingsStoreTests
         store.SetWorkspaceRoots([workspaceRoot]);
         store.SetCodexModel("gpt-5.4");
         store.SetReasoningEffort("high");
+        store.SetPlanModeReasoningEffort("xhigh");
         store.SetSandbox("workspace-write");
         store.SetApprovalMode("on-request");
         store.SetNetworkAccessEnabled(true);
@@ -53,6 +54,7 @@ public sealed class LocalSettingsStoreTests
         Assert.Equal([workspaceRoot], snapshot.WorkspaceRoots);
         Assert.Equal("gpt-5.4", snapshot.CodexModel);
         Assert.Equal("high", snapshot.ReasoningEffort);
+        Assert.Equal("xhigh", snapshot.PlanModeReasoningEffort);
         Assert.Equal("workspace-write", snapshot.Sandbox);
         Assert.Equal("on-request", snapshot.ApprovalMode);
         Assert.True(snapshot.NetworkAccessEnabled);
@@ -101,6 +103,29 @@ public sealed class LocalSettingsStoreTests
         LocalSettingsSnapshot snapshot = LocalSettingsStore.Load(settingsPath).GetSnapshot();
 
         Assert.Equal("C:\\tools\\codex.exe", snapshot.TelegramBotCodexExecutablePath);
+    }
+
+    [Fact]
+    public void LoadReadsPlanModeReasoningEffortFromCodexSection()
+    {
+        using TemporaryDirectory temp = TemporaryDirectory.Create();
+        string settingsPath = Path.Combine(temp.Path, "appsettings.Local.json");
+
+        File.WriteAllText(
+            settingsPath,
+            """
+            {
+              "Codex": {
+                "PlanMode": {
+                  "ReasoningEffort": "high"
+                }
+              }
+            }
+            """);
+
+        LocalSettingsSnapshot snapshot = LocalSettingsStore.Load(settingsPath).GetSnapshot();
+
+        Assert.Equal("high", snapshot.PlanModeReasoningEffort);
     }
 
     [Fact]

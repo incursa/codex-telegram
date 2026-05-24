@@ -1,4 +1,6 @@
 using Incursa.Codex.Telegram.Models;
+using Incursa.Codex.Telegram.Options;
+using Microsoft.Extensions.Options;
 
 namespace Incursa.Codex.Telegram.Services;
 
@@ -21,10 +23,16 @@ internal sealed class CodexSessionEventLog : ICodexSessionEventLog
 {
     private const int MaxEvents = 2_000;
     private readonly object _gate = new();
-    private readonly Queue<CodexSessionEventRecord> _events = [];
+    private readonly List<CodexSessionEventRecord> _events = [];
     private readonly Dictionary<string, CodexTurnCloseoutSummary> _lastCloseouts = new(StringComparer.Ordinal);
     private readonly HashSet<string> _visibleAssistantOutputKeys = new(StringComparer.Ordinal);
     private readonly HashSet<string> _publishedCloseoutWarningKeys = new(StringComparer.Ordinal);
+    private readonly IOptions<TelegramOutputOptions>? _options;
+
+    public CodexSessionEventLog(IOptions<TelegramOutputOptions>? options = null)
+    {
+        _options = options;
+    }
 
     public void Record(CodexSessionEventRecord record)
     {
@@ -35,11 +43,8 @@ internal sealed class CodexSessionEventLog : ICodexSessionEventLog
 
         lock (_gate)
         {
-            _events.Enqueue(record);
-            while (_events.Count > MaxEvents)
-            {
-                _events.Dequeue();
-            }
+            _events.Add(NormalizeForHistory(record, CurrentOptions));
+            TrimHistory(record, CurrentOptions);
 
             if (record.Closeout is not null)
             {
@@ -130,6 +135,62 @@ internal sealed class CodexSessionEventLog : ICodexSessionEventLog
         => string.IsNullOrWhiteSpace(turnId)
             ? threadId
             : $"{threadId}\u001f{turnId}";
+
+    private TelegramOutputOptions CurrentOptions => _options?.Value ?? new TelegramOutputOptions();
+
+    private static CodexSessionEventRecord NormalizeForHistory(CodexSessionEventRecord record, TelegramOutputOptions options)
+    {
+        if (options.CaptureProgressHistory)
+        {
+            return record;
+        }
+
+        if (record.Kind is not (CodexSessionEventKind.ToolProgress or CodexSessionEventKind.InternalNoise))
+        {
+            return record;
+        }
+
+        return record with
+        {
+            Summary = null,
+        };
+    }
+
+    private void TrimHistory(CodexSessionEventRecord addedRecord, TelegramOutputOptions options)
+    {
+        DateTimeOffset cutoff = DateTimeOffset.UtcNow.AddDays(-options.HistoryRetentionDays);
+        _events.RemoveAll(evt => evt.Timestamp < cutoff);
+
+        int maxEvents = Math.Max(MaxEvents, options.MaxHistoryEventsPerTurn * 20);
+        while (_events.Count > maxEvents)
+        {
+            _events.RemoveAt(0);
+        }
+
+        string turnKey = CreateTurnKey(addedRecord.ThreadId, addedRecord.TurnId);
+        int sameTurnCount = _events.Count(evt => string.Equals(CreateTurnKey(evt.ThreadId, evt.TurnId), turnKey, StringComparison.Ordinal));
+        while (sameTurnCount > options.MaxHistoryEventsPerTurn)
+        {
+            int removeIndex = _events.FindIndex(evt =>
+                string.Equals(CreateTurnKey(evt.ThreadId, evt.TurnId), turnKey, StringComparison.Ordinal)
+                && IsLowPriorityHistory(evt));
+            if (removeIndex < 0)
+            {
+                removeIndex = _events.FindIndex(evt => string.Equals(CreateTurnKey(evt.ThreadId, evt.TurnId), turnKey, StringComparison.Ordinal));
+            }
+
+            if (removeIndex < 0)
+            {
+                break;
+            }
+
+            _events.RemoveAt(removeIndex);
+            sameTurnCount--;
+        }
+    }
+
+    private static bool IsLowPriorityHistory(CodexSessionEventRecord record)
+        => record.Kind is CodexSessionEventKind.ToolProgress or CodexSessionEventKind.InternalNoise or CodexSessionEventKind.Other;
 }
 
 internal sealed class NullCodexSessionEventLog : ICodexSessionEventLog
@@ -200,6 +261,7 @@ internal enum CodexSessionEventKind
     TerminalFailure,
     RetryScheduled,
     CloseoutWarning,
+    Artifact,
     InternalNoise,
     Other,
 }
@@ -216,7 +278,8 @@ internal static class CodexSessionEventClassifier
     public static CodexSessionEventKind ClassifyKind(CodexTimelineEntryVm entry)
     {
         if (string.Equals(entry.Type, "item.agentMessage.delta", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(entry.Type, "turn.assistant.recovered", StringComparison.OrdinalIgnoreCase))
+            || string.Equals(entry.Type, "turn.assistant.recovered", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(entry.Type, "turn.finalResponse", StringComparison.OrdinalIgnoreCase))
         {
             return CodexSessionEventKind.AssistantOutput;
         }
@@ -235,6 +298,11 @@ internal static class CodexSessionEventClassifier
         if (string.Equals(entry.Type, "turn.retry", StringComparison.OrdinalIgnoreCase))
         {
             return CodexSessionEventKind.RetryScheduled;
+        }
+
+        if (entry.Metadata.ContainsKey("explicitMediaKind"))
+        {
+            return CodexSessionEventKind.Artifact;
         }
 
         if (string.Equals(entry.Type, "turn.closeout.warning", StringComparison.OrdinalIgnoreCase))
@@ -258,6 +326,7 @@ internal static class CodexSessionEventClassifier
         {
             CodexSessionEventKind.AssistantOutput => CodexSessionEventLane.Timeline,
             CodexSessionEventKind.TerminalFailure => CodexSessionEventLane.Timeline,
+            CodexSessionEventKind.Artifact => CodexSessionEventLane.Timeline,
             CodexSessionEventKind.CloseoutWarning => CodexSessionEventLane.Timeline,
             CodexSessionEventKind.TerminalSuccess => CodexSessionEventLane.State,
             CodexSessionEventKind.RetryScheduled => CodexSessionEventLane.State,

@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Incursa.Codex.Telegram.Options;
 using Incursa.Codex.Telegram.Telegram;
 using Microsoft.Extensions.Logging;
@@ -29,6 +30,60 @@ public sealed class TelegramBotClientMessageSenderTests
             CancellationToken.None);
 
         Assert.Empty(client.SentMessages);
+    }
+
+    [Fact]
+    public async Task SendTextMessageAndGetIdAsync_FullCaptureRecordsTelegramApiSuccess()
+    {
+        using TemporaryDirectory dataRoot = TemporaryDirectory.Create();
+        TelegramDebugTraceStore traceStore = CreateTraceStore(dataRoot.Path);
+        traceStore.EnableFullCapture(TimeSpan.FromMinutes(30));
+        string traceId = traceStore.CreateTraceId();
+        FakeTelegramBotApiClient client = new();
+        TelegramBotClientMessageSender sender = CreateSender(client, traceStore: traceStore);
+
+        int? messageId = await sender.SendTextMessageAndGetIdAsync(
+            new TelegramConversationScope(1234, 55),
+            "hello from bot",
+            null,
+            CancellationToken.None,
+            new TelegramDebugMessageContext("test", TraceId: traceId));
+
+        Assert.Equal(1001, messageId);
+        string[] lines = ReadAllTraceLines(dataRoot.Path);
+        Assert.Contains(lines, line => line.Contains("\"kind\":\"telegram.api.send.attempt\"", StringComparison.Ordinal));
+        Assert.Contains(lines, line => line.Contains("\"kind\":\"telegram.api.send.succeeded\"", StringComparison.Ordinal));
+        Assert.All(lines, line =>
+        {
+            using JsonDocument document = JsonDocument.Parse(line);
+            Assert.Equal("hello from bot", document.RootElement.GetProperty("textBody").GetString());
+        });
+    }
+
+    [Fact]
+    public async Task SendTextMessageAndGetIdAsync_FullCaptureRecordsTelegramApiFailure()
+    {
+        using TemporaryDirectory dataRoot = TemporaryDirectory.Create();
+        TelegramDebugTraceStore traceStore = CreateTraceStore(dataRoot.Path);
+        traceStore.EnableFullCapture(TimeSpan.FromMinutes(30));
+        string traceId = traceStore.CreateTraceId();
+        FakeTelegramBotApiClient client = new();
+        client.SendFailures.Enqueue(new InvalidOperationException("failed with token=super-secret"));
+        TelegramBotClientMessageSender sender = CreateSender(client, traceStore: traceStore);
+
+        int? messageId = await sender.SendTextMessageAndGetIdAsync(
+            new TelegramConversationScope(1234, 55),
+            "hello from bot",
+            null,
+            CancellationToken.None,
+            new TelegramDebugMessageContext("test", TraceId: traceId));
+
+        Assert.Null(messageId);
+        string[] lines = ReadAllTraceLines(dataRoot.Path);
+        Assert.Contains(lines, line => line.Contains("\"kind\":\"telegram.api.send.failed\"", StringComparison.Ordinal));
+        string combined = string.Join(Environment.NewLine, lines);
+        Assert.Contains("redacted", combined);
+        Assert.DoesNotContain("super-secret", combined);
     }
 
     [Fact]
@@ -105,6 +160,25 @@ public sealed class TelegramBotClientMessageSenderTests
         TelegramReaction reaction = Assert.Single(client.Reactions);
         Assert.Equal(42, reaction.MessageId);
         Assert.Equal("\U0001F440", reaction.Emoji);
+    }
+
+    [Fact]
+    public async Task ReactToMessageAsync_MetadataCaptureRecordsReactionAttemptAndSuccess()
+    {
+        using TemporaryDirectory dataRoot = TemporaryDirectory.Create();
+        TelegramDebugTraceStore traceStore = CreateTraceStore(dataRoot.Path);
+        traceStore.EnableMetadataCapture();
+        FakeTelegramBotApiClient client = new();
+        TelegramBotClientMessageSender sender = CreateSender(client, traceStore: traceStore);
+
+        await sender.ReactToMessageAsync(
+            new TelegramMessageReaction(new TelegramConversationScope(1234, 55), 42, TelegramMessageReactionKind.Completed),
+            CancellationToken.None);
+
+        string[] lines = ReadAllTraceLines(dataRoot.Path);
+        Assert.Contains(lines, line => line.Contains("\"kind\":\"telegram.api.reaction.attempt\"", StringComparison.Ordinal));
+        Assert.Contains(lines, line => line.Contains("\"kind\":\"telegram.api.reaction.succeeded\"", StringComparison.Ordinal));
+        Assert.DoesNotContain(lines, line => line.Contains("textBody", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -701,7 +775,8 @@ public sealed class TelegramBotClientMessageSenderTests
         FakeTelegramBotApiClient client,
         ILogger<TelegramBotClientMessageSender>? logger = null,
         ITelegramMessageContextStore? messageContextStore = null,
-        ITelegramDebugPreambleMode? debugPreambleMode = null)
+        ITelegramDebugPreambleMode? debugPreambleMode = null,
+        ITelegramDebugTraceStore? traceStore = null)
         => new(
             new TelegramBotOptions
             {
@@ -711,7 +786,26 @@ public sealed class TelegramBotClientMessageSenderTests
             logger ?? NullLogger<TelegramBotClientMessageSender>.Instance,
             client,
             messageContextStore,
-            debugPreambleMode);
+            debugPreambleMode,
+            traceStore);
+
+    private static TelegramDebugTraceStore CreateTraceStore(string dataRoot)
+        => new(
+            Microsoft.Extensions.Options.Options.Create(new CodexTelegramOptions
+            {
+                Workspace = new CodexWorkspaceOptions
+                {
+                    DataRoot = dataRoot,
+                },
+            }),
+            Microsoft.Extensions.Options.Options.Create(new TelegramDebugTraceOptions()));
+
+    private static string[] ReadAllTraceLines(string dataRoot)
+    {
+        string root = Path.Combine(dataRoot, "telegram-traces");
+        string file = Assert.Single(Directory.GetFiles(root, "*.jsonl", SearchOption.AllDirectories));
+        return File.ReadAllLines(file);
+    }
 
     private sealed class FakeTelegramBotApiClient : ITelegramBotApiClient
     {

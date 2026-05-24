@@ -53,7 +53,7 @@ internal enum OutboundPriority
     Normal = 10,
 
     /// <summary>
-    /// Sends without waiting for the batching window.
+    /// Sends without waiting for the normal-priority send window.
     /// </summary>
     High = 20,
 
@@ -104,7 +104,7 @@ internal sealed record OutboundTelegramMessage
     public required CodexOutboundMessageKind Kind { get; init; }
 
     /// <summary>
-    /// Gets the text to deliver after batching and chunking.
+    /// Gets the text to deliver after queueing and chunking.
     /// </summary>
     public required string Text { get; init; }
 
@@ -291,7 +291,7 @@ internal sealed class TelegramOutboundSendTimeoutException : TimeoutException
 }
 
 /// <summary>
-/// Background scheduler that batches, chunks, and rate-limits live Codex output for Telegram.
+/// Background scheduler that chunks and rate-limits live Codex output for Telegram.
 /// </summary>
 internal sealed class OutboundTelegramScheduler : BackgroundService, IOutboundTelegramQueue
 {
@@ -299,8 +299,6 @@ internal sealed class OutboundTelegramScheduler : BackgroundService, IOutboundTe
     private const int GlobalSendBudgetWindowSeconds = 1;
     private const int DefaultRateLimitBackoffSeconds = 5;
     private const int SchedulerFailureDelaySeconds = 1;
-    private const string TurnCompletionMarker = "~~ turn complete ~~";
-    private const string LegacyTurnFinishedMarker = "~~ fin ~~";
     private readonly ConcurrentDictionary<TelegramDestinationKey, DestinationBuffer> _buffers = new();
     private readonly ConcurrentDictionary<TelegramSendBudgetKey, BudgetState> _chatBudgets = new();
     private readonly Queue<DateTimeOffset> _globalSendTimestamps = new();
@@ -394,7 +392,9 @@ internal sealed class OutboundTelegramScheduler : BackgroundService, IOutboundTe
                 Metadata: new Dictionary<string, string>
                 {
                     ["kind"] = normalized.Kind.ToString(),
-                }),
+                },
+                TextBody: normalized.Text,
+                Source: "TelegramOutbound"),
             cancellationToken).ConfigureAwait(false);
 
         return;
@@ -556,8 +556,36 @@ internal sealed class OutboundTelegramScheduler : BackgroundService, IOutboundTe
                 MessageThreadId: pending.Destination.MessageThreadId,
                 Direction: "outbound",
                 ChunkLength: pending.Text?.Length ?? pending.File?.Caption?.Length,
-                Error: error),
+                Error: error,
+                Metadata: BuildPendingSendTraceMetadata(pending),
+                TextBody: pending.Text ?? pending.File?.Caption,
+                Source: "TelegramOutbound"),
             cancellationToken);
+
+    private static IReadOnlyDictionary<string, string>? BuildPendingSendTraceMetadata(PendingSend pending)
+    {
+        if (pending.File is null)
+        {
+            return null;
+        }
+
+        Dictionary<string, string> metadata = new(StringComparer.Ordinal)
+        {
+            ["fileKind"] = pending.File.Kind.ToString(),
+            ["filePath"] = pending.File.Path,
+        };
+        if (!string.IsNullOrWhiteSpace(pending.File.FileName))
+        {
+            metadata["fileName"] = pending.File.FileName;
+        }
+
+        if (!string.IsNullOrWhiteSpace(pending.File.ContentType))
+        {
+            metadata["contentType"] = pending.File.ContentType;
+        }
+
+        return metadata;
+    }
 
     private async Task SendWithTimeoutAsync(PendingSend pending, TelegramOutboundOptions options, CancellationToken cancellationToken)
     {
@@ -666,7 +694,7 @@ internal sealed class OutboundTelegramScheduler : BackgroundService, IOutboundTe
     {
         if (buffer.HasPreparedChunks || buffer.HighestPriority >= OutboundPriority.High)
         {
-            // Prepared chunks must drain in order, and urgent updates should not wait for batching.
+            // Prepared chunks must drain in order, and urgent updates should not wait for the normal send window.
             return true;
         }
 
@@ -1089,41 +1117,26 @@ internal sealed class OutboundTelegramScheduler : BackgroundService, IOutboundTe
 
         private PreparedOutboundSend FormatNextSend()
         {
-            int standaloneIndex = _messages.FindIndex(IsStandaloneMessage);
-            if (standaloneIndex == 0)
+            PendingOutboundItem message = _messages[0];
+            _messages.RemoveAt(0);
+            if (message.File is not null)
             {
-                PendingOutboundItem standalone = _messages[0];
-                _messages.RemoveAt(0);
-                if (standalone.File is not null)
-                {
-                    return new PreparedOutboundSend(
-                        string.IsNullOrWhiteSpace(standalone.Text) ? standalone.File.Caption : standalone.Text,
-                        standalone.File,
-                        CreateDebugContext([standalone]),
-                        standalone.TraceId,
-                        standalone.SessionId,
-                        standalone.TurnId);
-                }
-
                 return new PreparedOutboundSend(
-                    FormatBatchItem(standalone.Text),
-                    null,
-                    CreateDebugContext([standalone]),
-                    standalone.TraceId,
-                    standalone.SessionId,
-                    standalone.TurnId);
+                    string.IsNullOrWhiteSpace(message.Text) ? message.File.Caption : message.Text,
+                    message.File,
+                    CreateDebugContext([message]),
+                    message.TraceId,
+                    message.SessionId,
+                    message.TurnId);
             }
 
-            int count = standaloneIndex > 0 ? standaloneIndex : _messages.Count;
-            List<PendingOutboundItem> messages = _messages.GetRange(0, count);
-            _messages.RemoveRange(0, count);
             return new PreparedOutboundSend(
-                FormatBatch(messages),
+                FormatBatchItem(message.Text),
                 null,
-                CreateDebugContext(messages),
-                ResolveSingleValue(messages.Select(message => message.TraceId)),
-                ResolveSingleValue(messages.Select(message => message.SessionId)),
-                ResolveSingleValue(messages.Select(message => message.TurnId)));
+                CreateDebugContext([message]),
+                message.TraceId,
+                message.SessionId,
+                message.TurnId);
         }
 
         private static TelegramDebugMessageContext CreateDebugContext(IReadOnlyList<PendingOutboundItem> messages)
@@ -1131,6 +1144,7 @@ internal sealed class OutboundTelegramScheduler : BackgroundService, IOutboundTe
             string? sessionId = ResolveSingleValue(messages.Select(message => message.SessionId));
             string? turnId = ResolveSingleValue(messages.Select(message => message.TurnId));
             string? kind = ResolveSingleValue(messages.Select(message => message.Kind.ToString()));
+            string? traceId = ResolveSingleValue(messages.Select(message => message.TraceId));
             string? messageId = messages.Count == 1 ? messages[0].MessageId : null;
             return new TelegramDebugMessageContext(
                 "outbound",
@@ -1139,7 +1153,8 @@ internal sealed class OutboundTelegramScheduler : BackgroundService, IOutboundTe
                 ActiveTurnId: null,
                 kind,
                 messageId,
-                messages.Count);
+                messages.Count,
+                traceId);
         }
 
         private static string? ResolveSingleValue(IEnumerable<string?> values)
@@ -1186,10 +1201,6 @@ internal sealed class OutboundTelegramScheduler : BackgroundService, IOutboundTe
         private static string FormatBatchItem(string value)
             => value.Replace("\r\n", "\n", StringComparison.Ordinal).Trim();
 
-        private static bool IsStandaloneMessage(PendingOutboundItem message)
-            => message.File is not null
-                || string.Equals(FormatBatchItem(message.Text), TurnCompletionMarker, StringComparison.Ordinal)
-                || string.Equals(FormatBatchItem(message.Text), LegacyTurnFinishedMarker, StringComparison.Ordinal);
     }
 
     /// <summary>

@@ -528,6 +528,11 @@ public sealed class CodexTurnExecutionCoordinatorStreamingTests
                 AgentMessageUpdateMinChars = 5,
                 AgentMessageUpdateMaxChars = 12,
             }),
+            Microsoft.Extensions.Options.Options.Create(new TelegramOutputOptions
+            {
+                PresentationMode = TelegramOutputPresentationMode.Verbose,
+            }),
+            new TestTelegramOutputModeState(),
             NullLogger<TelegramTurnOutputRelay>.Instance,
             eventLog);
 
@@ -621,6 +626,25 @@ public sealed class CodexTurnExecutionCoordinatorStreamingTests
 
         public Task ReactToMessageAsync(TelegramMessageReaction reaction, CancellationToken cancellationToken)
             => Task.CompletedTask;
+    }
+
+    private sealed class TestTelegramOutputModeState : ITelegramOutputModeState
+    {
+        public TelegramOutputPresentationMode CurrentMode { get; private set; } = TelegramOutputPresentationMode.Verbose;
+
+        public bool HasRuntimeOverride { get; private set; }
+
+        public void SetRuntimeMode(TelegramOutputPresentationMode mode)
+        {
+            CurrentMode = mode;
+            HasRuntimeOverride = true;
+        }
+
+        public void ClearRuntimeMode()
+        {
+            CurrentMode = TelegramOutputPresentationMode.Verbose;
+            HasRuntimeOverride = false;
+        }
     }
 
     private sealed class TestApplicationLifetime : IHostApplicationLifetime

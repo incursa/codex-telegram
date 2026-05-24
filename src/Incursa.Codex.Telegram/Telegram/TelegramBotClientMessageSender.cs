@@ -14,6 +14,7 @@ internal sealed class TelegramBotClientMessageSender : ITelegramBotMessageSender
     private readonly Lazy<ITelegramBotApiClient> _client;
     private readonly ITelegramMessageContextStore _messageContextStore;
     private readonly ITelegramDebugPreambleMode _debugPreambleMode;
+    private readonly ITelegramDebugTraceStore _traceStore;
 
     public TelegramBotClientMessageSender(
         IOptions<TelegramBotOptions> options,
@@ -23,7 +24,8 @@ internal sealed class TelegramBotClientMessageSender : ITelegramBotMessageSender
             logger,
             new Lazy<ITelegramBotApiClient>(() => new TelegramBotApiClient(new TelegramBotClient(RequireToken(options.Value)))),
             NullTelegramMessageContextStore.Instance,
-            DisabledTelegramDebugPreambleMode.Instance)
+            DisabledTelegramDebugPreambleMode.Instance,
+            NullTelegramDebugTraceStore.Instance)
     {
     }
 
@@ -36,7 +38,8 @@ internal sealed class TelegramBotClientMessageSender : ITelegramBotMessageSender
             logger,
             new Lazy<ITelegramBotApiClient>(() => new TelegramBotApiClient(new TelegramBotClient(RequireToken(options.Value)))),
             messageContextStore,
-            DisabledTelegramDebugPreambleMode.Instance)
+            DisabledTelegramDebugPreambleMode.Instance,
+            NullTelegramDebugTraceStore.Instance)
     {
     }
 
@@ -45,12 +48,23 @@ internal sealed class TelegramBotClientMessageSender : ITelegramBotMessageSender
         ILogger<TelegramBotClientMessageSender> logger,
         ITelegramMessageContextStore messageContextStore,
         ITelegramDebugPreambleMode debugPreambleMode)
+        : this(options, logger, messageContextStore, debugPreambleMode, NullTelegramDebugTraceStore.Instance)
+    {
+    }
+
+    public TelegramBotClientMessageSender(
+        IOptions<TelegramBotOptions> options,
+        ILogger<TelegramBotClientMessageSender> logger,
+        ITelegramMessageContextStore messageContextStore,
+        ITelegramDebugPreambleMode debugPreambleMode,
+        ITelegramDebugTraceStore traceStore)
         : this(
             options.Value,
             logger,
             new Lazy<ITelegramBotApiClient>(() => new TelegramBotApiClient(new TelegramBotClient(RequireToken(options.Value)))),
             messageContextStore,
-            debugPreambleMode)
+            debugPreambleMode,
+            traceStore)
     {
     }
 
@@ -59,13 +73,15 @@ internal sealed class TelegramBotClientMessageSender : ITelegramBotMessageSender
         ILogger<TelegramBotClientMessageSender> logger,
         ITelegramBotApiClient client,
         ITelegramMessageContextStore? messageContextStore = null,
-        ITelegramDebugPreambleMode? debugPreambleMode = null)
+        ITelegramDebugPreambleMode? debugPreambleMode = null,
+        ITelegramDebugTraceStore? traceStore = null)
         : this(
             options,
             logger,
             new Lazy<ITelegramBotApiClient>(() => client),
             messageContextStore ?? NullTelegramMessageContextStore.Instance,
-            debugPreambleMode ?? DisabledTelegramDebugPreambleMode.Instance)
+            debugPreambleMode ?? DisabledTelegramDebugPreambleMode.Instance,
+            traceStore ?? NullTelegramDebugTraceStore.Instance)
     {
     }
 
@@ -74,13 +90,15 @@ internal sealed class TelegramBotClientMessageSender : ITelegramBotMessageSender
         ILogger<TelegramBotClientMessageSender> logger,
         Lazy<ITelegramBotApiClient> client,
         ITelegramMessageContextStore messageContextStore,
-        ITelegramDebugPreambleMode debugPreambleMode)
+        ITelegramDebugPreambleMode debugPreambleMode,
+        ITelegramDebugTraceStore traceStore)
     {
         _options = options;
         _logger = logger;
         _client = client;
         _messageContextStore = messageContextStore;
         _debugPreambleMode = debugPreambleMode;
+        _traceStore = traceStore;
     }
 
     public async Task SendTextMessageAsync(
@@ -222,11 +240,35 @@ internal sealed class TelegramBotClientMessageSender : ITelegramBotMessageSender
         try
         {
             string sendText = ApplyDebugPreamble(conversation, text, debugContext);
+            string? traceId = ResolveTraceId(debugContext);
+            await RecordTelegramApiTraceAsync(
+                traceId,
+                conversation,
+                "telegram.api.edit.attempt",
+                "attempt",
+                text,
+                messageId,
+                error: null,
+                new Dictionary<string, string>
+                {
+                    ["buttonRows"] = (buttons?.Count ?? 0).ToString(System.Globalization.CultureInfo.InvariantCulture),
+                },
+                cancellationToken).ConfigureAwait(false);
             await _client.Value.EditMessageTextAsync(
                 conversation.ChatId,
                 messageId,
                 sendText,
                 ToInlineKeyboardMarkup(buttons),
+                cancellationToken).ConfigureAwait(false);
+            await RecordTelegramApiTraceAsync(
+                traceId,
+                conversation,
+                "telegram.api.edit.succeeded",
+                "succeeded",
+                text,
+                messageId,
+                error: null,
+                null,
                 cancellationToken).ConfigureAwait(false);
             await _messageContextStore.RecordAsync(
                 new TelegramMessageContextRecord(
@@ -248,6 +290,16 @@ internal sealed class TelegramBotClientMessageSender : ITelegramBotMessageSender
         }
         catch (ApiRequestException exception) when (IsMessageNotModified(exception))
         {
+            await RecordTelegramApiTraceAsync(
+                ResolveTraceId(debugContext),
+                conversation,
+                "telegram.api.edit.noop",
+                "not_modified",
+                text,
+                messageId,
+                exception.Message,
+                null,
+                cancellationToken).ConfigureAwait(false);
             _logger.LogDebug(
                 exception,
                 "Telegram edit for chat {ChatId} message {MessageId} was a no-op because the content did not change.",
@@ -261,6 +313,16 @@ internal sealed class TelegramBotClientMessageSender : ITelegramBotMessageSender
         }
         catch (Exception exception)
         {
+            await RecordTelegramApiTraceAsync(
+                ResolveTraceId(debugContext),
+                conversation,
+                "telegram.api.edit.failed",
+                "failed",
+                text,
+                messageId,
+                exception.Message,
+                null,
+                cancellationToken).ConfigureAwait(false);
             _logger.LogWarning(
                 exception,
                 "Telegram edit failed for chat {ChatId} message {MessageId}; falling back to a new message.",
@@ -277,9 +339,30 @@ internal sealed class TelegramBotClientMessageSender : ITelegramBotMessageSender
             return;
         }
 
+        string? traceId = _traceStore.IsFileTraceEnabled ? _traceStore.CreateTraceId() : null;
         try
         {
+            await RecordTelegramApiTraceAsync(
+                traceId,
+                conversation: null,
+                "telegram.api.callback_answer.attempt",
+                "attempt",
+                text,
+                messageId: null,
+                error: null,
+                new Dictionary<string, string> { ["callbackQueryId"] = callbackQueryId },
+                cancellationToken).ConfigureAwait(false);
             await _client.Value.AnswerCallbackQueryAsync(callbackQueryId, text, cancellationToken).ConfigureAwait(false);
+            await RecordTelegramApiTraceAsync(
+                traceId,
+                conversation: null,
+                "telegram.api.callback_answer.succeeded",
+                "succeeded",
+                text,
+                messageId: null,
+                error: null,
+                new Dictionary<string, string> { ["callbackQueryId"] = callbackQueryId },
+                cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -287,6 +370,16 @@ internal sealed class TelegramBotClientMessageSender : ITelegramBotMessageSender
         }
         catch (Exception exception)
         {
+            await RecordTelegramApiTraceAsync(
+                traceId,
+                conversation: null,
+                "telegram.api.callback_answer.failed",
+                "failed",
+                text,
+                messageId: null,
+                exception.Message,
+                new Dictionary<string, string> { ["callbackQueryId"] = callbackQueryId },
+                cancellationToken).ConfigureAwait(false);
             _logger.LogWarning(exception, "Telegram callback answer failed for callback {CallbackQueryId}; the bot will continue running.", callbackQueryId);
         }
     }
@@ -342,6 +435,21 @@ internal sealed class TelegramBotClientMessageSender : ITelegramBotMessageSender
             return;
         }
 
+        string? traceId = _traceStore.IsFileTraceEnabled ? _traceStore.CreateTraceId() : null;
+        IReadOnlyDictionary<string, string> metadata = new Dictionary<string, string>
+        {
+            ["reactionKind"] = reaction.Kind.ToString(),
+        };
+        await RecordTelegramApiTraceAsync(
+            traceId,
+            reaction.Conversation,
+            "telegram.api.reaction.attempt",
+            "attempt",
+            text: null,
+            messageId: reaction.MessageId,
+            error: null,
+            metadata: metadata,
+            cancellationToken: cancellationToken).ConfigureAwait(false);
         try
         {
             await _client.Value.SetMessageReactionAsync(
@@ -350,6 +458,16 @@ internal sealed class TelegramBotClientMessageSender : ITelegramBotMessageSender
                 ResolveReactionEmoji(reaction.Kind),
                 isBig: false,
                 cancellationToken).ConfigureAwait(false);
+            await RecordTelegramApiTraceAsync(
+                traceId,
+                reaction.Conversation,
+                "telegram.api.reaction.succeeded",
+                "succeeded",
+                text: null,
+                messageId: reaction.MessageId,
+                error: null,
+                metadata: metadata,
+                cancellationToken: cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -357,6 +475,16 @@ internal sealed class TelegramBotClientMessageSender : ITelegramBotMessageSender
         }
         catch (Exception exception)
         {
+            await RecordTelegramApiTraceAsync(
+                traceId,
+                reaction.Conversation,
+                "telegram.api.reaction.failed",
+                "failed",
+                text: null,
+                messageId: reaction.MessageId,
+                error: exception.Message,
+                metadata: metadata,
+                cancellationToken: cancellationToken).ConfigureAwait(false);
             _logger.LogDebug(
                 exception,
                 "Telegram reaction {ReactionKind} failed for chat {ChatId} message {MessageId}; continuing.",
@@ -373,13 +501,34 @@ internal sealed class TelegramBotClientMessageSender : ITelegramBotMessageSender
             return;
         }
 
+        string? traceId = _traceStore.IsFileTraceEnabled ? _traceStore.CreateTraceId() : null;
         try
         {
+            await RecordTelegramApiTraceAsync(
+                traceId,
+                conversation,
+                "telegram.api.chat_action.attempt",
+                "attempt",
+                text: null,
+                messageId: null,
+                error: null,
+                metadata: new Dictionary<string, string> { ["activity"] = TelegramChatActivity.Typing.ToString() },
+                cancellationToken: cancellationToken).ConfigureAwait(false);
             await _client.Value.SendChatActionAsync(
                 conversation.ChatId,
                 conversation.MessageThreadId,
                 TelegramChatActivity.Typing,
                 cancellationToken).ConfigureAwait(false);
+            await RecordTelegramApiTraceAsync(
+                traceId,
+                conversation,
+                "telegram.api.chat_action.succeeded",
+                "succeeded",
+                text: null,
+                messageId: null,
+                error: null,
+                metadata: new Dictionary<string, string> { ["activity"] = TelegramChatActivity.Typing.ToString() },
+                cancellationToken: cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -387,6 +536,16 @@ internal sealed class TelegramBotClientMessageSender : ITelegramBotMessageSender
         }
         catch (Exception exception)
         {
+            await RecordTelegramApiTraceAsync(
+                traceId,
+                conversation,
+                "telegram.api.chat_action.failed",
+                "failed",
+                text: null,
+                messageId: null,
+                error: exception.Message,
+                metadata: new Dictionary<string, string> { ["activity"] = TelegramChatActivity.Typing.ToString() },
+                cancellationToken: cancellationToken).ConfigureAwait(false);
             _logger.LogDebug(
                 exception,
                 "Telegram typing action failed for chat {ChatId} topic {MessageThreadId}; continuing.",
@@ -420,20 +579,8 @@ internal sealed class TelegramBotClientMessageSender : ITelegramBotMessageSender
         await TrySendChatActionAsync(conversation, activity, cancellationToken).ConfigureAwait(false);
 
         int messageId = file.Kind == TelegramOutboundFileKind.Photo
-            ? await _client.Value.SendPhotoAsync(
-                conversation.ChatId,
-                file.Path,
-                fileName,
-                caption,
-                conversation.MessageThreadId,
-                cancellationToken).ConfigureAwait(false)
-            : await _client.Value.SendDocumentAsync(
-                conversation.ChatId,
-                file.Path,
-                fileName,
-                caption,
-                conversation.MessageThreadId,
-                cancellationToken).ConfigureAwait(false);
+            ? await SendPhotoWithTraceAsync(conversation, file, fileName, caption, cancellationToken, debugContext).ConfigureAwait(false)
+            : await SendDocumentWithTraceAsync(conversation, file, fileName, caption, cancellationToken, debugContext).ConfigureAwait(false);
 
         await _messageContextStore.RecordAsync(
             new TelegramMessageContextRecord(
@@ -455,13 +602,34 @@ internal sealed class TelegramBotClientMessageSender : ITelegramBotMessageSender
 
     private async Task TrySendChatActionAsync(TelegramConversationScope conversation, TelegramChatActivity activity, CancellationToken cancellationToken)
     {
+        string? traceId = _traceStore.IsFileTraceEnabled ? _traceStore.CreateTraceId() : null;
         try
         {
+            await RecordTelegramApiTraceAsync(
+                traceId,
+                conversation,
+                "telegram.api.chat_action.attempt",
+                "attempt",
+                text: null,
+                messageId: null,
+                error: null,
+                metadata: new Dictionary<string, string> { ["activity"] = activity.ToString() },
+                cancellationToken: cancellationToken).ConfigureAwait(false);
             await _client.Value.SendChatActionAsync(
                 conversation.ChatId,
                 conversation.MessageThreadId,
                 activity,
                 cancellationToken).ConfigureAwait(false);
+            await RecordTelegramApiTraceAsync(
+                traceId,
+                conversation,
+                "telegram.api.chat_action.succeeded",
+                "succeeded",
+                text: null,
+                messageId: null,
+                error: null,
+                metadata: new Dictionary<string, string> { ["activity"] = activity.ToString() },
+                cancellationToken: cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -469,12 +637,90 @@ internal sealed class TelegramBotClientMessageSender : ITelegramBotMessageSender
         }
         catch (Exception exception)
         {
+            await RecordTelegramApiTraceAsync(
+                traceId,
+                conversation,
+                "telegram.api.chat_action.failed",
+                "failed",
+                text: null,
+                messageId: null,
+                error: exception.Message,
+                metadata: new Dictionary<string, string> { ["activity"] = activity.ToString() },
+                cancellationToken: cancellationToken).ConfigureAwait(false);
             _logger.LogDebug(
                 exception,
                 "Telegram chat action {Activity} failed for chat {ChatId} topic {MessageThreadId}; continuing with send.",
                 activity,
                 conversation.ChatId,
                 conversation.MessageThreadId);
+        }
+    }
+
+    private async Task<int> SendPhotoWithTraceAsync(
+        TelegramConversationScope conversation,
+        OutboundTelegramFile file,
+        string fileName,
+        string caption,
+        CancellationToken cancellationToken,
+        TelegramDebugMessageContext? debugContext)
+    {
+        string? traceId = ResolveTraceId(debugContext);
+        IReadOnlyDictionary<string, string> metadata = BuildFileTraceMetadata(file, fileName);
+        await RecordTelegramApiTraceAsync(traceId, conversation, "telegram.api.file_send.attempt", "attempt", caption, null, null, metadata, cancellationToken).ConfigureAwait(false);
+        try
+        {
+            int messageId = await _client.Value.SendPhotoAsync(
+                conversation.ChatId,
+                file.Path,
+                fileName,
+                caption,
+                conversation.MessageThreadId,
+                cancellationToken).ConfigureAwait(false);
+            await RecordTelegramApiTraceAsync(traceId, conversation, "telegram.api.file_send.succeeded", "succeeded", caption, messageId, null, metadata, cancellationToken).ConfigureAwait(false);
+            return messageId;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            await RecordTelegramApiTraceAsync(traceId, conversation, "telegram.api.file_send.failed", "failed", caption, null, exception.Message, metadata, cancellationToken).ConfigureAwait(false);
+            throw;
+        }
+    }
+
+    private async Task<int> SendDocumentWithTraceAsync(
+        TelegramConversationScope conversation,
+        OutboundTelegramFile file,
+        string fileName,
+        string caption,
+        CancellationToken cancellationToken,
+        TelegramDebugMessageContext? debugContext)
+    {
+        string? traceId = ResolveTraceId(debugContext);
+        IReadOnlyDictionary<string, string> metadata = BuildFileTraceMetadata(file, fileName);
+        await RecordTelegramApiTraceAsync(traceId, conversation, "telegram.api.file_send.attempt", "attempt", caption, null, null, metadata, cancellationToken).ConfigureAwait(false);
+        try
+        {
+            int messageId = await _client.Value.SendDocumentAsync(
+                conversation.ChatId,
+                file.Path,
+                fileName,
+                caption,
+                conversation.MessageThreadId,
+                cancellationToken).ConfigureAwait(false);
+            await RecordTelegramApiTraceAsync(traceId, conversation, "telegram.api.file_send.succeeded", "succeeded", caption, messageId, null, metadata, cancellationToken).ConfigureAwait(false);
+            return messageId;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            await RecordTelegramApiTraceAsync(traceId, conversation, "telegram.api.file_send.failed", "failed", caption, null, exception.Message, metadata, cancellationToken).ConfigureAwait(false);
+            throw;
         }
     }
 
@@ -494,11 +740,58 @@ internal sealed class TelegramBotClientMessageSender : ITelegramBotMessageSender
         TelegramDebugMessageContext? debugContext)
     {
         string sendText = ApplyDebugPreamble(conversation, text, debugContext);
-        int messageId = await _client.Value.SendMessageAsync(
-            conversation.ChatId,
-            sendText,
-            ToInlineKeyboardMarkup(buttons),
-            conversation.MessageThreadId,
+        string? traceId = ResolveTraceId(debugContext);
+        await RecordTelegramApiTraceAsync(
+            traceId,
+            conversation,
+            "telegram.api.send.attempt",
+            "attempt",
+            text,
+            messageId: null,
+            error: null,
+            new Dictionary<string, string>
+            {
+                ["buttonRows"] = (buttons?.Count ?? 0).ToString(System.Globalization.CultureInfo.InvariantCulture),
+            },
+            cancellationToken).ConfigureAwait(false);
+        int messageId;
+        try
+        {
+            messageId = await _client.Value.SendMessageAsync(
+                conversation.ChatId,
+                sendText,
+                ToInlineKeyboardMarkup(buttons),
+                conversation.MessageThreadId,
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            await RecordTelegramApiTraceAsync(
+                traceId,
+                conversation,
+                "telegram.api.send.failed",
+                "failed",
+                text,
+                messageId: null,
+                exception.Message,
+                null,
+                cancellationToken).ConfigureAwait(false);
+            throw;
+        }
+
+        await RecordTelegramApiTraceAsync(
+            traceId,
+            conversation,
+            "telegram.api.send.succeeded",
+            "succeeded",
+            text,
+            messageId,
+            error: null,
+            null,
             cancellationToken).ConfigureAwait(false);
         await _messageContextStore.RecordAsync(
             new TelegramMessageContextRecord(
@@ -523,6 +816,72 @@ internal sealed class TelegramBotClientMessageSender : ITelegramBotMessageSender
         => _debugPreambleMode.IsEnabled
             ? TelegramDebugPreambleFormatter.Apply(conversation, text, debugContext)
             : text;
+
+    private Task RecordTelegramApiTraceAsync(
+        string? traceId,
+        TelegramConversationScope? conversation,
+        string kind,
+        string status,
+        string? text,
+        int? messageId,
+        string? error,
+        IReadOnlyDictionary<string, string>? metadata,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(traceId))
+        {
+            return Task.CompletedTask;
+        }
+
+        Dictionary<string, string>? eventMetadata = metadata is null
+            ? null
+            : new Dictionary<string, string>(metadata, StringComparer.Ordinal);
+        if (messageId.HasValue)
+        {
+            eventMetadata ??= new Dictionary<string, string>(StringComparer.Ordinal);
+            eventMetadata["messageId"] = messageId.Value.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        }
+
+        return _traceStore.RecordAsync(
+            new TelegramDebugTraceEvent(
+                traceId,
+                DateTimeOffset.UtcNow,
+                kind,
+                ChatId: conversation?.ChatId,
+                MessageThreadId: conversation?.MessageThreadId,
+                Direction: "outbound",
+                Status: status,
+                TextLength: text?.Length ?? 0,
+                Error: error,
+                Metadata: eventMetadata,
+                TextBody: text,
+                Source: "TelegramOutbound"),
+            cancellationToken);
+    }
+
+    private static string? ResolveTraceId(TelegramDebugMessageContext? debugContext)
+        => string.IsNullOrWhiteSpace(debugContext?.TraceId) ? null : debugContext.TraceId;
+
+    private static IReadOnlyDictionary<string, string> BuildFileTraceMetadata(OutboundTelegramFile file, string fileName)
+    {
+        Dictionary<string, string> metadata = new(StringComparer.Ordinal)
+        {
+            ["fileKind"] = file.Kind.ToString(),
+            ["fileName"] = fileName,
+            ["filePath"] = file.Path,
+        };
+        if (!string.IsNullOrWhiteSpace(file.ContentType))
+        {
+            metadata["contentType"] = file.ContentType;
+        }
+
+        if (File.Exists(file.Path))
+        {
+            metadata["fileBytes"] = new FileInfo(file.Path).Length.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        }
+
+        return metadata;
+    }
 
     private static string ResolveFileName(OutboundTelegramFile file)
         => string.IsNullOrWhiteSpace(file.FileName)

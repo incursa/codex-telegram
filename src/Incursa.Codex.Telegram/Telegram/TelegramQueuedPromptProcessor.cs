@@ -118,7 +118,7 @@ internal sealed class TelegramQueuedPromptProcessor : ITelegramQueuedPromptProce
                     : $"Starting queued message for {session.Name}. Live updates will stream here.",
                 null,
                 cancellationToken,
-                CreateDebugContext("queued-worker", prompt.SessionId, kind: "start")).ConfigureAwait(false);
+                CreateDebugContext("queued-worker", prompt.SessionId, kind: "start", traceId: prompt.TraceId)).ConfigureAwait(false);
             await _sender.SendTypingActionAsync(prompt.ConversationScope, cancellationToken).ConfigureAwait(false);
 
             IReadOnlyList<CodexInputItem>? attachmentInput = prompt.Attachments is { Count: > 0 }
@@ -140,7 +140,9 @@ internal sealed class TelegramQueuedPromptProcessor : ITelegramQueuedPromptProce
                     TextLength: prompt.Text.Length,
                     AttachmentCount: prompt.Attachments?.Count ?? 0,
                     InputItemCount: attachmentInput?.Count ?? 1,
-                    OutboundQueueItemId: prompt.Id),
+                    OutboundQueueItemId: prompt.Id,
+                    Metadata: BuildQueuedPromptTraceMetadata(prompt.Attachments),
+                    TextBody: prompt.Text),
                 cancellationToken).ConfigureAwait(false);
             CodexThreadExecutionVm execution = prompt.Attachments is { Count: > 0 }
                 ? await _sessionManager.SendAsync(
@@ -186,8 +188,8 @@ internal sealed class TelegramQueuedPromptProcessor : ITelegramQueuedPromptProce
         }
     }
 
-    private TelegramDebugMessageContext CreateDebugContext(string source, string sessionId, string? kind = null)
-        => new(source, sessionId, null, _turnCoordinator.GetActiveTurnId(sessionId), kind);
+    private TelegramDebugMessageContext CreateDebugContext(string source, string sessionId, string? kind = null, string? traceId = null)
+        => new(source, sessionId, null, _turnCoordinator.GetActiveTurnId(sessionId), kind, TraceId: traceId);
 
     private Task RecordQueuedPromptFailureAsync(
         TelegramQueuedPrompt prompt,
@@ -208,8 +210,27 @@ internal sealed class TelegramQueuedPromptProcessor : ITelegramQueuedPromptProce
                 TextLength: prompt.Text.Length,
                 AttachmentCount: prompt.Attachments?.Count ?? 0,
                 OutboundQueueItemId: prompt.Id,
-                Error: error),
+                Error: error,
+                TextBody: prompt.Text),
             cancellationToken);
+
+    private static IReadOnlyDictionary<string, string>? BuildQueuedPromptTraceMetadata(
+        IReadOnlyList<TelegramAttachmentDescriptor>? attachments)
+    {
+        if (attachments is not { Count: > 0 })
+        {
+            return null;
+        }
+
+        return new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["attachmentTypes"] = string.Join(
+                ",",
+                attachments.Select(attachment => attachment.IsImage ? "image" : attachment.ContentType ?? "file")),
+            ["attachmentNames"] = string.Join(",", attachments.Select(attachment => attachment.FileName)),
+            ["attachmentPaths"] = string.Join(",", attachments.Select(attachment => attachment.FilePath)),
+        };
+    }
 
     private static string? FindMissingAttachment(IReadOnlyList<TelegramAttachmentDescriptor>? attachments)
     {
