@@ -133,6 +133,40 @@ public sealed class TelegramTurnOutputRelayTests
     }
 
     [Fact]
+    public async Task PublishTurnEventAsync_LiveCardReusesSameMessageAcrossTurnChanges()
+    {
+        FakeOutboundTelegramQueue queue = new();
+        TelegramThreadFollowRegistry followRegistry = FollowThread();
+        TestTelegramBotMessageSender sender = new();
+        TelegramTurnOutputRelay relay = CreateRelay(
+            queue,
+            followRegistry,
+            outputOptions: new TelegramOutputOptions
+            {
+                PresentationMode = TelegramOutputPresentationMode.LiveCard,
+                LiveCardMinEditIntervalSeconds = 0,
+            },
+            messageSender: sender);
+
+        await relay.PublishTurnEventAsync(
+            CreateEntry(type: "item.tool_output", title: "Tool output", body: "First update.", turnId: "turn-1"),
+            CancellationToken.None);
+        await relay.PublishTurnEventAsync(
+            CreateEntry(type: "item.tool_output", title: "Tool output", body: "Second update.", turnId: "turn-2"),
+            CancellationToken.None);
+
+        Assert.Empty(queue.Messages);
+        Assert.Single(sender.Sent);
+        Assert.Single(sender.Edited);
+
+        string cardText = sender.Edited.Single().Text;
+        Assert.Contains("Updates: 1 captured", cardText);
+        Assert.Contains("Latest: Tool output Second update.", cardText);
+        Assert.DoesNotContain("Turn:", cardText, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("First update.", cardText, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public async Task PublishTurnEventAsync_LiveCardStillQueuesFinalResponseAsDurableOutput()
     {
         FakeOutboundTelegramQueue queue = new();

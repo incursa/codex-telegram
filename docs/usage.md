@@ -118,7 +118,7 @@ Do not use Telegram scrollback alone as evidence that Codex lost content.
 Output modes:
 
 1. `Verbose` sends progress, update, and final messages as durable Telegram messages according to the normal filters. Use it when watching the full process is useful.
-2. `LiveCard` summarizes progress and updates into an editable live turn card. The card keeps a stable `Latest` line for assistant-visible output and a separate `Activity` line for ephemeral internal work. Final responses, errors, approval requests, artifacts, and the `~~ fin ~~` marker remain durable messages. The card does not show the internal Codex turn ID.
+2. `LiveCard` summarizes progress and updates into an editable live turn card. The card keeps a stable `Latest` line for assistant-visible output and a separate `Activity` line for ephemeral internal work. Final responses, errors, approval requests, artifacts, and the `~~ fin ~~` marker remain durable messages. The card does not show the internal Codex turn ID, and if Codex retries or restarts internally the same card is edited in place.
 3. `FinalOnly` suppresses normal progress/update chatter and sends only final output, errors, approval requests, artifacts, and terminal summaries that need attention.
 
 Operational turn history is normalized and user-facing. It is separate from debug capture: history supports buttons such as `Show Updates`, `Show Full Turn`, and `Final`, while `/debug capture full on` records raw interface traffic for deeper diagnostics.

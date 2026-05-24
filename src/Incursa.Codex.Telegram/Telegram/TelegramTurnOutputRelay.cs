@@ -297,11 +297,12 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
 
         foreach (TelegramConversationScope target in targets)
         {
-            TelegramLiveTurnCardKey key = new(entry.ThreadId, entry.TurnId, target);
+            TelegramLiveTurnCardKey key = new(entry.ThreadId, target);
             TelegramLiveTurnCardState state = _liveCards.GetOrAdd(key, _ => new TelegramLiveTurnCardState(entry.ThreadId, entry.TurnId, target));
             TelegramLiveTurnCardSnapshot snapshot = state.Record(entry, kind, text, isTerminal);
+            bool forceEdit = force || snapshot.TurnChanged;
             DateTimeOffset now = DateTimeOffset.UtcNow;
-            if (!force && snapshot.LastEditUtc is { } lastEdit && now - lastEdit < TimeSpan.FromSeconds(_outputOptions.LiveCardMinEditIntervalSeconds))
+            if (!forceEdit && snapshot.LastEditUtc is { } lastEdit && now - lastEdit < TimeSpan.FromSeconds(_outputOptions.LiveCardMinEditIntervalSeconds))
             {
                 continue;
             }
@@ -1225,7 +1226,6 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
 
     private sealed record TelegramLiveTurnCardKey(
         string ThreadId,
-        string TurnId,
         TelegramConversationScope Conversation);
 
     private sealed record TelegramLiveTurnCardSnapshot(
@@ -1237,6 +1237,7 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
         string StateText,
         string? Latest,
         string? Activity,
+        bool TurnChanged,
         int UpdateCount,
         int ProgressCount,
         int ArtifactCount,
@@ -1247,6 +1248,7 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
     private sealed class TelegramLiveTurnCardState
     {
         private readonly object _gate = new();
+        private string TurnId { get; set; }
         private string? _latest;
         private string? _activity;
         private int? _messageId;
@@ -1267,8 +1269,6 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
 
         private string ThreadId { get; }
 
-        private string TurnId { get; }
-
         private TelegramConversationScope Conversation { get; }
 
         public TelegramLiveTurnCardSnapshot Record(
@@ -1279,6 +1279,20 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
         {
             lock (_gate)
             {
+                bool turnChanged = !string.Equals(TurnId, entry.TurnId, StringComparison.Ordinal);
+                if (turnChanged)
+                {
+                    TurnId = entry.TurnId!;
+                    _latest = null;
+                    _activity = null;
+                    _updateCount = 0;
+                    _progressCount = 0;
+                    _artifactCount = 0;
+                    _finalResponseCaptured = false;
+                    _terminalEventSeen = false;
+                    _failed = false;
+                }
+
                 if (kind == CodexOutboundMessageKind.Progress || entry.IsInternal)
                 {
                     _progressCount++;
@@ -1319,7 +1333,7 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
                     _latest = ResolveVisibleSummary(entry, kind, text) ?? _latest;
                 }
 
-                return Snapshot();
+                return Snapshot(turnChanged);
             }
         }
 
@@ -1332,7 +1346,7 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
             }
         }
 
-        private TelegramLiveTurnCardSnapshot Snapshot()
+        private TelegramLiveTurnCardSnapshot Snapshot(bool turnChanged)
             => new(
                 ThreadId,
                 TurnId,
@@ -1342,6 +1356,7 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
                 _terminalEventSeen ? _failed ? "failed" : "completed" : "working",
                 _latest,
                 _activity,
+                turnChanged,
                 _updateCount,
                 _progressCount,
                 _artifactCount,
