@@ -35,14 +35,13 @@ public sealed class TelegramQueuedPromptProcessorTests
         Assert.True(processed);
         Assert.Equal([("thread-1", "queued text")], harness.SessionManager.TextSends);
         Assert.Contains(prompt.ConversationScope, harness.FollowRegistry.GetTargets("thread-1"));
-        SentTelegramMessage sent = Assert.Single(harness.Sender.Sent);
-        Assert.Contains("Starting queued message for thread-1", sent.Text);
+        Assert.Empty(harness.Sender.Sent);
         TelegramConversationState state = Assert.Single(await harness.StateStore.ListConversationStatesAsync(CancellationToken.None));
         Assert.Equal(0, state.QueuedPromptCount);
     }
 
     [Fact]
-    public async Task ProcessNextAsync_AnnouncesQueuedPromptBeforeWaitingForTurnStart()
+    public async Task ProcessNextAsync_DoesNotEmitStartMessageBeforeWaitingForTurnStart()
     {
         using ProcessorHarness harness = ProcessorHarness.Create();
         TelegramQueuedPrompt prompt = CreatePrompt("prompt-1", "thread-1", "queued text");
@@ -53,8 +52,7 @@ public sealed class TelegramQueuedPromptProcessorTests
         Task<bool> processTask = harness.Processor.ProcessNextAsync(CancellationToken.None);
         await harness.SessionManager.TextSendStarted.Task.WaitAsync(TimeSpan.FromSeconds(1));
 
-        SentTelegramMessage sent = Assert.Single(harness.Sender.Sent);
-        Assert.Contains("Starting queued message for thread-1", sent.Text);
+        Assert.Empty(harness.Sender.Sent);
 
         harness.SessionManager.PendingTextSend.SetResult(new CodexThreadExecutionVm("thread-1", "turn-1", "running", null));
         Assert.True(await processTask.WaitAsync(TimeSpan.FromSeconds(1)));
@@ -317,8 +315,7 @@ public sealed class TelegramQueuedPromptProcessorTests
 
         Assert.True(processed);
         Assert.Equal([("thread-1", "queued text")], harness.SessionManager.TextSends);
-        SentTelegramMessage sent = Assert.Single(harness.Sender.Sent);
-        Assert.Contains("Starting queued message for thread-1", sent.Text);
+        Assert.Empty(harness.Sender.Sent);
         TelegramConversationState state = Assert.Single(await harness.StateStore.ListConversationStatesAsync(CancellationToken.None));
         Assert.Equal(0, state.QueuedPromptCount);
     }
@@ -335,10 +332,8 @@ public sealed class TelegramQueuedPromptProcessorTests
         bool processed = await harness.Processor.ProcessNextAsync(CancellationToken.None);
 
         Assert.False(processed);
-        Assert.Collection(
-            harness.Sender.Sent,
-            sent => Assert.Contains("Starting queued message for thread-1", sent.Text),
-            sent => Assert.Contains("still queued because another Codex turn started first", sent.Text));
+        SentTelegramMessage sent = Assert.Single(harness.Sender.Sent);
+        Assert.Contains("still queued because another Codex turn started first", sent.Text);
         TelegramConversationState state = Assert.Single(await harness.StateStore.ListConversationStatesAsync(CancellationToken.None));
         Assert.Equal(1, state.QueuedPromptCount);
     }
@@ -364,14 +359,9 @@ public sealed class TelegramQueuedPromptProcessorTests
         bool processed = await harness.Processor.ProcessNextAsync(CancellationToken.None);
 
         Assert.True(processed);
-        Assert.Collection(
-            harness.Sender.Sent,
-            sent => Assert.Contains("Starting queued message for Failing session", sent.Text),
-            sent =>
-            {
-                Assert.Contains("Queued message for Failing session failed to start", sent.Text);
-                Assert.Contains("codex unavailable", sent.Text);
-            });
+        SentTelegramMessage sent = Assert.Single(harness.Sender.Sent);
+        Assert.Contains("Queued message for Failing session failed to start", sent.Text);
+        Assert.Contains("codex unavailable", sent.Text);
         TelegramConversationState state = Assert.Single(await harness.StateStore.ListConversationStatesAsync(CancellationToken.None));
         Assert.Equal(0, state.QueuedPromptCount);
         Assert.False(File.Exists(documentPath));

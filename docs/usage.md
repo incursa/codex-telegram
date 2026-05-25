@@ -153,7 +153,9 @@ Queueing is per session and per Telegram conversation. A trusted group root and 
 
 Images and documents can be sent with a prompt. Voice notes are transcribed before they are sent to Codex; Codex receives the transcript, not raw Telegram audio.
 
-When the bot captures text, voice transcripts, images, or documents into an input bundle, each new item resets the bundle's idle timer. By default, the bundle automatically sends or queues after 25 seconds with no additional input, so a forgotten Send tap does not leave the transcript stranded. Use the buttons when you want to send, queue, steer, clear, or cancel earlier.
+By default, the bot captures text, voice transcripts, images, and documents into an input bundle before starting Codex. Each new item resets the bundle's idle timer. The bundle automatically sends or queues after 25 seconds with no additional input, so a forgotten Send tap does not leave the transcript stranded. Use the buttons when you want to send, queue, steer, clear, or cancel earlier.
+
+Very long plain-text messages still open an input bundle even if `TelegramInput:DefaultCaptureMode` is changed to `ImmediateText`, which keeps Telegram-split prompts together instead of sending the first chunk immediately.
 
 Voice requirements:
 

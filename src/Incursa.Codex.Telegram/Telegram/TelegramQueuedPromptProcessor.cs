@@ -111,14 +111,6 @@ internal sealed class TelegramQueuedPromptProcessor : ITelegramQueuedPromptProce
 
             _followRegistry.FollowThread(prompt.ConversationScope, prompt.SessionId);
             using IDisposable typingRegistration = _typingIndicatorRegistry.Track(prompt.ConversationScope);
-            await _sender.SendTextMessageAsync(
-                prompt.ConversationScope,
-                prompt.PlanMode
-                    ? $"Starting queued Plan mode request for {session.Name}. Live updates will stream here."
-                    : $"Starting queued message for {session.Name}. Live updates will stream here.",
-                null,
-                cancellationToken,
-                CreateDebugContext("queued-worker", prompt.SessionId, kind: "start", traceId: prompt.TraceId)).ConfigureAwait(false);
             await _sender.SendTypingActionAsync(prompt.ConversationScope, cancellationToken).ConfigureAwait(false);
 
             IReadOnlyList<CodexInputItem>? attachmentInput = prompt.Attachments is { Count: > 0 }

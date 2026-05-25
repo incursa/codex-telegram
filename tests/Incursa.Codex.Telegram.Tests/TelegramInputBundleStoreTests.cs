@@ -132,6 +132,54 @@ public sealed class TelegramInputBundleStoreTests
     }
 
     [Fact]
+    public async Task TrySubmitBundleAsync_LocksBundleUntilCompletionOrReopen()
+    {
+        using TemporaryDirectory temp = TemporaryDirectory.Create();
+        ManualTimeProvider clock = new(DateTimeOffset.Parse("2026-05-23T10:00:00Z"));
+        TelegramInputBundleStore store = CreateStore(temp.Path, clock);
+        TelegramInputBundle bundle = await store.CreateAsync(new TelegramConversationScope(1234, null), 42, CancellationToken.None);
+
+        TelegramInputBundle? submitted = await store.TrySubmitBundleAsync(
+            bundle.Id,
+            42,
+            TelegramInputBundleIntent.SendNow,
+            CancellationToken.None);
+
+        Assert.NotNull(submitted);
+        Assert.Equal(TelegramInputBundleStatus.Submitted, submitted.Status);
+        Assert.Equal(TelegramInputBundleIntent.SendNow, submitted.Intent);
+        Assert.Null(await store.TrySubmitBundleAsync(bundle.Id, 42, TelegramInputBundleIntent.QueueNext, CancellationToken.None));
+        Assert.Null(await store.TrySetIntentAsync(bundle.Id, 42, TelegramInputBundleIntent.QueueNext, CancellationToken.None));
+
+        TelegramInputBundle? completed = await store.TryCompleteBundleAsync(
+            bundle.Id,
+            42,
+            TelegramInputBundleIntent.SendNow,
+            TelegramInputBundleStatus.Sent,
+            deleteAttachments: false,
+            CancellationToken.None);
+
+        Assert.NotNull(completed);
+        Assert.Equal(TelegramInputBundleStatus.Sent, completed.Status);
+    }
+
+    [Fact]
+    public async Task TryReopenSubmittedBundleAsync_ReturnsSubmittedBundleToCapturing()
+    {
+        using TemporaryDirectory temp = TemporaryDirectory.Create();
+        ManualTimeProvider clock = new(DateTimeOffset.Parse("2026-05-23T10:00:00Z"));
+        TelegramInputBundleStore store = CreateStore(temp.Path, clock);
+        TelegramInputBundle bundle = await store.CreateAsync(new TelegramConversationScope(1234, null), 42, CancellationToken.None);
+
+        await store.TrySubmitBundleAsync(bundle.Id, 42, TelegramInputBundleIntent.SendNow, CancellationToken.None);
+        TelegramInputBundle? reopened = await store.TryReopenSubmittedBundleAsync(bundle.Id, 42, CancellationToken.None);
+
+        Assert.NotNull(reopened);
+        Assert.Equal(TelegramInputBundleStatus.Capturing, reopened.Status);
+        Assert.NotNull(await store.TrySetIntentAsync(bundle.Id, 42, TelegramInputBundleIntent.QueueNext, CancellationToken.None));
+    }
+
+    [Fact]
     public async Task TryCancelAsync_DeletesTempAttachmentsAndPersistsCancelledState()
     {
         using TemporaryDirectory temp = TemporaryDirectory.Create();

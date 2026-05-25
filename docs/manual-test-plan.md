@@ -66,7 +66,7 @@ Record the date, operator, OS, published asset or commit SHA, Codex CLI version,
 
 1. With `OpenAI:ApiKey` missing, send a voice note and confirm the failure explains the missing key.
 2. With `OpenAI:FfmpegPath` invalid, send a voice note that requires transcoding and confirm the failure identifies `ffmpeg`, explains that voice transcription is optional, and does not route the failed audio to Codex.
-3. With `TelegramInput:DefaultCaptureMode` set to `BundleWhenActiveOrMedia`, start a turn, then send a short voice note and confirm the transcript appears in an editable input bundle card.
+3. With the default `TelegramInput:DefaultCaptureMode` of `BundleAlways`, send a short text prompt while idle and confirm it opens an editable input bundle card instead of starting a turn immediately.
 4. Send a near-empty or zero-duration voice note and confirm the bot rejects it before download/transcription.
 5. Send or simulate audio longer than `TelegramBot:MaxAudioDurationSeconds` and confirm the bot rejects it before download/transcription.
 6. Send an image attachment with a prompt while the bundle is open and confirm the existing bundle card is edited in place rather than a separate Codex turn being started.
@@ -76,9 +76,11 @@ Record the date, operator, OS, published asset or commit SHA, Codex CLI version,
 10. Tap `Cancel` on a bundle with attachments and confirm the durable attachment files are deleted.
 11. Delete the editable bundle card in Telegram, send another note into the same open bundle, and confirm a replacement card appears and future bundle updates edit the replacement instead of creating repeated duplicates.
 12. Simulate or force a bundle send/steer failure and confirm the bundle remains open for retry with its attachments intact.
-13. Send a Telegram album with multiple images/documents and confirm one bundle card appears with the first caption, all attachments, and the grouped source messages after the media-group debounce window.
-14. Leave an input bundle untouched for `TelegramInput:AutoDispatchAfterSeconds` and confirm it auto-sends when idle, auto-queues when the target session is busy, and does not auto-steer without an explicit button tap.
-15. Send an audio file larger than the OpenAI transcription limit and confirm the failure is clear.
+13. Simulate or force slow bundle steering acceptance and confirm the bot posts a durable pending message, then later reports success or failure.
+14. Send a Telegram album with multiple images/documents and confirm one bundle card appears with the first caption, all attachments, and the grouped source messages after the media-group debounce window.
+15. With `TelegramInput:DefaultCaptureMode` temporarily set to `ImmediateText`, send a very long plain-text prompt while idle and confirm it opens an input bundle instead of starting a turn on the first chunk, then send the next chunk and confirm it stays in the same bundle.
+16. Leave an input bundle untouched for `TelegramInput:AutoDispatchAfterSeconds` and confirm it auto-sends when idle, auto-queues when the target session is busy, and does not auto-steer without an explicit button tap.
+17. Send an audio file larger than the OpenAI transcription limit and confirm the failure is clear.
 
 ## Queueing And Long Output
 
@@ -89,13 +91,14 @@ Record the date, operator, OS, published asset or commit SHA, Codex CLI version,
 5. Edit one queued prompt with `/queue edit <id> <new text>` and confirm the queued preview updates.
 6. Delete one queued prompt and confirm only that queued item is removed.
 7. Use Send now on one queued prompt while the turn is active and confirm it is sent as steering rather than waiting for normal queue drain.
-8. Send `/outbound` during a backlog and confirm pending destination and chunk counts are plausible.
-9. Enable `/debug capture on`, reproduce a long output, then send `/debug capture latest` and confirm diagnostics answer whether Telegram received the input, whether it was bundled/sent/queued/steered, whether Codex send/plan started, whether Codex saw a terminal event, how many assistant-output characters were captured, how many Telegram chunks were queued and sent, whether chunks are pending, and whether compaction, rate limits, timeouts, or send failures occurred.
-10. Enable `/debug capture full on 30m`, send a short test prompt, inspect the local trace file, and confirm inbound text, Codex input/final output, and outbound Telegram chunk text are present with obvious secret-looking values redacted. Then send `/debug capture full off`.
-11. If `TelegramDebugTrace:CaptureAttachmentCopies` is enabled, send one small image/document during full capture and confirm a copy appears under `telegram-traces/yyyyMMdd/<traceId>.attachments/` and the JSONL event records `attachmentCopyPath.*`.
-12. Simulate a Telegram send failure or rate limit and confirm `/status` does not report delivery complete while messages or chunks remain pending.
-13. In `LiveCard` mode, simulate a card edit rejection and confirm final-response chunks still enqueue and diagnostics record replacement/failure separately from durable output delivery.
-14. In `FinalOnly` mode, confirm progress/update events can still be requested through `/turn full` or `/turn updates` when retained by operational history settings.
+8. Simulate or force slow queued steering acceptance and confirm the bot posts a durable pending message, then later reports success or requeues on failure.
+9. Send `/outbound` during a backlog and confirm pending destination and chunk counts are plausible.
+10. Enable `/debug capture on`, reproduce a long output, then send `/debug capture latest` and confirm diagnostics answer whether Telegram received the input, whether it was bundled/sent/queued/steered, whether Codex send/plan started, whether Codex saw a terminal event, how many assistant-output characters were captured, how many Telegram chunks were queued and sent, whether chunks are pending, and whether compaction, rate limits, timeouts, or send failures occurred.
+11. Enable `/debug capture full on 30m`, send a short test prompt, inspect the local trace file, and confirm inbound text, Codex input/final output, and outbound Telegram chunk text are present with obvious secret-looking values redacted. Then send `/debug capture full off`.
+12. If `TelegramDebugTrace:CaptureAttachmentCopies` is enabled, send one small image/document during full capture and confirm a copy appears under `telegram-traces/yyyyMMdd/<traceId>.attachments/` and the JSONL event records `attachmentCopyPath.*`.
+13. Simulate a Telegram send failure or rate limit and confirm `/status` does not report delivery complete while messages or chunks remain pending.
+14. In `LiveCard` mode, simulate a card edit rejection and confirm final-response chunks still enqueue and diagnostics record replacement/failure separately from durable output delivery.
+15. In `FinalOnly` mode, confirm progress/update events can still be requested through `/turn full` or `/turn updates` when retained by operational history settings.
 
 ## Restart And Persistence
 

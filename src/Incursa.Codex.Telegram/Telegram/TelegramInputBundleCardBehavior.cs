@@ -29,7 +29,7 @@ internal sealed record TelegramInputBundleCardBehavior(
         if (bundle.Status is not TelegramInputBundleStatus.Capturing)
         {
             string statusText = FormatTerminalStatus(bundle.Status);
-            return new TelegramInputBundleCardBehavior(statusText, statusText, statusText, null, []);
+            return new TelegramInputBundleCardBehavior(statusText, statusText, statusText, FormatTerminalAdvisory(bundle.Status), []);
         }
 
         List<IReadOnlyList<TelegramInputBundleAction>> rows = [];
@@ -133,11 +133,16 @@ internal sealed record TelegramInputBundleCardBehavior(
             TelegramInputBundleStatus.Submitted => "Bundle submitted",
             TelegramInputBundleStatus.Queued => "Queued for next turn",
             TelegramInputBundleStatus.Steered => "Bundle steered",
-            TelegramInputBundleStatus.Sent => "Bundle sent",
+            TelegramInputBundleStatus.Sent => "Bundle sent to Codex",
             TelegramInputBundleStatus.Cancelled => "Bundle cancelled",
             TelegramInputBundleStatus.Expired => "Bundle expired",
             _ => status.ToString(),
         };
+
+    private static string? FormatTerminalAdvisory(TelegramInputBundleStatus status)
+        => status is TelegramInputBundleStatus.Sent
+            ? "Live updates will stream here when Codex starts."
+            : null;
 }
 
 internal sealed record TelegramInputBundleCallback(string BundleId, string? Revision);

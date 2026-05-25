@@ -173,6 +173,7 @@ internal sealed class CodexTurnExecutionCoordinator
                 throw new InvalidOperationException($"A Codex turn is already active for thread '{threadId}'.");
             }
 
+            await PublishTurnAcceptedAsync(state, cancellationToken).ConfigureAwait(false);
             _ = Task.Run(() => ConsumeTurnAsync(state), _applicationLifetime.ApplicationStopping);
             return new CodexThreadExecutionVm(threadId, turn.Id, "running", null);
         }
@@ -182,6 +183,22 @@ internal sealed class CodexTurnExecutionCoordinator
             {
                 _startingThreads.TryRemove(startingThreadId, out _);
             }
+        }
+    }
+
+    private async Task PublishTurnAcceptedAsync(ActiveTurnState state, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await _telegramTurnOutputRelay.PublishTurnAcceptedAsync(state.ThreadId, state.TurnId, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested || _applicationLifetime.ApplicationStopping.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            _logger.LogWarning(exception, "Failed to publish initial Telegram live card for turn {TurnId} on thread {ThreadId}.", state.TurnId, state.ThreadId);
         }
     }
 

@@ -29,7 +29,7 @@ public sealed class TelegramInputOptions
     /// <summary>
     /// Gets or sets the default capture behavior for non-command Telegram input.
     /// </summary>
-    public TelegramInputCaptureMode DefaultCaptureMode { get; set; } = TelegramInputCaptureMode.BundleWhenActiveOrMedia;
+    public TelegramInputCaptureMode DefaultCaptureMode { get; set; } = TelegramInputCaptureMode.BundleAlways;
 
     /// <summary>
     /// Gets or sets the number of minutes a draft bundle remains editable.

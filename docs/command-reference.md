@@ -382,11 +382,12 @@ Expected behavior:
 1. Uses the selected session when one exists.
 2. Creates a project-based default session if no session is selected.
 3. Sends attachments with the prompt when attachments are present.
-4. With `TelegramInput:DefaultCaptureMode` set to `BundleWhenActiveOrMedia`, creates or updates an editable input bundle when a turn is active or when media is present.
-5. The input bundle card shows only the current useful actions, such as Send now, Queue next, Steer current turn, Add more, Clear, and Cancel.
-6. If `TelegramInput:AutoDispatchAfterSeconds` is greater than 0, an open bundle is automatically sent or queued after that many idle seconds with no new captured input.
-7. Telegram albums/media groups are debounced by `TelegramInput:MediaGroupDebounceMilliseconds` and forwarded as one inbound bundle candidate with all collected media.
-8. Slash commands remain available as fallbacks.
+4. With the default `TelegramInput:DefaultCaptureMode` of `BundleAlways`, creates or updates an editable input bundle before starting Codex.
+5. If an operator chooses `ImmediateText`, very long plain-text messages still open an input bundle before a turn starts, which keeps Telegram-split prompts together.
+6. The input bundle card shows only the current useful actions, such as Send now, Queue next, Steer current turn, Add more, Clear, and Cancel.
+7. If `TelegramInput:AutoDispatchAfterSeconds` is greater than 0, an open bundle is automatically sent or queued after that many idle seconds with no new captured input.
+8. Telegram albums/media groups are debounced by `TelegramInput:MediaGroupDebounceMilliseconds` and forwarded as one inbound bundle candidate with all collected media.
+9. Slash commands remain available as fallbacks.
 
 Cards are the live mobile control surface. Editing a session or input-bundle card does not replace the durable Telegram message history: assistant output is still delivered as normal Telegram messages after a bundle is sent, queued, or steered.
 
@@ -410,7 +411,7 @@ Expected behavior:
 
 1. Routes text to the active session or creates one when allowed.
 2. Useful when Telegram privacy mode or an unsupported chat type prevents normal auto-routing.
-3. Keeps immediate send behavior for command fallback use; normal non-command input may be captured into an input bundle according to `TelegramInput:DefaultCaptureMode`.
+3. Keeps immediate send behavior for command fallback use; normal non-command input is captured into an input bundle by default and can be changed with `TelegramInput:DefaultCaptureMode`.
 
 ### `/steer <text>`
 
@@ -433,6 +434,7 @@ Expected behavior:
 1. Requires an active selected session.
 2. Sends steering text to the currently active Codex turn.
 3. Replies with an error if there is no live turn to steer.
+4. If Codex does not accept the steer request quickly, posts a durable pending message and later reports success or failure.
 
 Use `/send` for normal new work. Use `/steer` only while Codex is already working. Steering text is sent immediately and cannot be edited after the bot hands it to Codex; edit queued text first with `/queue edit <id> <new text>`.
 
@@ -527,7 +529,8 @@ Expected behavior:
 2. Removes the queued prompt before attempting to steer the active turn.
 3. Sends text and preserved attachments through the active-turn steering path.
 4. Requeues the item if steering fails, including when no active turn is running.
-5. Deletes temporary attachment files only after steering succeeds or after the target session is gone.
+5. If Codex does not accept the steer request quickly, posts a durable pending message and later reports success or requeues on failure.
+6. Deletes temporary attachment files only after steering succeeds or after the target session is gone.
 
 ### `/sessions`
 

@@ -32,6 +32,115 @@ public sealed class TelegramTurnOutputRelayTests
     }
 
     [Fact]
+    public async Task PublishTurnEventAsync_RestoresFollowerFromPersistedStateForLiveCard()
+    {
+        using TemporaryDirectory dataRoot = TemporaryDirectory.Create();
+        TelegramBotStateStore stateStore = CreateStateStore(dataRoot.Path);
+        TelegramConversationScope conversation = new(111, 10);
+        await stateStore.SetActiveSessionIdAsync(conversation, "thread-1", CancellationToken.None);
+        FakeOutboundTelegramQueue queue = new();
+        TelegramThreadFollowRegistry followRegistry = new();
+        TestTelegramBotMessageSender sender = new();
+        TelegramTurnOutputRelay relay = CreateRelay(
+            queue,
+            followRegistry,
+            outputOptions: new TelegramOutputOptions
+            {
+                PresentationMode = TelegramOutputPresentationMode.LiveCard,
+            },
+            messageSender: sender,
+            stateStore: stateStore);
+
+        await relay.PublishTurnEventAsync(
+            CreateEntry(type: "item.tool_output", title: "Tool output", body: "Tests passed."),
+            CancellationToken.None);
+
+        SentTelegramMessage card = Assert.Single(sender.Sent);
+        Assert.Equal(conversation, card.Conversation);
+        Assert.Contains("Codex is working", card.Text);
+        Assert.Contains(conversation, followRegistry.GetTargets("thread-1"));
+        Assert.Empty(queue.Messages);
+    }
+
+    [Fact]
+    public async Task PublishTurnAcceptedAsync_LiveCardCreatesEditableCardBeforeStreamEvents()
+    {
+        FakeOutboundTelegramQueue queue = new();
+        TelegramThreadFollowRegistry followRegistry = FollowThread();
+        TestTelegramBotMessageSender sender = new();
+        TelegramTurnOutputRelay relay = CreateRelay(
+            queue,
+            followRegistry,
+            outputOptions: new TelegramOutputOptions
+            {
+                PresentationMode = TelegramOutputPresentationMode.LiveCard,
+                LiveCardMinEditIntervalSeconds = 0,
+            },
+            messageSender: sender);
+
+        await relay.PublishTurnAcceptedAsync("thread-1", "turn-1", CancellationToken.None);
+
+        SentTelegramMessage card = Assert.Single(sender.Sent);
+        Assert.Contains("Codex is working", card.Text);
+        Assert.Contains("Activity: Turn started.", card.Text);
+        Assert.Contains("Mode: LiveCard", card.Text);
+        Assert.Empty(queue.Messages);
+    }
+
+    [Fact]
+    public async Task PublishTurnEventAsync_RestoresFollowerFromPersistedStateForDurableFinalResponse()
+    {
+        using TemporaryDirectory dataRoot = TemporaryDirectory.Create();
+        TelegramBotStateStore stateStore = CreateStateStore(dataRoot.Path);
+        TelegramConversationScope conversation = new(111, 10);
+        await stateStore.SetActiveSessionIdAsync(conversation, "thread-1", CancellationToken.None);
+        FakeOutboundTelegramQueue queue = new();
+        TelegramThreadFollowRegistry followRegistry = new();
+        TelegramTurnOutputRelay relay = CreateRelay(queue, followRegistry, stateStore: stateStore);
+
+        await relay.PublishTurnEventAsync(
+            CreateEntry(type: "turn.finalResponse", title: "Final response", body: "Recovered final answer."),
+            CancellationToken.None);
+
+        OutboundTelegramMessage message = Assert.Single(queue.Messages);
+        Assert.Equal(conversation.ChatId, message.ChatId);
+        Assert.Equal(conversation.MessageThreadId, message.MessageThreadId);
+        Assert.Equal(CodexOutboundMessageKind.Completion, message.Kind);
+        Assert.Equal("Recovered final answer.", message.Text);
+        Assert.Contains(conversation, followRegistry.GetTargets("thread-1"));
+    }
+
+    [Fact]
+    public async Task PublishTurnEventAsync_LiveCardAllowsEventsWithoutTurnId()
+    {
+        FakeOutboundTelegramQueue queue = new();
+        TelegramThreadFollowRegistry followRegistry = FollowThread();
+        TestTelegramBotMessageSender sender = new();
+        TelegramTurnOutputRelay relay = CreateRelay(
+            queue,
+            followRegistry,
+            outputOptions: new TelegramOutputOptions
+            {
+                PresentationMode = TelegramOutputPresentationMode.LiveCard,
+                LiveCardMinEditIntervalSeconds = 0,
+            },
+            messageSender: sender);
+
+        await relay.PublishTurnEventAsync(
+            CreateEntry(type: "item.tool_output", title: "Tool output", body: "Started.", turnId: null),
+            CancellationToken.None);
+        await relay.PublishTurnEventAsync(
+            CreateEntry(type: "turn.finalResponse", title: "Final response", body: "Finished.", turnId: "turn-1"),
+            CancellationToken.None);
+
+        Assert.Single(sender.Sent);
+        Assert.Single(sender.Edited);
+        Assert.Contains("Final response: captured", sender.Edited.Single().Text);
+        Assert.DoesNotContain("Turn:", sender.Edited.Single().Text, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal("Finished.", Assert.Single(queue.Messages).Text);
+    }
+
+    [Fact]
     public async Task PublishTurnEventAsync_PublishesVisibleUpdateToEveryFollower()
     {
         FakeOutboundTelegramQueue queue = new();
@@ -1126,7 +1235,8 @@ public sealed class TelegramTurnOutputRelayTests
         ITelegramTurnReactionRegistry? reactionRegistry = null,
         TestTelegramBotMessageSender? messageSender = null,
         ICodexSessionEventLog? eventLog = null,
-        ITelegramDebugTraceStore? traceStore = null)
+        ITelegramDebugTraceStore? traceStore = null,
+        ITelegramBotStateStore? stateStore = null)
         => new(
             queue,
             followRegistry,
@@ -1140,7 +1250,8 @@ public sealed class TelegramTurnOutputRelayTests
             outputModeState ?? new TestTelegramOutputModeState(outputOptions?.PresentationMode ?? TelegramOutputPresentationMode.Verbose),
             NullLogger<TelegramTurnOutputRelay>.Instance,
             eventLog,
-            traceStore);
+            traceStore,
+            stateStore);
 
     private static TelegramDebugTraceStore CreateTraceStore(string dataRoot)
         => new(
@@ -1152,6 +1263,15 @@ public sealed class TelegramTurnOutputRelayTests
                 },
             }),
             Microsoft.Extensions.Options.Options.Create(new TelegramDebugTraceOptions()));
+
+    private static TelegramBotStateStore CreateStateStore(string dataRoot)
+        => new(Microsoft.Extensions.Options.Options.Create(new CodexTelegramOptions
+        {
+            Workspace = new CodexWorkspaceOptions
+            {
+                DataRoot = dataRoot,
+            },
+        }));
 
     private static TelegramThreadFollowRegistry FollowThread()
     {

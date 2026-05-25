@@ -36,6 +36,33 @@ public sealed class CodexTurnExecutionCoordinatorStreamingTests
     }
 
     [Fact]
+    public async Task StartAsync_PublishesLiveCardWhenTurnIsAcceptedBeforeStreamEvents()
+    {
+        using ScriptedCodexRuntime runtime = new();
+        ScriptedCodexTurnScript script = runtime.QueueTurn("thread-1");
+        script.WithStartDelay(TimeSpan.FromMilliseconds(150)).Complete("done");
+
+        ICodexThreadHandle thread = runtime.CreateThread("thread-1");
+        FakeOutboundTelegramQueue queue = new();
+        TelegramThreadFollowRegistry followRegistry = FollowThread();
+        RecordingTelegramBotMessageSender sender = new();
+        TelegramTurnOutputRelay relay = CreateRelay(
+            queue,
+            followRegistry,
+            messageSender: sender,
+            presentationMode: TelegramOutputPresentationMode.LiveCard);
+        CodexTurnExecutionCoordinator coordinator = CreateCoordinator(relay);
+
+        await coordinator.StartAsync(thread, [], new CodexTurnOptions(), CancellationToken.None);
+
+        SentTelegramMessage card = Assert.Single(sender.Sent);
+        Assert.Contains("Codex is working", card.Text);
+        Assert.Contains("Activity: Turn started.", card.Text);
+
+        await script.Finished.Task.WaitAsync(TimeSpan.FromSeconds(1));
+    }
+
+    [Fact]
     public async Task StartAsync_StreamsRawAssistantResponseDeltasThroughRelay()
     {
         using ScriptedCodexRuntime runtime = new();
@@ -517,12 +544,14 @@ public sealed class CodexTurnExecutionCoordinatorStreamingTests
     private static TelegramTurnOutputRelay CreateRelay(
         FakeOutboundTelegramQueue queue,
         TelegramThreadFollowRegistry followRegistry,
-        ICodexSessionEventLog? eventLog = null)
+        ICodexSessionEventLog? eventLog = null,
+        ITelegramBotMessageSender? messageSender = null,
+        TelegramOutputPresentationMode presentationMode = TelegramOutputPresentationMode.Verbose)
         => new(
             queue,
             followRegistry,
             new TelegramTurnReactionRegistry(),
-            new NoopTelegramBotMessageSender(),
+            messageSender ?? new NoopTelegramBotMessageSender(),
             Microsoft.Extensions.Options.Options.Create(new TelegramOutboundOptions
             {
                 AgentMessageUpdateMinChars = 5,
@@ -530,9 +559,9 @@ public sealed class CodexTurnExecutionCoordinatorStreamingTests
             }),
             Microsoft.Extensions.Options.Options.Create(new TelegramOutputOptions
             {
-                PresentationMode = TelegramOutputPresentationMode.Verbose,
+                PresentationMode = presentationMode,
             }),
-            new TestTelegramOutputModeState(),
+            new TestTelegramOutputModeState(presentationMode),
             NullLogger<TelegramTurnOutputRelay>.Instance,
             eventLog);
 
@@ -628,9 +657,62 @@ public sealed class CodexTurnExecutionCoordinatorStreamingTests
             => Task.CompletedTask;
     }
 
+    private sealed class RecordingTelegramBotMessageSender : ITelegramBotMessageSender
+    {
+        public List<SentTelegramMessage> Sent { get; } = [];
+
+        public Task SendTextMessageAsync(
+            TelegramConversationScope conversation,
+            string text,
+            IReadOnlyList<IReadOnlyList<TelegramReplyButton>>? buttons,
+            CancellationToken cancellationToken,
+            TelegramDebugMessageContext? debugContext = null)
+        {
+            Sent.Add(new SentTelegramMessage(conversation, text, buttons));
+            return Task.CompletedTask;
+        }
+
+        public Task<int?> SendTextMessageAndGetIdAsync(
+            TelegramConversationScope conversation,
+            string text,
+            IReadOnlyList<IReadOnlyList<TelegramReplyButton>>? buttons,
+            CancellationToken cancellationToken,
+            TelegramDebugMessageContext? debugContext = null)
+        {
+            Sent.Add(new SentTelegramMessage(conversation, text, buttons));
+            return Task.FromResult<int?>(Sent.Count);
+        }
+
+        public Task EditTextMessageAsync(
+            TelegramConversationScope conversation,
+            int messageId,
+            string text,
+            IReadOnlyList<IReadOnlyList<TelegramReplyButton>>? buttons,
+            CancellationToken cancellationToken,
+            TelegramDebugMessageContext? debugContext = null)
+            => Task.CompletedTask;
+
+        public Task AnswerCallbackQueryAsync(string callbackQueryId, string? text, CancellationToken cancellationToken)
+            => Task.CompletedTask;
+
+        public Task AcknowledgeMessageAsync(TelegramMessageAcknowledgement acknowledgement, CancellationToken cancellationToken)
+            => Task.CompletedTask;
+
+        public Task SendTypingActionAsync(TelegramConversationScope conversation, CancellationToken cancellationToken)
+            => Task.CompletedTask;
+
+        public Task ReactToMessageAsync(TelegramMessageReaction reaction, CancellationToken cancellationToken)
+            => Task.CompletedTask;
+    }
+
     private sealed class TestTelegramOutputModeState : ITelegramOutputModeState
     {
-        public TelegramOutputPresentationMode CurrentMode { get; private set; } = TelegramOutputPresentationMode.Verbose;
+        public TestTelegramOutputModeState(TelegramOutputPresentationMode mode = TelegramOutputPresentationMode.Verbose)
+        {
+            CurrentMode = mode;
+        }
+
+        public TelegramOutputPresentationMode CurrentMode { get; private set; }
 
         public bool HasRuntimeOverride { get; private set; }
 
@@ -646,6 +728,11 @@ public sealed class CodexTurnExecutionCoordinatorStreamingTests
             HasRuntimeOverride = false;
         }
     }
+
+    private sealed record SentTelegramMessage(
+        TelegramConversationScope Conversation,
+        string Text,
+        IReadOnlyList<IReadOnlyList<TelegramReplyButton>>? Buttons);
 
     private sealed class TestApplicationLifetime : IHostApplicationLifetime
     {

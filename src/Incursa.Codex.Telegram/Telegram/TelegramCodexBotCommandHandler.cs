@@ -162,6 +162,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
     private const int QueuedPromptPreviewLength = 160;
     private const int ReplyContextPreviewLength = 1_200;
     private static readonly TimeSpan TelegramSendStartTimeout = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan TelegramSteerStartTimeout = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan InlineUsageSummaryTimeout = TimeSpan.FromMilliseconds(750);
     private static readonly TimeSpan StatusUsageSummaryTimeout = TimeSpan.FromSeconds(3);
     private static readonly TimeSpan InlineUsageSummaryCacheDuration = TimeSpan.FromSeconds(30);
@@ -191,6 +192,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
     private readonly TelegramBotOptions _options;
     private readonly TelegramInputOptions _inputOptions;
     private readonly ILogger<TelegramCodexBotCommandHandler> _logger;
+    private readonly TimeSpan _steerStartTimeout;
     private readonly SemaphoreSlim _usageSummaryLock = new(1, 1);
     private bool _hasCachedUsageSummary;
     private string? _cachedUsageSummary;
@@ -221,7 +223,8 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         ICodexSessionEventLog eventLog,
         IOptions<TelegramBotOptions> options,
         IOptions<TelegramInputOptions> inputOptions,
-        ILogger<TelegramCodexBotCommandHandler> logger)
+        ILogger<TelegramCodexBotCommandHandler> logger,
+        TimeSpan? steerStartTimeout = null)
     {
         _parser = parser;
         _chunker = chunker;
@@ -248,6 +251,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         _options = options.Value;
         _inputOptions = inputOptions.Value;
         _logger = logger;
+        _steerStartTimeout = steerStartTimeout ?? TelegramSteerStartTimeout;
     }
 
     public async Task HandleMessageAsync(
@@ -1225,8 +1229,13 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         CancellationToken cancellationToken)
     {
         TelegramInputBundle? existing = await _inputBundleStore.TryGetOpenBundleAsync(message.ConversationScope, message.UserId, cancellationToken).ConfigureAwait(false);
+        // Large pasted prompts often arrive as multiple Telegram messages; keep the first chunk in a bundle.
+        bool shouldHoldLargePlainText = existing is null
+            && !string.IsNullOrWhiteSpace(text)
+            && text.Length >= _options.MaxTelegramMessageLength;
         if (existing is null
-            && _inputOptions.DefaultCaptureMode == TelegramInputCaptureMode.ImmediateText)
+            && _inputOptions.DefaultCaptureMode == TelegramInputCaptureMode.ImmediateText
+            && !shouldHoldLargePlainText)
         {
             return false;
         }
@@ -1240,7 +1249,8 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
 
         bool shouldCapture = existing is not null
             || _inputOptions.DefaultCaptureMode == TelegramInputCaptureMode.BundleAlways
-            || (_inputOptions.DefaultCaptureMode == TelegramInputCaptureMode.BundleWhenActiveOrMedia && (hasInFlightWork || hasMedia));
+            || (_inputOptions.DefaultCaptureMode == TelegramInputCaptureMode.BundleWhenActiveOrMedia && (hasInFlightWork || hasMedia))
+            || shouldHoldLargePlainText;
         if (!shouldCapture)
         {
             return false;
@@ -1418,7 +1428,12 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             }
             else
             {
-                await SendOrQueueAsync(MessageFromBundle(message, prepared), session, prepared.CombinedText, sender, cancellationToken).ConfigureAwait(false);
+                await SendOrQueueAsync(
+                    MessageFromBundle(message, prepared),
+                    session,
+                    prepared.CombinedText,
+                    sender,
+                    cancellationToken).ConfigureAwait(false);
             }
         }
         catch (Exception exception) when (exception is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
@@ -2044,13 +2059,72 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         try
         {
             string input = BuildCodexInputText(message, arguments);
-            await _sessionManager.SteerAsync(resolved.Session.Id, input, cancellationToken).ConfigureAwait(false);
+            Task steerTask = _sessionManager.SteerAsync(resolved.Session.Id, input, cancellationToken);
+            Task timeoutTask = Task.Delay(_steerStartTimeout, cancellationToken);
+            Task completedTask = await Task.WhenAny(steerTask, timeoutTask).ConfigureAwait(false);
+            if (!ReferenceEquals(completedTask, steerTask))
+            {
+                _ = ObserveSlowTelegramSteerAsync(steerTask, message, resolved.Session, sender);
+                await ReplyAsync(
+                    sender,
+                    message.ConversationScope,
+                    $"Steering {resolved.Session.Name} is taking longer than usual. I will report success or failure when Codex accepts it.",
+                    BuildSessionButtons([resolved.Session], includeUse: false),
+                    cancellationToken).ConfigureAwait(false);
+                return;
+            }
+
+            await steerTask.ConfigureAwait(false);
             _followRegistry.FollowThread(message.ConversationScope, resolved.Session.Id);
             await ReplyAsync(sender, message, $"Steered {resolved.Session.Name}.", BuildSessionButtons([resolved.Session], includeUse: false), cancellationToken).ConfigureAwait(false);
         }
         catch (InvalidOperationException exception)
         {
             await ReplyAsync(sender, message, exception.Message, null, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            _logger.LogError(
+                exception,
+                "Telegram /steer command for chat {ChatId} topic {MessageThreadId} failed for session {SessionId}.",
+                message.ChatId,
+                message.MessageThreadId,
+                resolved.Session.Id);
+            await ReplyAsync(sender, message, $"Steer failed for {resolved.Session.Name}: {exception.Message}", BuildSessionButtons([resolved.Session], includeUse: false), cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private async Task ObserveSlowTelegramSteerAsync(
+        Task steerTask,
+        TelegramInboundMessage message,
+        CodexSessionSummary session,
+        ITelegramBotMessageSender sender)
+    {
+        try
+        {
+            await steerTask.ConfigureAwait(false);
+            _followRegistry.FollowThread(message.ConversationScope, session.Id);
+            await ReplyAsync(
+                sender,
+                message.ConversationScope,
+                $"Steered {session.Name}.",
+                BuildSessionButtons([session], includeUse: false),
+                CancellationToken.None).ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            _logger.LogError(
+                exception,
+                "Slow Telegram steer for chat {ChatId} topic {MessageThreadId} failed for session {SessionId}.",
+                message.ChatId,
+                message.MessageThreadId,
+                session.Id);
+            await ReplyAsync(
+                sender,
+                message.ConversationScope,
+                $"Steer failed for {session.Name}: {exception.Message}",
+                BuildSessionButtons([session], includeUse: false),
+                CancellationToken.None).ConfigureAwait(false);
         }
     }
 
@@ -2804,7 +2878,38 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
 
         try
         {
-            await _sessionManager.SteerAsync(session.Id, input, cancellationToken).ConfigureAwait(false);
+            Task steerTask = _sessionManager.SteerAsync(session.Id, input, cancellationToken);
+            Task timeoutTask = Task.Delay(_steerStartTimeout, cancellationToken);
+            Task completedTask = await Task.WhenAny(steerTask, timeoutTask).ConfigureAwait(false);
+            if (!ReferenceEquals(completedTask, steerTask))
+            {
+                _ = ObserveSlowBundleSteerAsync(steerTask, message, bundle, session, textOnly, sender);
+                await _traceStore.RecordAsync(
+                    new TelegramDebugTraceEvent(
+                        bundle.TraceId,
+                        DateTimeOffset.UtcNow,
+                        textOnly ? "codex.steer.text_only.pending" : "codex.steer.pending",
+                        SessionId: session.Id,
+                        ChatId: bundle.ConversationScope.ChatId,
+                        MessageThreadId: bundle.ConversationScope.MessageThreadId,
+                        UserId: bundle.UserId,
+                        BundleId: bundle.Id,
+                        Direction: "codex",
+                        Status: "pending",
+                        TextLength: bundle.CombinedText.Length,
+                        AttachmentCount: bundle.Attachments.Count,
+                        InputItemCount: input.Count),
+                    cancellationToken).ConfigureAwait(false);
+                await ReplyAsync(
+                    sender,
+                    message.ConversationScope,
+                    $"Steering the input bundle for {session.Name} is taking longer than usual. I will report success or failure when Codex accepts it.",
+                    BuildSessionButtons([session], includeUse: false),
+                    cancellationToken).ConfigureAwait(false);
+                return;
+            }
+
+            await steerTask.ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
         {
@@ -2812,12 +2917,68 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             return;
         }
 
+        await CompleteBundleSteerSuccessAsync(message, bundle, session, textOnly, sender, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task ObserveSlowBundleSteerAsync(
+        Task steerTask,
+        TelegramInboundMessage message,
+        TelegramInputBundle bundle,
+        CodexSessionSummary session,
+        bool textOnly,
+        ITelegramBotMessageSender sender)
+    {
+        try
+        {
+            await steerTask.ConfigureAwait(false);
+            await _traceStore.RecordAsync(
+                new TelegramDebugTraceEvent(
+                    bundle.TraceId,
+                    DateTimeOffset.UtcNow,
+                    textOnly ? "codex.steer.text_only.accepted" : "codex.steer.accepted",
+                    SessionId: session.Id,
+                    ChatId: bundle.ConversationScope.ChatId,
+                    MessageThreadId: bundle.ConversationScope.MessageThreadId,
+                    UserId: bundle.UserId,
+                    BundleId: bundle.Id,
+                    Direction: "codex",
+                    Status: "accepted",
+                    TextLength: bundle.CombinedText.Length,
+                    AttachmentCount: bundle.Attachments.Count),
+                CancellationToken.None).ConfigureAwait(false);
+            await CompleteBundleSteerSuccessAsync(message, bundle, session, textOnly, sender, CancellationToken.None).ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            _logger.LogError(
+                exception,
+                "Slow Telegram input bundle steer for bundle {BundleId} chat {ChatId} topic {MessageThreadId} failed for session {SessionId}.",
+                bundle.Id,
+                bundle.ConversationScope.ChatId,
+                bundle.ConversationScope.MessageThreadId,
+                session.Id);
+            await HandleBundleDispatchFailureAsync(message, bundle, "steered", exception, sender, CancellationToken.None).ConfigureAwait(false);
+        }
+    }
+
+    private async Task CompleteBundleSteerSuccessAsync(
+        TelegramInboundMessage message,
+        TelegramInputBundle bundle,
+        CodexSessionSummary session,
+        bool textOnly,
+        ITelegramBotMessageSender sender,
+        CancellationToken cancellationToken)
+    {
         if (textOnly && bundle.Attachments.Count > 0)
         {
+            TelegramInputBundle displayBundle = await _inputBundleStore.TryReopenSubmittedBundleAsync(
+                bundle.Id,
+                bundle.UserId,
+                cancellationToken).ConfigureAwait(false) ?? bundle;
             await ReplyAsync(sender, message, "Steered the text. The bundle is still open so the attachments can be queued or cancelled.", null, cancellationToken).ConfigureAwait(false);
             await PublishInputBundleCardAsync(
-                bundle,
-                await BuildInputBundleCardContextAsync(bundle, cancellationToken).ConfigureAwait(false),
+                displayBundle,
+                await BuildInputBundleCardContextAsync(displayBundle, cancellationToken).ConfigureAwait(false),
                 sender,
                 cancellationToken).ConfigureAwait(false);
             return;
@@ -2914,10 +3075,10 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         ITelegramBotMessageSender sender,
         CancellationToken cancellationToken)
     {
-        TelegramInputBundle? updated = await _inputBundleStore.TrySetIntentAsync(bundle.Id, message.UserId, intent, cancellationToken).ConfigureAwait(false);
+        TelegramInputBundle? updated = await _inputBundleStore.TrySubmitBundleAsync(bundle.Id, message.UserId, intent, cancellationToken).ConfigureAwait(false);
         if (updated is null)
         {
-            await ReplyAsync(sender, message, "That input bundle was already sent, cancelled, or expired.", null, cancellationToken).ConfigureAwait(false);
+            await ReplyAsync(sender, message, "That input bundle is already being sent, was already sent, or is no longer active.", null, cancellationToken).ConfigureAwait(false);
         }
 
         return updated;
@@ -2954,7 +3115,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             return bundle;
         }
 
-        TelegramInputBundle? updated = await _inputBundleStore.TryUpdateBundleAsync(
+        TelegramInputBundle? updated = await _inputBundleStore.TryUpdateSubmittedBundleAsync(
             bundle.Id,
             bundle.UserId,
             current => current with
@@ -2994,6 +3155,10 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         ITelegramBotMessageSender sender,
         CancellationToken cancellationToken)
     {
+        TelegramInputBundle displayBundle = await _inputBundleStore.TryReopenSubmittedBundleAsync(
+            bundle.Id,
+            bundle.UserId,
+            cancellationToken).ConfigureAwait(false) ?? bundle;
         await _traceStore.RecordAsync(
             new TelegramDebugTraceEvent(
                 bundle.TraceId,
@@ -3012,8 +3177,8 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             cancellationToken).ConfigureAwait(false);
         await ReplyAsync(sender, message, $"The input bundle could not be {attemptedAction}. It is still open. Error: {exception.Message}", null, cancellationToken).ConfigureAwait(false);
         await PublishInputBundleCardAsync(
-            bundle,
-            await BuildInputBundleCardContextAsync(bundle, cancellationToken).ConfigureAwait(false),
+            displayBundle,
+            await BuildInputBundleCardContextAsync(displayBundle, cancellationToken).ConfigureAwait(false),
             sender,
             cancellationToken).ConfigureAwait(false);
     }
@@ -3231,18 +3396,34 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         try
         {
             EnsureAttachmentFilesExist(removed.Attachments);
+            Task steerTask;
             if (removed.Attachments is { Count: > 0 })
             {
-                await _sessionManager.SteerAsync(
+                steerTask = _sessionManager.SteerAsync(
                     removed.SessionId,
                     TelegramAttachmentInputBuilder.BuildInputItems(removed.Text, removed.Attachments),
-                    cancellationToken).ConfigureAwait(false);
+                    cancellationToken);
             }
             else
             {
-                await _sessionManager.SteerAsync(removed.SessionId, removed.Text, cancellationToken).ConfigureAwait(false);
+                steerTask = _sessionManager.SteerAsync(removed.SessionId, removed.Text, cancellationToken);
             }
 
+            Task timeoutTask = Task.Delay(_steerStartTimeout, cancellationToken);
+            Task completedTask = await Task.WhenAny(steerTask, timeoutTask).ConfigureAwait(false);
+            if (!ReferenceEquals(completedTask, steerTask))
+            {
+                _ = ObserveSlowQueuedPromptSteerAsync(steerTask, removed, session, message, sender);
+                await ReplyWithQueueListAsync(
+                    message,
+                    sender,
+                    includeAll: false,
+                    $"Sending queued item {GetShortQueuedPromptId(removed.Id)} to the active turn for {session.Name} is taking longer than usual. I will report success or failure when Codex accepts it.",
+                    cancellationToken).ConfigureAwait(false);
+                return;
+            }
+
+            await steerTask.ConfigureAwait(false);
             _followRegistry.FollowThread(removed.ConversationScope, removed.SessionId);
             await ReplyWithQueueListAsync(
                 message,
@@ -3261,6 +3442,37 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
                 includeAll: false,
                 $"Could not send queued item {GetShortQueuedPromptId(removed.Id)} now: {exception.Message} It is still queued.",
                 cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private async Task ObserveSlowQueuedPromptSteerAsync(
+        Task steerTask,
+        TelegramQueuedPrompt removed,
+        CodexSessionSummary session,
+        TelegramInboundMessage message,
+        ITelegramBotMessageSender sender)
+    {
+        try
+        {
+            await steerTask.ConfigureAwait(false);
+            _followRegistry.FollowThread(removed.ConversationScope, removed.SessionId);
+            await ReplyWithQueueListAsync(
+                message,
+                sender,
+                includeAll: false,
+                $"Sent queued item {GetShortQueuedPromptId(removed.Id)} to the active turn for {session.Name}.",
+                CancellationToken.None).ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            await _stateStore.EnqueueQueuedPromptAsync(removed, CancellationToken.None).ConfigureAwait(false);
+            _logger.LogWarning(exception, "Slow queued prompt {PromptId} could not be sent now; it remains queued.", removed.Id);
+            await ReplyWithQueueListAsync(
+                message,
+                sender,
+                includeAll: false,
+                $"Could not send queued item {GetShortQueuedPromptId(removed.Id)} now: {exception.Message} It is still queued.",
+                CancellationToken.None).ConfigureAwait(false);
         }
     }
 

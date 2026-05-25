@@ -385,6 +385,69 @@ public sealed class TelegramCommandHandlerTests
     }
 
     [Fact]
+    public async Task HandleMessageAsync_DefaultCaptureModeCapturesShortPlainTextBeforeStartingTurn()
+    {
+        using CommandHandlerHarness harness = CommandHandlerHarness.Create(
+            inputOptionsOverride: new TelegramInputOptions());
+        TelegramConversationScope conversation = new(5555, null);
+        harness.SessionManager.Sessions.Add(CreateSession("thread-1", "Demo session", harness.Temp.Path));
+        await harness.StateStore.SetActiveSessionIdAsync(conversation, "thread-1", CancellationToken.None);
+
+        await harness.Handler.HandleMessageAsync(
+            new TelegramInboundMessage(1234, conversation.ChatId, "private", "short prompt", SourceMessageId: 9),
+            harness.Sender,
+            CancellationToken.None);
+
+        SentTelegramMessage sent = Assert.Single(harness.Sender.Sent);
+        Assert.Contains("Input ready", sent.Text);
+        Assert.Contains("short prompt", sent.Text);
+        Assert.Empty(harness.SessionManager.SendRequests);
+
+        TelegramInputBundle bundle = Assert.Single(await harness.InputBundleStore.ListAsync(conversation, CancellationToken.None));
+        Assert.Equal(TelegramInputBundleStatus.Capturing, bundle.Status);
+        Assert.Equal("short prompt", bundle.CombinedText);
+    }
+
+    [Fact]
+    public async Task HandleMessageAsync_LongPlainTextCapturesBundleBeforeStartingTurn()
+    {
+        using CommandHandlerHarness harness = CommandHandlerHarness.Create(
+            inputOptionsOverride: new TelegramInputOptions
+            {
+                DefaultCaptureMode = TelegramInputCaptureMode.ImmediateText,
+            });
+        TelegramConversationScope conversation = new(5555, null);
+        harness.SessionManager.Sessions.Add(CreateSession("thread-1", "Demo session", harness.Temp.Path));
+        await harness.StateStore.SetActiveSessionIdAsync(conversation, "thread-1", CancellationToken.None);
+
+        string firstChunk = new('a', TelegramBotDefaults.MaxTelegramMessageLength + 1);
+
+        await harness.Handler.HandleMessageAsync(
+            new TelegramInboundMessage(1234, conversation.ChatId, "private", firstChunk, SourceMessageId: 10),
+            harness.Sender,
+            CancellationToken.None);
+
+        SentTelegramMessage sent = Assert.Single(harness.Sender.Sent);
+        Assert.Contains("Input ready", sent.Text);
+        Assert.Contains("Text: 1 part", sent.Text);
+        Assert.Empty(harness.SessionManager.SendRequests);
+
+        await harness.Handler.HandleMessageAsync(
+            new TelegramInboundMessage(1234, conversation.ChatId, "private", "second chunk", SourceMessageId: 11),
+            harness.Sender,
+            CancellationToken.None);
+
+        EditedTelegramMessage edited = Assert.Single(harness.Sender.Edited);
+        Assert.Contains("Text: 2 parts", edited.Text);
+        Assert.Empty(harness.SessionManager.SendRequests);
+
+        TelegramInputBundle bundle = Assert.Single(await harness.InputBundleStore.ListAsync(conversation, CancellationToken.None));
+        Assert.Equal(2, bundle.TextParts.Count);
+        Assert.Equal("second chunk", bundle.TextParts[1].Text);
+        Assert.Contains("second chunk", bundle.CombinedText);
+    }
+
+    [Fact]
     public async Task HandleMessageAsync_WhenBundleCardEditFailsStoresReplacementMessageId()
     {
         using CommandHandlerHarness harness = CommandHandlerHarness.Create(
@@ -561,7 +624,9 @@ public sealed class TelegramCommandHandlerTests
         Assert.Equal("auto send transcript", Assert.Single(harness.SessionManager.SendRequests));
         TelegramInputBundle completed = Assert.Single(await harness.InputBundleStore.ListAsync(conversation, CancellationToken.None));
         Assert.Equal(TelegramInputBundleStatus.Sent, completed.Status);
-        Assert.Contains(harness.Sender.Edited, edited => edited.Text.Contains("Bundle sent", StringComparison.Ordinal));
+        Assert.Contains(harness.Sender.Edited, edited =>
+            edited.Text.Contains("Bundle sent to Codex", StringComparison.Ordinal)
+            && edited.Text.Contains("Live updates will stream here", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -641,6 +706,92 @@ public sealed class TelegramCommandHandlerTests
         Assert.Contains(
             Assert.IsAssignableFrom<IReadOnlyList<CodexInputItem>>(input),
             item => item is CodexTextInput text && text.Text == "retry this bundle");
+    }
+
+    [Fact]
+    public async Task HandleCallbackAsync_WhenBundleSteerAcceptanceIsSlow_ReportsPendingThenCompletes()
+    {
+        using CommandHandlerHarness harness = CommandHandlerHarness.Create(
+            inputOptionsOverride: new TelegramInputOptions
+            {
+                DefaultCaptureMode = TelegramInputCaptureMode.BundleWhenActiveOrMedia,
+            },
+            steerStartTimeout: TimeSpan.FromMilliseconds(10));
+        TelegramConversationScope conversation = new(5555, null);
+        harness.SessionManager.Sessions.Add(CreateSession("thread-1", "Demo session", harness.Temp.Path, CodexSessionStatus.Running));
+        harness.TurnCoordinator.ActiveThreadIds.Add("thread-1");
+        await harness.StateStore.SetActiveSessionIdAsync(conversation, "thread-1", CancellationToken.None);
+
+        await harness.Handler.HandleMessageAsync(
+            new TelegramInboundMessage(1234, conversation.ChatId, "private", "slow steer bundle", SourceMessageId: 26),
+            harness.Sender,
+            CancellationToken.None);
+
+        SentTelegramMessage card = Assert.Single(harness.Sender.Sent);
+        string steerCallback = Assert.Single(card.Buttons!.SelectMany(row => row), button => button.Text == "Steer current turn").CallbackData;
+        harness.SessionManager.PendingSteer = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        await harness.Handler.HandleCallbackAsync(
+            new TelegramInboundCallback("bundle-steer-slow", 1234, conversation.ChatId, "private", steerCallback, SourceMessageId: 1),
+            harness.Sender,
+            CancellationToken.None);
+
+        Assert.Contains(harness.Sender.CallbackAnswers, answer => answer.Text == "Steering.");
+        Assert.Contains(harness.Sender.Sent, sent => sent.Text.Contains("Steering the input bundle", StringComparison.Ordinal));
+        TelegramInputBundle pending = Assert.Single(await harness.InputBundleStore.ListAsync(conversation, CancellationToken.None));
+        Assert.Equal(TelegramInputBundleStatus.Submitted, pending.Status);
+
+        await harness.Handler.HandleCallbackAsync(
+            new TelegramInboundCallback("bundle-steer-slow-duplicate", 1234, conversation.ChatId, "private", steerCallback, SourceMessageId: 1),
+            harness.Sender,
+            CancellationToken.None);
+
+        Assert.Single(harness.SessionManager.SteerRequests);
+        Assert.Contains(harness.Sender.CallbackAnswers, answer => answer.Text == "Bundle is no longer active.");
+
+        harness.SessionManager.PendingSteer.SetResult(true);
+        await WaitUntilAsync(() => HasSentOrEditedText(harness, "Steered Demo session with the input bundle."));
+
+        TelegramInputBundle completed = Assert.Single(await harness.InputBundleStore.ListAsync(conversation, CancellationToken.None));
+        Assert.Equal(TelegramInputBundleStatus.Steered, completed.Status);
+    }
+
+    [Fact]
+    public async Task HandleCallbackAsync_WhenSlowBundleSteerEventuallyFails_KeepsBundleOpenForRetry()
+    {
+        using CommandHandlerHarness harness = CommandHandlerHarness.Create(
+            inputOptionsOverride: new TelegramInputOptions
+            {
+                DefaultCaptureMode = TelegramInputCaptureMode.BundleWhenActiveOrMedia,
+            },
+            steerStartTimeout: TimeSpan.FromMilliseconds(10));
+        TelegramConversationScope conversation = new(5555, null);
+        harness.SessionManager.Sessions.Add(CreateSession("thread-1", "Demo session", harness.Temp.Path, CodexSessionStatus.Running));
+        harness.TurnCoordinator.ActiveThreadIds.Add("thread-1");
+        await harness.StateStore.SetActiveSessionIdAsync(conversation, "thread-1", CancellationToken.None);
+
+        await harness.Handler.HandleMessageAsync(
+            new TelegramInboundMessage(1234, conversation.ChatId, "private", "slow failed steer bundle", SourceMessageId: 27),
+            harness.Sender,
+            CancellationToken.None);
+
+        SentTelegramMessage card = Assert.Single(harness.Sender.Sent);
+        string steerCallback = Assert.Single(card.Buttons!.SelectMany(row => row), button => button.Text == "Steer current turn").CallbackData;
+        harness.SessionManager.PendingSteer = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        await harness.Handler.HandleCallbackAsync(
+            new TelegramInboundCallback("bundle-steer-slow-fail", 1234, conversation.ChatId, "private", steerCallback, SourceMessageId: 1),
+            harness.Sender,
+            CancellationToken.None);
+
+        Assert.Contains(harness.Sender.Sent, sent => sent.Text.Contains("Steering the input bundle", StringComparison.Ordinal));
+
+        harness.SessionManager.PendingSteer.SetException(new InvalidOperationException("steer transport hung"));
+        await WaitUntilAsync(() => HasSentOrEditedText(harness, "could not be steered"));
+
+        TelegramInputBundle stillOpen = Assert.Single(await harness.InputBundleStore.ListAsync(conversation, CancellationToken.None));
+        Assert.Equal(TelegramInputBundleStatus.Capturing, stillOpen.Status);
+        Assert.Contains(harness.Sender.Edited, edited => edited.Text.Contains("steer transport hung", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -1315,6 +1466,30 @@ public sealed class TelegramCommandHandlerTests
     }
 
     [Fact]
+    public async Task HandleMessageAsync_WhenSteerAcceptanceIsSlow_ReportsPendingThenCompletion()
+    {
+        using CommandHandlerHarness harness = CommandHandlerHarness.Create(steerStartTimeout: TimeSpan.FromMilliseconds(10));
+        TelegramConversationScope conversation = new(5555, null);
+        harness.SessionManager.Sessions.Add(CreateSession("thread-1", "Goal session", harness.Temp.Path));
+        harness.SessionManager.PendingSteer = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        await harness.StateStore.SetActiveSessionIdAsync(conversation, "thread-1", CancellationToken.None);
+
+        Task handleTask = harness.Handler.HandleMessageAsync(
+            new TelegramInboundMessage(1234, conversation.ChatId, "private", "/steer keep going"),
+            harness.Sender,
+            CancellationToken.None);
+
+        await harness.SessionManager.SteerStarted.Task.WaitAsync(TimeSpan.FromSeconds(1));
+        await handleTask.WaitAsync(TimeSpan.FromSeconds(1));
+
+        Assert.Contains(harness.Sender.Sent, sent => sent.Text.Contains("is taking longer than usual", StringComparison.Ordinal));
+        Assert.Equal(("thread-1", (object)"keep going"), Assert.Single(harness.SessionManager.SteerRequests));
+
+        harness.SessionManager.PendingSteer.SetResult(true);
+        await WaitUntilAsync(() => HasSentOrEditedText(harness, "Steered Goal session."));
+    }
+
+    [Fact]
     public async Task HandleMessageAsync_AudioTranscribesRoutesAndDeletesTemporaryFile()
     {
         using CommandHandlerHarness harness = CommandHandlerHarness.Create();
@@ -1964,6 +2139,30 @@ public sealed class TelegramCommandHandlerTests
     }
 
     [Fact]
+    public async Task HandleCallbackAsync_WhenQueuedSteerAcceptanceIsSlow_ReportsPendingThenCompletes()
+    {
+        using CommandHandlerHarness harness = CommandHandlerHarness.Create(steerStartTimeout: TimeSpan.FromMilliseconds(10));
+        TelegramConversationScope conversation = new(5555, null);
+        harness.SessionManager.Sessions.Add(CreateSession("thread-1", "Demo session", harness.Temp.Path));
+        harness.SessionManager.PendingSteer = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        await harness.StateStore.EnqueueQueuedPromptAsync(
+            CreateQueuedPrompt("aaaaaaaa11111111", 1234, conversation, "queued steering"),
+            CancellationToken.None);
+
+        await harness.Handler.HandleCallbackAsync(
+            new TelegramInboundCallback("callback-queue-slow", 1234, conversation.ChatId, "private", "qnow:aaaaaaaa11111111", SourceMessageId: 42),
+            harness.Sender,
+            CancellationToken.None);
+
+        Assert.Equal("Sending queued item.", Assert.Single(harness.Sender.CallbackAnswers).Text);
+        Assert.Contains(harness.Sender.Edited, edited => edited.Text.Contains("is taking longer than usual", StringComparison.Ordinal));
+        Assert.Empty(await harness.StateStore.ListQueuedPromptsAsync(1234, conversation, CancellationToken.None));
+
+        harness.SessionManager.PendingSteer.SetResult(true);
+        await WaitUntilAsync(() => HasSentOrEditedText(harness, "Sent queued item aaaaaaaa"));
+    }
+
+    [Fact]
     public async Task HandleCallbackAsync_QueueSendNowWithAttachmentRetainsTemporaryFileAfterCodexHandoff()
     {
         using CommandHandlerHarness harness = CommandHandlerHarness.Create();
@@ -2527,6 +2726,10 @@ public sealed class TelegramCommandHandlerTests
     private static IReadOnlyList<string> FlattenButtonLabels(EditedTelegramMessage message)
         => message.Buttons?.SelectMany(row => row.Select(button => button.Text)).ToArray() ?? [];
 
+    private static bool HasSentOrEditedText(CommandHandlerHarness harness, string expected)
+        => harness.Sender.Sent.Any(sent => sent.Text.Contains(expected, StringComparison.Ordinal))
+            || harness.Sender.Edited.Any(edited => edited.Text.Contains(expected, StringComparison.Ordinal));
+
     private static bool IsSessionControlLabel(string label)
         => label.StartsWith("Tail", StringComparison.OrdinalIgnoreCase)
             || label.StartsWith("Status", StringComparison.OrdinalIgnoreCase)
@@ -2613,7 +2816,8 @@ public sealed class TelegramCommandHandlerTests
 
         public static CommandHandlerHarness Create(
             TelegramBotOptions? botOptions = null,
-            TelegramInputOptions? inputOptionsOverride = null)
+            TelegramInputOptions? inputOptionsOverride = null,
+            TimeSpan? steerStartTimeout = null)
         {
             TemporaryDirectory temp = TemporaryDirectory.Create();
             IOptions<CodexTelegramOptions> codexOptions = Microsoft.Extensions.Options.Options.Create(new CodexTelegramOptions
@@ -2677,7 +2881,8 @@ public sealed class TelegramCommandHandlerTests
                     AllowedUserIds = [1234],
                 }),
                 inputOptions,
-                NullLogger<TelegramCodexBotCommandHandler>.Instance);
+                NullLogger<TelegramCodexBotCommandHandler>.Instance,
+                steerStartTimeout);
 
             return new CommandHandlerHarness(temp, sessionManager, accountUsage, projectCatalog, stateStore, outboundQueue, turnCoordinator, inputBundleStore, typingIndicatorRegistry, turnReactionRegistry, debugPreambleMode, outputModeState, traceStore, eventLog, topicService, audioTranscription, sender, handler);
         }
@@ -2721,6 +2926,10 @@ public sealed class TelegramCommandHandlerTests
         public TaskCompletionSource<CodexThreadExecutionVm>? PendingSend { get; set; }
 
         public TaskCompletionSource<bool> SendStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource<bool>? PendingSteer { get; set; }
+
+        public TaskCompletionSource<bool> SteerStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public Task<IReadOnlyCollection<CodexSessionSummary>> ListSessionsAsync(CancellationToken cancellationToken)
             => Task.FromResult<IReadOnlyCollection<CodexSessionSummary>>(Sessions.ToArray());
@@ -2790,14 +2999,16 @@ public sealed class TelegramCommandHandlerTests
         {
             ThrowNextSteerExceptionIfPresent();
             SteerRequests.Add((sessionId, input));
-            return Task.CompletedTask;
+            SteerStarted.TrySetResult(true);
+            return PendingSteer?.Task ?? Task.CompletedTask;
         }
 
         public Task SteerAsync(string sessionId, IReadOnlyList<CodexInputItem> input, CancellationToken cancellationToken)
         {
             ThrowNextSteerExceptionIfPresent();
             SteerRequests.Add((sessionId, input));
-            return Task.CompletedTask;
+            SteerStarted.TrySetResult(true);
+            return PendingSteer?.Task ?? Task.CompletedTask;
         }
 
         private void ThrowNextSteerExceptionIfPresent()
