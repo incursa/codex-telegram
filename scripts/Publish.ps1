@@ -79,15 +79,29 @@ if ($runningProcesses.Count -gt 0) {
 }
 
 try {
+    if (Test-Path -LiteralPath $targetBinaryPath) {
+        Remove-Item -LiteralPath $targetBinaryPath -Force
+    }
+
+    $targetChecksumPath = "$targetBinaryPath.sha256"
+    if (Test-Path -LiteralPath $targetChecksumPath) {
+        Remove-Item -LiteralPath $targetChecksumPath -Force
+    }
+
     dotnet publish (Join-Path $repoRoot "src\Incursa.Codex.Telegram\Incursa.Codex.Telegram.csproj") `
         -c $Configuration `
         -r $Runtime `
         -o $OutputDirectory `
-        /p:AssemblyName=codex-telegram `
         /p:PublishSingleFile=true `
         /p:SelfContained=true
     if ($LASTEXITCODE -ne 0) {
         throw "dotnet publish failed with exit code $LASTEXITCODE."
+    }
+
+    $defaultBinaryName = if ($Runtime -like "win-*") { "Incursa.Codex.Telegram.exe" } else { "Incursa.Codex.Telegram" }
+    $defaultBinaryPath = Join-Path $OutputDirectory $defaultBinaryName
+    if (Test-Path -LiteralPath $defaultBinaryPath) {
+        Move-Item -LiteralPath $defaultBinaryPath -Destination $targetBinaryPath -Force
     }
 
     if ($settingsSourcePath) {
