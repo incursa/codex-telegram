@@ -184,7 +184,36 @@ public sealed class CodexGatewayTests
     }
 
     [Fact]
-    public async Task RuntimeRegistryReattachPersistedTurnsAsync_LeavesMarkerWhenAttachFails()
+    public async Task RuntimeRegistryReattachPersistedTurnsAsync_IgnoresLastTurnWithoutInterruptedMarker()
+    {
+        using TemporaryDirectory dataRoot = TemporaryDirectory.Create();
+        using TemporaryDirectory workspaceRoot = TemporaryDirectory.Create();
+
+        ScriptedCodexRuntimeClient runtimeClient = new();
+        RecordingRuntimeClientFactory runtimeClientFactory = new(runtimeClient);
+        IOptions<CodexTelegramOptions> telegramOptions = CreateTelegramOptions(dataRoot.Path, workspaceRoot.Path);
+        CodexThreadManifestStore manifestStore = new(telegramOptions, TimeProvider.System);
+        await manifestStore.UpdateAsync("thread-1", manifest =>
+        {
+            manifest.LastTurnId = "turn-1";
+            return manifest;
+        }, CancellationToken.None);
+
+        await using CodexSessionRuntimeRegistry registry = CreateRegistry(runtimeClientFactory, manifestStore: manifestStore);
+
+        IReadOnlyCollection<CodexThreadExecutionVm> executions = await registry.ReattachPersistedTurnsAsync(["thread-1"], CancellationToken.None);
+
+        Assert.Empty(executions);
+        Assert.Equal(1, runtimeClientFactory.CreateCalls);
+
+        CodexThreadManifestRecord? manifest = await manifestStore.ReadAsync("thread-1", CancellationToken.None);
+        Assert.NotNull(manifest);
+        Assert.Equal("turn-1", manifest!.LastTurnId);
+        Assert.Null(manifest.InterruptedTurn);
+    }
+
+    [Fact]
+    public async Task RuntimeRegistryReattachPersistedTurnsAsync_ClearsMarkerWhenAttachFails()
     {
         using TemporaryDirectory dataRoot = TemporaryDirectory.Create();
         using TemporaryDirectory workspaceRoot = TemporaryDirectory.Create();
@@ -207,8 +236,9 @@ public sealed class CodexGatewayTests
         Assert.Empty(executions);
         Assert.Null(registry.TryGetActiveTurnState("thread-1"));
         CodexThreadManifestRecord? manifest = await manifestStore.ReadAsync("thread-1", CancellationToken.None);
-        Assert.NotNull(manifest?.InterruptedTurn);
-        Assert.Equal("turn-1", manifest!.InterruptedTurn!.TurnId);
+        Assert.NotNull(manifest);
+        Assert.Equal("turn-1", manifest!.LastTurnId);
+        Assert.Null(manifest.InterruptedTurn);
     }
 
     [Fact]

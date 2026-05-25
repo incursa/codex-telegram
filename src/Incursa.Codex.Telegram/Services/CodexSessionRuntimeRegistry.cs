@@ -147,7 +147,7 @@ internal sealed class CodexSessionRuntimeRegistry : ICodexTurnExecutionCoordinat
             }
 
             CodexThreadManifestRecord? manifest = await _manifestStore.ReadAsync(threadId, cancellationToken).ConfigureAwait(false);
-            string? turnId = manifest?.InterruptedTurn?.TurnId ?? manifest?.LastTurnId;
+            string? turnId = manifest?.InterruptedTurn?.TurnId;
             if (manifest is null || string.IsNullOrWhiteSpace(turnId))
             {
                 continue;
@@ -185,9 +185,13 @@ internal sealed class CodexSessionRuntimeRegistry : ICodexTurnExecutionCoordinat
             {
                 _logger.LogDebug(exception, "Codex runtime does not support reattaching turn {TurnId} on thread {ThreadId}.", turnId, threadId);
             }
+            catch (CodexInvalidRequestException exception)
+            {
+                await ClearStaleInterruptedTurnMarkerAsync(threadId, turnId, exception, cancellationToken).ConfigureAwait(false);
+            }
             catch (InvalidOperationException exception)
             {
-                _logger.LogDebug(exception, "Codex turn {TurnId} on thread {ThreadId} could not be reattached.", turnId, threadId);
+                await ClearStaleInterruptedTurnMarkerAsync(threadId, turnId, exception, cancellationToken).ConfigureAwait(false);
             }
         }
 
@@ -293,6 +297,32 @@ internal sealed class CodexSessionRuntimeRegistry : ICodexTurnExecutionCoordinat
                 _logger.LogWarning(exception, "Failed to persist interrupted turn marker for turn {TurnId} on thread {ThreadId}.", activeTurn.TurnId, activeTurn.ThreadId);
             }
         }
+    }
+
+    private async Task ClearStaleInterruptedTurnMarkerAsync(
+        string threadId,
+        string turnId,
+        Exception exception,
+        CancellationToken cancellationToken)
+    {
+        if (_manifestStore is null)
+        {
+            return;
+        }
+
+        _logger.LogWarning(exception, "Codex turn {TurnId} on thread {ThreadId} is no longer attachable. Clearing the interrupted-turn marker.", turnId, threadId);
+        await _manifestStore.UpdateAsync(
+            threadId,
+            manifest =>
+            {
+                if (string.Equals(manifest.InterruptedTurn?.TurnId, turnId, StringComparison.Ordinal))
+                {
+                    manifest.InterruptedTurn = null;
+                }
+
+                return manifest;
+            },
+            cancellationToken).ConfigureAwait(false);
     }
 
     private static CodexInterruptedTurnRecord CreateInterruptedTurnRecord(CodexActiveTurnStateVm activeTurn, DateTimeOffset recordedAt)
