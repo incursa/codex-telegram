@@ -64,6 +64,7 @@ builder.Configuration.AddCommandLine(commandLine.ConfigurationArgs);
 builder.Services.Configure<HostOptions>(options =>
 {
     options.BackgroundServiceExceptionBehavior = BackgroundServiceExceptionBehavior.Ignore;
+    options.ShutdownTimeout = TimeSpan.FromSeconds(15);
 });
 
 builder.Services.AddOptions<CodexClientOptions>()
@@ -327,9 +328,11 @@ builder.Services.AddHostedService<TelegramInputBundleAutoDispatchHostedService>(
 builder.Services.AddHostedService<TelegramQueuedPromptProcessorHostedService>();
 builder.Services.AddHostedService<TelegramTypingHeartbeatHostedService>();
 builder.Services.AddHostedService<OutboundTelegramDeliveryHostedService>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<CodexSessionRuntimeRegistry>());
 
 IHost host = builder.Build();
 await RehydrateTelegramThreadFollowsAsync(host.Services, CancellationToken.None);
+await ReattachPersistedCodexTurnsAsync(host.Services, CancellationToken.None);
 await host.RunAsync();
 
 static string? DefaultIfWhiteSpace(string? value, string? fallback)
@@ -380,6 +383,24 @@ static async Task RehydrateTelegramThreadFollowsAsync(IServiceProvider services,
             followRegistry.FollowThread(state.Scope, state.ActiveSessionId);
         }
     }
+}
+
+static async Task ReattachPersistedCodexTurnsAsync(IServiceProvider services, CancellationToken cancellationToken)
+{
+    ITelegramBotStateStore stateStore = services.GetRequiredService<ITelegramBotStateStore>();
+    CodexSessionRuntimeRegistry runtimeRegistry = services.GetRequiredService<CodexSessionRuntimeRegistry>();
+
+    IReadOnlyCollection<TelegramConversationState> conversationStates = await stateStore.ListConversationStatesAsync(cancellationToken).ConfigureAwait(false);
+    IReadOnlyCollection<string> trackedSessionIds = await stateStore.GetTrackedSessionIdsAsync(cancellationToken).ConfigureAwait(false);
+    string[] candidateThreadIds = conversationStates
+        .Select(state => state.ActiveSessionId)
+        .Concat(trackedSessionIds)
+        .Where(sessionId => !string.IsNullOrWhiteSpace(sessionId))
+        .Select(sessionId => sessionId!)
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .ToArray();
+
+    await runtimeRegistry.ReattachPersistedTurnsAsync(candidateThreadIds, cancellationToken).ConfigureAwait(false);
 }
 
 static bool ShouldRunInteractiveMenu(ApplicationCommandLine commandLine)

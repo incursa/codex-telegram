@@ -11,6 +11,11 @@ internal interface ICodexThreadHandle
         CodexTurnOptions turnOptions,
         CancellationToken cancellationToken);
 
+    Task<ICodexTurnHandle> AttachTurnAsync(
+        string turnId,
+        CodexTurnAttachOptions? options,
+        CancellationToken cancellationToken);
+
     Task SetNameAsync(string name, CancellationToken cancellationToken);
 
     Task CompactAsync(CancellationToken cancellationToken);
@@ -61,6 +66,12 @@ internal sealed class CodexThreadHandle : ICodexThreadHandle
         CodexTurnOptions turnOptions,
         CancellationToken cancellationToken)
         => new CodexTurnHandle(await _thread.StartTurnAsync(input, turnOptions, cancellationToken).ConfigureAwait(false));
+
+    public async Task<ICodexTurnHandle> AttachTurnAsync(
+        string turnId,
+        CodexTurnAttachOptions? options,
+        CancellationToken cancellationToken)
+        => new CodexTurnHandle(await _thread.AttachTurnAsync(turnId, options, cancellationToken).ConfigureAwait(false));
 
     public Task SetNameAsync(string name, CancellationToken cancellationToken)
         => _thread.SetNameAsync(name, cancellationToken);

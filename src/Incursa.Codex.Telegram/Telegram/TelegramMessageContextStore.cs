@@ -218,7 +218,10 @@ internal static class TelegramReplyContextTextClassifier
 
         string normalized = text.Trim().ReplaceLineEndings("\n");
 
-        return normalized.StartsWith("Codex failed", StringComparison.OrdinalIgnoreCase)
+        return normalized.StartsWith("--- live card:", StringComparison.OrdinalIgnoreCase)
+            || normalized.StartsWith("--- codex error", StringComparison.OrdinalIgnoreCase)
+            || normalized.StartsWith("--- codex status", StringComparison.OrdinalIgnoreCase)
+            || normalized.StartsWith("Codex failed", StringComparison.OrdinalIgnoreCase)
             || normalized.StartsWith("Codex interrupted", StringComparison.OrdinalIgnoreCase)
             || normalized.StartsWith("Codex is working", StringComparison.OrdinalIgnoreCase)
             || normalized.StartsWith("Codex finished", StringComparison.OrdinalIgnoreCase)

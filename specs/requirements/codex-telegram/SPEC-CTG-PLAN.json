@@ -43,7 +43,7 @@
         ]
       },
       "notes": [
-        "The current repo fallback pin is Incursa.OpenAI.Codex 2.2.0, so the package surface now exposes the SDK plan-mode configuration object described by this requirement."
+        "The current repo fallback pin is Incursa.OpenAI.Codex 2.3.0, so the package surface now exposes the SDK plan-mode configuration object described by this requirement."
       ]
     },
     {

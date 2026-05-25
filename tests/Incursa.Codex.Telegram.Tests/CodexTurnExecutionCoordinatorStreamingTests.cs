@@ -56,8 +56,12 @@ public sealed class CodexTurnExecutionCoordinatorStreamingTests
         await coordinator.StartAsync(thread, [], new CodexTurnOptions(), CancellationToken.None);
 
         SentTelegramMessage card = Assert.Single(sender.Sent);
+        Assert.StartsWith("--- live card: working ---", card.Text, StringComparison.Ordinal);
+        Assert.EndsWith("--- /live card ---", card.Text, StringComparison.Ordinal);
         Assert.Contains("Codex is working", card.Text);
-        Assert.Contains("Activity: Turn started.", card.Text);
+        Assert.Contains("Updates 0 | Progress 1", card.Text);
+        Assert.DoesNotContain("Activity:", card.Text, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("Mode:", card.Text, StringComparison.OrdinalIgnoreCase);
 
         await script.Finished.Task.WaitAsync(TimeSpan.FromSeconds(1));
     }
@@ -190,6 +194,32 @@ public sealed class CodexTurnExecutionCoordinatorStreamingTests
         await WaitForConditionAsync(() => !coordinator.HasActiveTurnForThread("thread-1"));
 
         Assert.False(coordinator.HasActiveTurnForThread("thread-1"));
+    }
+
+    [Fact]
+    public async Task StopAsync_DetachesActiveObservableTurnAndSuppressesSyntheticTerminal()
+    {
+        using ScriptedCodexRuntime runtime = new();
+        ScriptedCodexTurnScript script = runtime.QueueTurn("thread-1");
+        script.AddDelta("still working").HoldCompletion().Complete("done");
+
+        ICodexThreadHandle thread = runtime.CreateThread("thread-1");
+        RecordingTurnOutputRelay relay = new();
+        CodexTurnExecutionCoordinator coordinator = CreateCoordinator(relay);
+
+        await coordinator.StartAsync(thread, [], new CodexTurnOptions(), CancellationToken.None);
+        await script.Started.Task.WaitAsync(TimeSpan.FromSeconds(1));
+        await WaitForConditionAsync(() => coordinator.HasActiveTurnForThread("thread-1"));
+
+        await coordinator.StopAsync(CancellationToken.None);
+        await script.Finished.Task.WaitAsync(TimeSpan.FromSeconds(1));
+
+        Assert.Equal(0, script.InterruptCount);
+        Assert.False(coordinator.HasActiveTurnForThread("thread-1"));
+        Assert.DoesNotContain(relay.Entries, entry => entry.Type == "turn.stream.ended");
+        Assert.DoesNotContain(relay.Entries, entry =>
+            entry.Metadata.TryGetValue("terminalState", out string? terminalState)
+            && string.Equals(terminalState, CodexTurnTerminalState.Incomplete.ToString(), StringComparison.Ordinal));
     }
 
     [Fact]

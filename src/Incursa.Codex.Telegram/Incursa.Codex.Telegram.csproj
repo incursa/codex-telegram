@@ -20,12 +20,12 @@
     <DebugType Condition="'$(Configuration)' == 'Release'">embedded</DebugType>
   </PropertyGroup>
 
-  <ItemGroup Condition="Exists('..\\..\\codex-dotnet\\src\\Incursa.OpenAI.Codex\\Incursa.OpenAI.Codex.csproj')">
-    <ProjectReference Include="..\\..\\codex-dotnet\\src\\Incursa.OpenAI.Codex\\Incursa.OpenAI.Codex.csproj" />
+  <ItemGroup Condition="Exists('..\\..\\..\\codex-dotnet\\src\\Incursa.OpenAI.Codex\\Incursa.OpenAI.Codex.csproj')">
+    <ProjectReference Include="..\\..\\..\\codex-dotnet\\src\\Incursa.OpenAI.Codex\\Incursa.OpenAI.Codex.csproj" />
   </ItemGroup>
 
-  <ItemGroup Condition="!Exists('..\\..\\codex-dotnet\\src\\Incursa.OpenAI.Codex\\Incursa.OpenAI.Codex.csproj')">
-    <PackageReference Include="Incursa.OpenAI.Codex" Version="2.2.0" />
+  <ItemGroup Condition="!Exists('..\\..\\..\\codex-dotnet\\src\\Incursa.OpenAI.Codex\\Incursa.OpenAI.Codex.csproj')">
+    <PackageReference Include="Incursa.OpenAI.Codex" Version="2.3.0" />
   </ItemGroup>
 
   <ItemGroup>

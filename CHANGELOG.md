@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Updated the fallback `Incursa.OpenAI.Codex` package reference to 2.2.0 so published Telegram builds consume the SDK observable turn stream and plan-mode configuration surface.
+- Updated the fallback `Incursa.OpenAI.Codex` package reference to 2.3.0 so published Telegram builds consume the SDK observable turn stream, plan-mode configuration surface, and active-turn attach API.
 
 ## 1.0.20 - 2026-05-23
 

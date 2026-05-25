@@ -19,6 +19,21 @@ public sealed class TelegramMessageContextStoreTests
         """)]
     [InlineData(
         """
+        --- live card: working ---
+        Codex is working
+        Updates 55 | Progress 1987
+        Latest:
+        I'm checking the local RFC source text now.
+        --- /live card ---
+        """)]
+    [InlineData(
+        """
+        --- codex status ---
+        Codex produced report.zip, but it is too large for Telegram file delivery.
+        --- /codex status ---
+        """)]
+    [InlineData(
+        """
         Session status card
         State: Codex is working
         Queue count: 1
@@ -38,15 +53,10 @@ public sealed class TelegramMessageContextStoreTests
             messageId: 12,
             TelegramMessageAuthor.Bot,
             """
-            Codex failed
-            Session: 019e5d81
-            Mode: LiveCard
-            Updates: 0 captured
-            Progress: 0 suppressed
-            Artifacts: 0
-            Final response: captured
-            Telegram delivery: draining (0 messages, 1 chunks)
-            Latest: Codex turn was interrupted.
+            --- live card: interrupted ---
+            Codex interrupted
+            Updates 0 | Progress 0
+            --- /live card ---
             """,
             CancellationToken.None);
 
@@ -60,15 +70,10 @@ public sealed class TelegramMessageContextStoreTests
         TelegramConversationScope conversation = new(5555, null);
         await store.RecordAsync(new TelegramMessageContextRecord(conversation, 10, TelegramMessageAuthor.User, "First context.", DateTimeOffset.Parse("2026-05-10T12:00:00Z")), CancellationToken.None);
         await store.RecordAsync(new TelegramMessageContextRecord(conversation, 11, TelegramMessageAuthor.Bot, """
+            --- live card: failed ---
             Codex failed
-            Session: 019e5d81
-            Mode: LiveCard
-            Updates: 0 captured
-            Progress: 0 suppressed
-            Artifacts: 0
-            Final response: captured
-            Telegram delivery: draining (0 messages, 1 chunks)
-            Latest: Codex turn was interrupted.
+            Updates 0 | Progress 0
+            --- /live card ---
             """, DateTimeOffset.Parse("2026-05-10T12:01:00Z")), CancellationToken.None);
         await store.RecordAsync(new TelegramMessageContextRecord(conversation, 12, TelegramMessageAuthor.User, "Do not delete that.", DateTimeOffset.Parse("2026-05-10T12:02:00Z")), CancellationToken.None);
 

@@ -140,7 +140,8 @@ internal sealed class CodexGatewaySessionManager : ICodexSessionManager
 
         foreach (CodexThreadListItemVm thread in threads.Where(thread => !forgotten.Contains(thread.Id)))
         {
-            sessions[thread.Id] = ToSummary(thread, _turnCoordinator.TryGetActiveTurnState(thread.Id), _eventLog.GetLastCloseout(thread.Id));
+            CodexThreadManifestRecord? manifest = await _manifestStore.ReadAsync(thread.Id, cancellationToken).ConfigureAwait(false);
+            sessions[thread.Id] = ToSummary(thread, _turnCoordinator.TryGetActiveTurnState(thread.Id), ResolveCloseout(thread.Id, manifest));
         }
 
         foreach (string trackedSessionId in trackedSessionIds)
@@ -156,7 +157,7 @@ internal sealed class CodexGatewaySessionManager : ICodexSessionManager
                 continue;
             }
 
-            sessions[manifest.ThreadId] = ToSummary(manifest, _turnCoordinator.TryGetActiveTurnState(manifest.ThreadId), _eventLog.GetLastCloseout(manifest.ThreadId));
+            sessions[manifest.ThreadId] = ToSummary(manifest, _turnCoordinator.TryGetActiveTurnState(manifest.ThreadId), ResolveCloseout(manifest.ThreadId, manifest));
         }
 
         return sessions.Values
@@ -177,7 +178,8 @@ internal sealed class CodexGatewaySessionManager : ICodexSessionManager
 
         CodexThreadListItemVm thread = await _gateway.CreateThreadShellAsync(submission, cancellationToken).ConfigureAwait(false);
         await _stateStore.TrackSessionAsync(thread.Id, cancellationToken).ConfigureAwait(false);
-        return ToSummary(thread, _turnCoordinator.TryGetActiveTurnState(thread.Id), _eventLog.GetLastCloseout(thread.Id));
+        CodexThreadManifestRecord? manifest = await _manifestStore.ReadAsync(thread.Id, cancellationToken).ConfigureAwait(false);
+        return ToSummary(thread, _turnCoordinator.TryGetActiveTurnState(thread.Id), ResolveCloseout(thread.Id, manifest));
     }
 
     public async Task<CodexSessionSummary?> GetSessionAsync(string sessionId, CancellationToken cancellationToken)
@@ -560,6 +562,33 @@ internal sealed class CodexGatewaySessionManager : ICodexSessionManager
         }
 
         return manifest.IsArchived ? CodexSessionStatus.Stopped : CodexSessionStatus.Exited;
+    }
+
+    private CodexTurnCloseoutSummary? ResolveCloseout(string threadId, CodexThreadManifestRecord? manifest)
+        => _eventLog.GetLastCloseout(threadId) ?? CreateInterruptedCloseout(manifest?.InterruptedTurn);
+
+    private static CodexTurnCloseoutSummary? CreateInterruptedCloseout(CodexInterruptedTurnRecord? interruptedTurn)
+    {
+        if (interruptedTurn is null)
+        {
+            return null;
+        }
+
+        DateTimeOffset completedAt = interruptedTurn.RecordedAt == default
+            ? interruptedTurn.UpdatedAt
+            : interruptedTurn.RecordedAt;
+        string message = string.IsNullOrWhiteSpace(interruptedTurn.Message)
+            ? "The app shut down while this turn was active. Send a new message to continue on the resumed thread."
+            : interruptedTurn.Message;
+
+        return new CodexTurnCloseoutSummary(
+            interruptedTurn.TurnId,
+            "interrupted",
+            completedAt,
+            AssistantTextSeen: false,
+            FinalResponseSeen: false,
+            Warning: true,
+            message);
     }
 
     private static void AddWrappedLines(List<string> lines, string prefix, string value)

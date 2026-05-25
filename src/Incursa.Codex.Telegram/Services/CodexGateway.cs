@@ -211,6 +211,7 @@ internal sealed class CodexGateway : ICodexGateway
         await _manifestStore.UpdateAsync(threadId, current =>
         {
             current.LastTurnId = execution.TurnId;
+            current.InterruptedTurn = null;
             return current;
         }, cancellationToken).ConfigureAwait(false);
 
@@ -358,6 +359,7 @@ internal sealed class CodexGateway : ICodexGateway
         await _manifestStore.UpdateAsync(threadId, current =>
         {
             current.LastTurnId = execution.TurnId;
+            current.InterruptedTurn = null;
             return current;
         }, cancellationToken).ConfigureAwait(false);
 

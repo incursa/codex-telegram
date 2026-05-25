@@ -91,7 +91,7 @@ If the SDK later adds more plan-only keys, they should extend the nested plan-mo
 
 ## Edge Cases and Constraints
 
-- The Telegram package fallback is pinned to `Incursa.OpenAI.Codex` 2.2.0, which exposes the SDK plan-mode configuration surface described here.
+- The Telegram package fallback is pinned to `Incursa.OpenAI.Codex` 2.3.0, which exposes the SDK plan-mode configuration surface described here.
 - A shallow `CodexClientOptions` clone must not drop nested plan-mode defaults.
 - The existing prompt-based `/plan` workflow must remain available even if the SDK adds more plan configuration keys later.
 - Goal support should not be re-expressed as a plan-mode sibling, because that would conflate configuration with conversation state.

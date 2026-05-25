@@ -10,7 +10,7 @@ using Microsoft.Extensions.Options;
 
 namespace Incursa.Codex.Telegram.Services;
 
-internal sealed class CodexSessionRuntimeRegistry : ICodexTurnExecutionCoordinator, IAsyncDisposable
+internal sealed class CodexSessionRuntimeRegistry : ICodexTurnExecutionCoordinator, IHostedService, IAsyncDisposable
 {
     private readonly ConcurrentDictionary<string, Lazy<CodexRuntimeSlot>> _threadSlots = new(StringComparer.Ordinal);
     private readonly CodexRuntimeSlot _defaultSlot;
@@ -22,7 +22,10 @@ internal sealed class CodexSessionRuntimeRegistry : ICodexTurnExecutionCoordinat
     private readonly IHostApplicationLifetime _applicationLifetime;
     private readonly TimeProvider _timeProvider;
     private readonly ILoggerFactory _loggerFactory;
+    private readonly ILogger<CodexSessionRuntimeRegistry> _logger;
     private readonly ICodexRuntimeClientFactory _runtimeClientFactory;
+    private readonly ICodexThreadManifestStore? _manifestStore;
+    private readonly CodexTelegramOptions _telegramOptions;
     private readonly TimeSpan _terminalEventHoldDuration;
 
     public CodexSessionRuntimeRegistry(
@@ -35,7 +38,8 @@ internal sealed class CodexSessionRuntimeRegistry : ICodexTurnExecutionCoordinat
         IHostApplicationLifetime applicationLifetime,
         TimeProvider timeProvider,
         ILoggerFactory loggerFactory,
-        ICodexRuntimeClientFactory runtimeClientFactory)
+        ICodexRuntimeClientFactory runtimeClientFactory,
+        ICodexThreadManifestStore? manifestStore = null)
     {
         _clientOptions = clientOptions;
         _planInputCoordinator = planInputCoordinator;
@@ -45,9 +49,12 @@ internal sealed class CodexSessionRuntimeRegistry : ICodexTurnExecutionCoordinat
         _applicationLifetime = applicationLifetime;
         _timeProvider = timeProvider;
         _loggerFactory = loggerFactory;
+        _logger = loggerFactory.CreateLogger<CodexSessionRuntimeRegistry>();
         _runtimeClientFactory = runtimeClientFactory;
+        _manifestStore = manifestStore;
+        _telegramOptions = telegramOptions.Value;
         int holdMilliseconds = Math.Clamp(
-            telegramOptions.Value.TerminalEventHoldMilliseconds,
+            _telegramOptions.TerminalEventHoldMilliseconds,
             CodexTurnStreamingDefaults.MinTerminalEventHoldMilliseconds,
             CodexTurnStreamingDefaults.MaxTerminalEventHoldMilliseconds);
         _terminalEventHoldDuration = TimeSpan.FromMilliseconds(holdMilliseconds);
@@ -56,6 +63,31 @@ internal sealed class CodexSessionRuntimeRegistry : ICodexTurnExecutionCoordinat
 
     public bool HasActiveTurn
         => EnumerateSlots().Any(slot => slot.TurnCoordinator.HasActiveTurn);
+
+    public Task StartAsync(CancellationToken cancellationToken)
+    {
+        _ = cancellationToken;
+        return Task.CompletedTask;
+    }
+
+    public async Task StopAsync(CancellationToken cancellationToken)
+    {
+        CodexRuntimeSlot[] slots = EnumerateSlots().ToArray();
+        CodexActiveTurnStateVm[] activeTurns = slots
+            .SelectMany(slot => slot.TurnCoordinator.GetActiveTurnStates())
+            .GroupBy(state => state.ThreadId, StringComparer.Ordinal)
+            .Select(group => group.First())
+            .ToArray();
+
+        try
+        {
+            await PersistInterruptedTurnsAsync(activeTurns, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            await Task.WhenAll(slots.Select(slot => slot.TurnCoordinator.StopAsync(cancellationToken))).ConfigureAwait(false);
+        }
+    }
 
     public async Task<CodexRuntimeSlot> GetDefaultAsync(CancellationToken cancellationToken)
     {
@@ -93,6 +125,73 @@ internal sealed class CodexSessionRuntimeRegistry : ICodexTurnExecutionCoordinat
         }
 
         return await GetDefaultAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<IReadOnlyCollection<CodexThreadExecutionVm>> ReattachPersistedTurnsAsync(
+        IEnumerable<string> threadIds,
+        CancellationToken cancellationToken)
+    {
+        if (_manifestStore is null)
+        {
+            return [];
+        }
+
+        List<CodexThreadExecutionVm> attached = [];
+        foreach (string threadId in threadIds
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            if (HasActiveTurnForThread(threadId))
+            {
+                continue;
+            }
+
+            CodexThreadManifestRecord? manifest = await _manifestStore.ReadAsync(threadId, cancellationToken).ConfigureAwait(false);
+            string? turnId = manifest?.InterruptedTurn?.TurnId ?? manifest?.LastTurnId;
+            if (manifest is null || string.IsNullOrWhiteSpace(turnId))
+            {
+                continue;
+            }
+
+            try
+            {
+                CodexRuntimeSlot slot = await GetOrCreateForThreadAsync(threadId, cancellationToken).ConfigureAwait(false);
+                CodexThreadOptions threadOptions = CodexOptionMapper.BuildThreadOptions(_telegramOptions, new CodexThreadContextSubmission(), manifest);
+                ICodexThreadHandle thread = await slot.Client.ResumeThreadAsync(threadId, threadOptions, cancellationToken).ConfigureAwait(false);
+                ICodexTurnHandle turn = await thread.AttachTurnAsync(
+                    turnId,
+                    new CodexTurnAttachOptions
+                    {
+                        ResumeOptions = threadOptions,
+                    },
+                    cancellationToken).ConfigureAwait(false);
+                CodexThreadExecutionVm execution = await slot.TurnCoordinator.AttachAsync(thread, turn, cancellationToken).ConfigureAwait(false);
+                await _manifestStore.UpdateAsync(
+                    threadId,
+                    current =>
+                    {
+                        current.LastTurnId = execution.TurnId;
+                        current.InterruptedTurn = null;
+                        return current;
+                    },
+                    cancellationToken).ConfigureAwait(false);
+                attached.Add(execution);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (CodexCapabilityNotSupportedException exception)
+            {
+                _logger.LogDebug(exception, "Codex runtime does not support reattaching turn {TurnId} on thread {ThreadId}.", turnId, threadId);
+            }
+            catch (InvalidOperationException exception)
+            {
+                _logger.LogDebug(exception, "Codex turn {TurnId} on thread {ThreadId} could not be reattached.", turnId, threadId);
+            }
+        }
+
+        return attached;
     }
 
     public void BindThread(string threadId, CodexRuntimeSlot slot)
@@ -159,6 +258,58 @@ internal sealed class CodexSessionRuntimeRegistry : ICodexTurnExecutionCoordinat
         {
             await slot.DisposeAsync().ConfigureAwait(false);
         }
+    }
+
+    private async Task PersistInterruptedTurnsAsync(
+        IReadOnlyCollection<CodexActiveTurnStateVm> activeTurns,
+        CancellationToken cancellationToken)
+    {
+        if (_manifestStore is null || activeTurns.Count == 0)
+        {
+            return;
+        }
+
+        DateTimeOffset recordedAt = _timeProvider.GetUtcNow();
+        foreach (CodexActiveTurnStateVm activeTurn in activeTurns)
+        {
+            try
+            {
+                await _manifestStore.UpdateAsync(
+                    activeTurn.ThreadId,
+                    manifest =>
+                    {
+                        manifest.LastTurnId = activeTurn.TurnId;
+                        manifest.InterruptedTurn = CreateInterruptedTurnRecord(activeTurn, recordedAt);
+                        return manifest;
+                    },
+                    cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception exception)
+            {
+                _logger.LogWarning(exception, "Failed to persist interrupted turn marker for turn {TurnId} on thread {ThreadId}.", activeTurn.TurnId, activeTurn.ThreadId);
+            }
+        }
+    }
+
+    private static CodexInterruptedTurnRecord CreateInterruptedTurnRecord(CodexActiveTurnStateVm activeTurn, DateTimeOffset recordedAt)
+    {
+        string? summary = activeTurn.LastEvent?.Body ?? activeTurn.LastEvent?.Subtitle;
+        return new CodexInterruptedTurnRecord
+        {
+            TurnId = activeTurn.TurnId,
+            StartedAt = activeTurn.StartedAt,
+            UpdatedAt = activeTurn.UpdatedAt,
+            RecordedAt = recordedAt,
+            Reason = "application_shutdown",
+            Message = "The app shut down while this turn was active. On restart the app will try to reattach if Codex is still running; otherwise send a new message to continue on the resumed thread.",
+            LastEventType = activeTurn.LastEvent?.Type,
+            LastEventTitle = activeTurn.LastEvent?.Title,
+            LastEventSummary = string.IsNullOrWhiteSpace(summary) ? null : CodexTextFormatting.TruncatePreview(summary),
+        };
     }
 
     private CodexRuntimeSlot CreateSlot(bool broadcastRuntimeState)

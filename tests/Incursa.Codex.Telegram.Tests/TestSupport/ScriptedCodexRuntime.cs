@@ -54,6 +54,19 @@ internal sealed class ScriptedCodexThreadHandle : ICodexThreadHandle
         return Task.FromResult<ICodexTurnHandle>(new ScriptedCodexTurnHandle(script));
     }
 
+    public Task<ICodexTurnHandle> AttachTurnAsync(
+        string turnId,
+        CodexTurnAttachOptions? options,
+        CancellationToken cancellationToken)
+    {
+        _ = options;
+        _ = cancellationToken;
+
+        ScriptedCodexTurnScript script = _turnScripts.Dequeue(Id ?? string.Empty, turnId);
+        script.Started.TrySetResult(true);
+        return Task.FromResult<ICodexTurnHandle>(new ScriptedCodexTurnHandle(script));
+    }
+
     public Task SetNameAsync(string name, CancellationToken cancellationToken)
     {
         _ = name;
@@ -756,6 +769,23 @@ internal sealed class ScriptedCodexTurnScriptQueue
         }
 
         throw new InvalidOperationException($"No scripted Codex turn was queued for thread '{threadId}'.");
+    }
+
+    public ScriptedCodexTurnScript Dequeue(string threadId, string turnId)
+    {
+        lock (_gate)
+        {
+            if (_turnScriptsByThread.TryGetValue(threadId, out Queue<ScriptedCodexTurnScript>? queue) && queue.Count > 0)
+            {
+                ScriptedCodexTurnScript script = queue.Peek();
+                if (string.Equals(script.TurnId, turnId, StringComparison.Ordinal))
+                {
+                    return queue.Dequeue();
+                }
+            }
+        }
+
+        throw new InvalidOperationException($"No scripted Codex turn '{turnId}' was queued for thread '{threadId}'.");
     }
 
     private string NextTurnId()

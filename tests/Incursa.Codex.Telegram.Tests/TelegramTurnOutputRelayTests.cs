@@ -81,9 +81,9 @@ public sealed class TelegramTurnOutputRelayTests
         await relay.PublishTurnAcceptedAsync("thread-1", "turn-1", CancellationToken.None);
 
         SentTelegramMessage card = Assert.Single(sender.Sent);
+        AssertLiveCardShell(card.Text);
         Assert.Contains("Codex is working", card.Text);
-        Assert.Contains("Activity: Turn started.", card.Text);
-        Assert.Contains("Mode: LiveCard", card.Text);
+        Assert.Contains("Updates 0 | Progress 1", card.Text);
         Assert.Empty(queue.Messages);
     }
 
@@ -135,9 +135,10 @@ public sealed class TelegramTurnOutputRelayTests
 
         Assert.Single(sender.Sent);
         Assert.Single(sender.Edited);
-        Assert.Contains("Final response: captured", sender.Edited.Single().Text);
+        AssertLiveCardShell(sender.Edited.Single().Text, "final captured");
+        Assert.Contains("Final response captured", sender.Edited.Single().Text);
         Assert.DoesNotContain("Turn:", sender.Edited.Single().Text, StringComparison.OrdinalIgnoreCase);
-        Assert.Equal("Finished.", Assert.Single(queue.Messages).Text);
+        AssertWrappedSpecialMessage(Assert.Single(queue.Messages).Text, "final", "Finished.");
     }
 
     [Fact]
@@ -193,20 +194,18 @@ public sealed class TelegramTurnOutputRelayTests
 
         Assert.Empty(queue.Messages);
         SentTelegramMessage card = Assert.Single(sender.Sent);
+        AssertLiveCardShell(card.Text);
         Assert.Contains("Codex is working", card.Text);
-        Assert.Contains("Mode: LiveCard", card.Text);
         Assert.DoesNotContain("Turn:", card.Text, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("Updates: 1 captured", card.Text);
-        Assert.Contains("Progress: 0 suppressed", card.Text);
-        Assert.Contains("Final response: not yet", card.Text);
-        Assert.EndsWith("Latest: Tool output dotnet test Tests passed.", card.Text);
+        Assert.Contains("Updates 1 | Progress 0", card.Text);
+        Assert.Contains("Latest:" + Environment.NewLine + "Tool output dotnet test Tests passed.", card.Text);
         Assert.Contains(card.Buttons!.SelectMany(row => row).Select(button => button.Text), text => text == "Show Updates");
         Assert.Contains(card.Buttons!.SelectMany(row => row).Select(button => button.Text), text => text == "Show Full Turn");
         Assert.All(card.Buttons!.SelectMany(row => row), button => Assert.True(button.CallbackData.Length <= 64, button.CallbackData));
     }
 
     [Fact]
-    public async Task PublishTurnEventAsync_LiveCardShowsFriendlyActivityForInternalReasoningUpdates()
+    public async Task PublishTurnEventAsync_LiveCardKeepsLatestVisibleOutputForInternalReasoningUpdates()
     {
         FakeOutboundTelegramQueue queue = new();
         TelegramThreadFollowRegistry followRegistry = FollowThread();
@@ -233,16 +232,16 @@ public sealed class TelegramTurnOutputRelayTests
         Assert.Single(sender.Edited);
 
         string cardText = sender.Edited.Single().Text;
-        Assert.Contains("Activity: Thinking", cardText);
+        AssertLiveCardShell(cardText);
+        Assert.Contains("Updates 1 | Progress 1", cardText);
         Assert.DoesNotContain("Turn:", cardText, StringComparison.OrdinalIgnoreCase);
-        Assert.EndsWith("Latest: Tool output dotnet test Tests passed.", cardText);
-        Assert.True(cardText.IndexOf("Activity: Thinking", StringComparison.Ordinal) < cardText.LastIndexOf("Latest: Tool output dotnet test Tests passed.", StringComparison.Ordinal));
+        Assert.Contains("Latest:" + Environment.NewLine + "Tool output dotnet test Tests passed.", cardText);
         Assert.DoesNotContain("item.reasoning", cardText, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("checking", cardText, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
-    public async Task PublishTurnEventAsync_LiveCardShowsWaitingActivityForRetryNotice()
+    public async Task PublishTurnEventAsync_LiveCardDoesNotReplaceLatestVisibleOutputForRetryNotice()
     {
         FakeOutboundTelegramQueue queue = new();
         TelegramThreadFollowRegistry followRegistry = FollowThread();
@@ -274,8 +273,9 @@ public sealed class TelegramTurnOutputRelayTests
         Assert.Single(sender.Edited);
 
         string cardText = sender.Edited.Single().Text;
-        Assert.Contains("Activity: No visible output yet. Retrying in 5s (1/3).", cardText);
-        Assert.EndsWith("Latest: Tool output Initial update.", cardText);
+        AssertLiveCardShell(cardText);
+        Assert.Contains("Updates 1 | Progress 1", cardText);
+        Assert.Contains("Latest:" + Environment.NewLine + "Tool output Initial update.", cardText);
         Assert.DoesNotContain("Codex completed without visible output", cardText, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("The original message is still pending.", cardText, StringComparison.OrdinalIgnoreCase);
     }
@@ -308,8 +308,9 @@ public sealed class TelegramTurnOutputRelayTests
         Assert.Single(sender.Edited);
 
         string cardText = sender.Edited.Single().Text;
-        Assert.Contains("Updates: 1 captured", cardText);
-        Assert.Contains("Latest: Tool output Second update.", cardText);
+        AssertLiveCardShell(cardText);
+        Assert.Contains("Updates 1 | Progress 0", cardText);
+        Assert.Contains("Latest:" + Environment.NewLine + "Tool output Second update.", cardText);
         Assert.DoesNotContain("Turn:", cardText, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("First update.", cardText, StringComparison.OrdinalIgnoreCase);
     }
@@ -336,9 +337,10 @@ public sealed class TelegramTurnOutputRelayTests
         OutboundTelegramMessage message = Assert.Single(queue.Messages);
         Assert.Equal(CodexOutboundMessageKind.Completion, message.Kind);
         Assert.Equal(OutboundPriority.High, message.Priority);
-        Assert.Equal("Here is the answer.", message.Text);
+        AssertWrappedSpecialMessage(message.Text, "final", "Here is the answer.");
         Assert.Single(sender.Sent);
-        Assert.Contains("Final response: captured", sender.Sent.Single().Text);
+        AssertLiveCardShell(sender.Sent.Single().Text, "final captured");
+        Assert.Contains("Final response captured", sender.Sent.Single().Text);
     }
 
     [Fact]
@@ -365,11 +367,11 @@ public sealed class TelegramTurnOutputRelayTests
 
         OutboundTelegramMessage message = Assert.Single(queue.Messages);
         Assert.Equal(CodexOutboundMessageKind.Completion, message.Kind);
-        Assert.Equal("Final answer.", message.Text);
+        AssertWrappedSpecialMessage(message.Text, "final", "Final answer.");
         Assert.Single(sender.Sent);
         Assert.Single(sender.Edited);
-        Assert.Contains("Mode: FinalOnly", sender.Edited.Single().Text);
-        Assert.Contains("Final response: captured", sender.Edited.Single().Text);
+        AssertLiveCardShell(sender.Edited.Single().Text, "final captured");
+        Assert.Contains("Final response captured", sender.Edited.Single().Text);
     }
 
     [Fact]
@@ -469,11 +471,11 @@ public sealed class TelegramTurnOutputRelayTests
                 severity: "warning"),
             CancellationToken.None);
 
-        Assert.Equal("Final answer before interruption.", Assert.Single(queue.Messages).Text);
+        AssertWrappedSpecialMessage(Assert.Single(queue.Messages).Text, "final", "Final answer before interruption.");
         Assert.Single(sender.Sent);
         EditedTelegramMessage edit = Assert.Single(sender.Edited);
+        AssertLiveCardShell(edit.Text, "interrupted sending");
         Assert.Contains("Codex interrupted; sending captured output", edit.Text);
-        Assert.Contains("Final response: captured", edit.Text);
         Assert.DoesNotContain("Codex failed", edit.Text);
         Assert.DoesNotContain("Latest: Codex turn was interrupted.", edit.Text, StringComparison.OrdinalIgnoreCase);
     }
@@ -504,7 +506,9 @@ public sealed class TelegramTurnOutputRelayTests
         Assert.True(reposted);
         Assert.Equal(2, sender.Sent.Count);
         Assert.Empty(sender.Edited);
-        Assert.Contains("Activity: Queued operator input.", sender.Sent[1].Text);
+        AssertLiveCardShell(sender.Sent[1].Text);
+        Assert.Contains("Updates 0 | Progress 2", sender.Sent[1].Text);
+        Assert.DoesNotContain("Queued operator input.", sender.Sent[1].Text);
     }
 
     [Fact]
@@ -530,9 +534,10 @@ public sealed class TelegramTurnOutputRelayTests
         Assert.True(reposted);
         Assert.Empty(queue.Messages);
         SentTelegramMessage card = Assert.Single(sender.Sent);
+        AssertLiveCardShell(card.Text);
         Assert.Contains("Codex is working", card.Text);
-        Assert.Contains("Activity: Queued operator input.", card.Text);
-        Assert.Contains("Mode: LiveCard", card.Text);
+        Assert.Contains("Updates 0 | Progress 1", card.Text);
+        Assert.DoesNotContain("Queued operator input.", card.Text);
         Assert.Empty(sender.Edited);
     }
 
@@ -563,10 +568,11 @@ public sealed class TelegramTurnOutputRelayTests
         EditedTelegramMessage edit = Assert.Single(sender.Edited);
         Assert.Equal(1, edit.MessageId);
         Assert.Contains("Initial update.", sender.Sent.Single().Text);
-        Assert.Contains("Final response: captured", edit.Text);
+        AssertLiveCardShell(edit.Text, "final captured");
+        Assert.Contains("Final response captured", edit.Text);
         OutboundTelegramMessage message = Assert.Single(queue.Messages);
         Assert.Equal(CodexOutboundMessageKind.Completion, message.Kind);
-        Assert.Equal("Final answer after replacement.", message.Text);
+        AssertWrappedSpecialMessage(message.Text, "final", "Final answer after replacement.");
     }
 
     [Fact]
@@ -1419,6 +1425,23 @@ public sealed class TelegramTurnOutputRelayTests
         followRegistry.FollowThread(new TelegramConversationScope(1234, 55), "thread-1");
         return followRegistry;
     }
+
+    private static void AssertLiveCardShell(string text, string status = "working")
+    {
+        Assert.StartsWith($"--- live card: {status} ---", text, StringComparison.Ordinal);
+        Assert.EndsWith("--- /live card ---", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("Session:", text, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("Mode:", text, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("Activity:", text, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("Artifacts:", text, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("Final response:", text, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("Telegram delivery:", text, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static void AssertWrappedSpecialMessage(string text, string boundary, string body)
+        => Assert.Equal(
+            $"--- {boundary} ---{Environment.NewLine}{body}{Environment.NewLine}--- /{boundary} ---",
+            text);
 
     private static CodexTimelineEntryVm CreateEntry(
         string type = "item.message",

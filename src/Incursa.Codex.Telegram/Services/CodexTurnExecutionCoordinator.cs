@@ -48,6 +48,8 @@ internal sealed class CodexTurnExecutionCoordinator
 
     private readonly ConcurrentDictionary<string, ActiveTurnState> _activeTurns = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, byte> _startingThreads = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, Task> _turnConsumptionTasks = new(StringComparer.Ordinal);
+    private readonly CancellationTokenSource _shutdownCancellation = new();
     private readonly ICodexRealtimeBroadcaster _broadcaster;
     private readonly ITelegramTurnOutputRelay _telegramTurnOutputRelay;
     private readonly ICodexSessionEventLog _eventLog;
@@ -103,6 +105,35 @@ internal sealed class CodexTurnExecutionCoordinator
         }
 
         return state.ToViewModel();
+    }
+
+    public IReadOnlyCollection<CodexActiveTurnStateVm> GetActiveTurnStates()
+        => _activeTurns.Values
+            .Select(state => state.ToViewModel())
+            .ToArray();
+
+    public async Task StopAsync(CancellationToken cancellationToken)
+    {
+        await _shutdownCancellation.CancelAsync().ConfigureAwait(false);
+
+        Task[] consumptionTasks = _turnConsumptionTasks.Values.ToArray();
+        if (consumptionTasks.Length == 0)
+        {
+            return;
+        }
+
+        try
+        {
+            await Task.WhenAll(consumptionTasks).WaitAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            _logger.LogDebug("Timed out waiting for Codex turn stream consumers to stop.");
+        }
+        catch (Exception exception)
+        {
+            _logger.LogWarning(exception, "One or more Codex turn stream consumers failed while stopping.");
+        }
     }
 
     public void RegisterActiveTurn(string threadId, string turnId, ICodexTurnHandle? turn = null, CodexTimelineEntryVm? lastEvent = null)
@@ -178,7 +209,7 @@ internal sealed class CodexTurnExecutionCoordinator
             }
 
             await PublishTurnAcceptedAsync(state, cancellationToken).ConfigureAwait(false);
-            _ = Task.Run(() => ConsumeTurnAsync(state), _applicationLifetime.ApplicationStopping);
+            StartConsumptionTask(state);
             return new CodexThreadExecutionVm(threadId, turn.Id, "running", null);
         }
         finally
@@ -188,6 +219,36 @@ internal sealed class CodexTurnExecutionCoordinator
                 _startingThreads.TryRemove(startingThreadId, out _);
             }
         }
+    }
+
+    public async Task<CodexThreadExecutionVm> AttachAsync(
+        ICodexThreadHandle thread,
+        ICodexTurnHandle turn,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(thread);
+        ArgumentNullException.ThrowIfNull(turn);
+
+        string threadId = string.IsNullOrWhiteSpace(turn.ThreadId) ? thread.Id ?? string.Empty : turn.ThreadId;
+        if (string.IsNullOrWhiteSpace(threadId))
+        {
+            throw new InvalidOperationException("Cannot attach a Codex turn without a thread id.");
+        }
+
+        ActiveTurnState state = new(
+            threadId,
+            turn.Id,
+            turn,
+            lastEvent: null,
+            thread);
+        if (!_activeTurns.TryAdd(threadId, state))
+        {
+            throw new InvalidOperationException($"A Codex turn is already active for thread '{threadId}'.");
+        }
+
+        await PublishTurnAcceptedAsync(state, cancellationToken).ConfigureAwait(false);
+        StartConsumptionTask(state);
+        return new CodexThreadExecutionVm(threadId, turn.Id, "running", null);
     }
 
     private async Task PublishTurnAcceptedAsync(ActiveTurnState state, CancellationToken cancellationToken)
@@ -204,6 +265,29 @@ internal sealed class CodexTurnExecutionCoordinator
         {
             _logger.LogWarning(exception, "Failed to publish initial Telegram live card for turn {TurnId} on thread {ThreadId}.", state.TurnId, state.ThreadId);
         }
+    }
+
+    private void StartConsumptionTask(ActiveTurnState state)
+    {
+        Task task = Task.Run(() => ConsumeTurnAsync(state), CancellationToken.None);
+        _turnConsumptionTasks[state.ThreadId] = task;
+        _ = task.ContinueWith(
+            completed =>
+            {
+                if (_turnConsumptionTasks.TryGetValue(state.ThreadId, out Task? current)
+                    && ReferenceEquals(current, completed))
+                {
+                    _turnConsumptionTasks.TryRemove(state.ThreadId, out _);
+                }
+
+                if (completed.IsFaulted && completed.Exception is not null)
+                {
+                    _logger.LogWarning(completed.Exception, "Codex turn stream consumer task faulted for turn {TurnId} on thread {ThreadId}.", state.TurnId, state.ThreadId);
+                }
+            },
+            CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
     }
 
     public async Task SteerAsync(string threadId, string turnId, IReadOnlyList<CodexInputItem> input, CancellationToken cancellationToken)
@@ -244,7 +328,9 @@ internal sealed class CodexTurnExecutionCoordinator
         bool retryScheduled = false;
         Task terminalHoldTask = Task.CompletedTask;
         CancellationTokenSource? terminalHoldCancellation = null;
-        using CancellationTokenSource streamCancellation = CancellationTokenSource.CreateLinkedTokenSource(_applicationLifetime.ApplicationStopping);
+        using CancellationTokenSource streamCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+            _applicationLifetime.ApplicationStopping,
+            _shutdownCancellation.Token);
         try
         {
             await using ObservableTimelineSubscription subscription = ObservableTimelineSubscription.Subscribe(
@@ -416,7 +502,9 @@ internal sealed class CodexTurnExecutionCoordinator
             }
 
         }
-        catch (OperationCanceledException) when (!_applicationLifetime.ApplicationStopping.IsCancellationRequested && !streamCancellation.IsCancellationRequested)
+        catch (OperationCanceledException) when (!_applicationLifetime.ApplicationStopping.IsCancellationRequested
+            && !_shutdownCancellation.IsCancellationRequested
+            && !streamCancellation.IsCancellationRequested)
         {
             _logger.LogDebug("Turn {TurnId} on thread {ThreadId} was cancelled.", state.TurnId, state.ThreadId);
         }
@@ -435,7 +523,11 @@ internal sealed class CodexTurnExecutionCoordinator
             terminalHoldCancellation?.Cancel();
             terminalHoldCancellation?.Dispose();
 
-            if (pendingTerminalEntry is null && !terminalFailurePublished && !retryScheduled && !_applicationLifetime.ApplicationStopping.IsCancellationRequested)
+            if (pendingTerminalEntry is null
+                && !terminalFailurePublished
+                && !retryScheduled
+                && !_applicationLifetime.ApplicationStopping.IsCancellationRequested
+                && !_shutdownCancellation.IsCancellationRequested)
             {
                 pendingTerminalEntry = new CodexTimelineEntryVm(
                     "turn.stream.ended",
@@ -536,7 +628,7 @@ internal sealed class CodexTurnExecutionCoordinator
                     .StartTurnAsync(state.Input, state.TurnOptions, cancellationToken)
                     .ConfigureAwait(false);
                 state.ReplaceTurn(retryTurn);
-                _ = Task.Run(() => ConsumeTurnAsync(state), _applicationLifetime.ApplicationStopping);
+                StartConsumptionTask(state);
                 return CapacityRetryResult.Scheduled;
             }
             catch (Exception exception) when (IsCapacityException(exception))
@@ -582,7 +674,7 @@ internal sealed class CodexTurnExecutionCoordinator
                     .StartTurnAsync(state.Input, state.TurnOptions, cancellationToken)
                     .ConfigureAwait(false);
                 state.ReplaceTurn(retryTurn);
-                _ = Task.Run(() => ConsumeTurnAsync(state), _applicationLifetime.ApplicationStopping);
+                StartConsumptionTask(state);
                 return EmptyOutputRetryResult.Scheduled;
             }
             catch (Exception exception) when (IsCapacityException(exception))

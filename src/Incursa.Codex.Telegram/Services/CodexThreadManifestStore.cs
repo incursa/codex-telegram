@@ -349,11 +349,34 @@ internal sealed record CodexThreadManifestRecord
 
     public string? LastTurnId { get; set; }
 
+    public CodexInterruptedTurnRecord? InterruptedTurn { get; set; }
+
     public List<CodexThreadFileRecord> Files { get; set; } = [];
 
     public DateTimeOffset CreatedAt { get; set; }
 
     public DateTimeOffset UpdatedAt { get; set; }
+}
+
+internal sealed record CodexInterruptedTurnRecord
+{
+    public string TurnId { get; set; } = string.Empty;
+
+    public DateTimeOffset StartedAt { get; set; }
+
+    public DateTimeOffset UpdatedAt { get; set; }
+
+    public DateTimeOffset RecordedAt { get; set; }
+
+    public string Reason { get; set; } = string.Empty;
+
+    public string Message { get; set; } = string.Empty;
+
+    public string? LastEventType { get; set; }
+
+    public string? LastEventTitle { get; set; }
+
+    public string? LastEventSummary { get; set; }
 }
 
 internal sealed record CodexThreadFileRecord
