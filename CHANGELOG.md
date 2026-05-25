@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Updated the fallback `Incursa.OpenAI.Codex` package reference to 2.2.0 so published Telegram builds consume the SDK observable turn stream and plan-mode configuration surface.
+
 ## 1.0.20 - 2026-05-23
 
 - Added session-pinned live cards that keep one editable card per conversation, hide internal turn IDs, and reuse the same card across internal turn restarts.

@@ -43,7 +43,7 @@
         ]
       },
       "notes": [
-        "The current repo pin is still Incursa.OpenAI.Codex 2.1.0, so this requirement is the porting contract for the next SDK update rather than a statement that the local checkout already exposes the property."
+        "The current repo fallback pin is Incursa.OpenAI.Codex 2.2.0, so the package surface now exposes the SDK plan-mode configuration object described by this requirement."
       ]
     },
     {
