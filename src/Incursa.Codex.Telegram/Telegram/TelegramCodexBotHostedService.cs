@@ -264,7 +264,7 @@ internal sealed class TelegramCodexBotHostedService : BackgroundService
                 return;
             }
 
-            TelegramReplyContext? replyContext = await ResolveReplyContextAsync(message, cancellationToken).ConfigureAwait(false);
+            (TelegramReplyContext? replyContext, bool replyContextWasOperationalBotCard) = await ResolveReplyContextAsync(message, cancellationToken).ConfigureAwait(false);
             string? traceId = _traceStore.IsFileTraceEnabled ? _traceStore.CreateTraceId() : null;
             await RecordInboundMessageTraceAsync(
                 traceId,
@@ -282,6 +282,7 @@ internal sealed class TelegramCodexBotHostedService : BackgroundService
                 message.MessageThreadId,
                 SourceMessageId: message.MessageId,
                 ReplyContext: replyContext,
+                ReplyContextWasOperationalBotCard: replyContextWasOperationalBotCard,
                 TraceId: traceId);
 
             if (attachments is { Count: > 0 })
@@ -395,6 +396,7 @@ internal sealed class TelegramCodexBotHostedService : BackgroundService
             }
 
             string? traceId = _traceStore.IsFileTraceEnabled ? _traceStore.CreateTraceId() : null;
+            (TelegramReplyContext? replyContext, bool replyContextWasOperationalBotCard) = await ResolveReplyContextAsync(firstMessage, CancellationToken.None).ConfigureAwait(false);
             await RecordMediaGroupTraceAsync(traceId, key, items, text, attachments).ConfigureAwait(false);
             TelegramInboundMessage inbound = new(
                 key.UserId,
@@ -403,7 +405,8 @@ internal sealed class TelegramCodexBotHostedService : BackgroundService
                 text,
                 key.MessageThreadId,
                 SourceMessageId: firstMessage.MessageId,
-                ReplyContext: await ResolveReplyContextAsync(firstMessage, CancellationToken.None).ConfigureAwait(false),
+                ReplyContext: replyContext,
+                ReplyContextWasOperationalBotCard: replyContextWasOperationalBotCard,
                 TraceId: traceId,
                 SourceMessageIds: items.Select(item => item.Message.MessageId).Where(id => id > 0).Distinct().ToArray());
 
@@ -654,6 +657,7 @@ internal sealed class TelegramCodexBotHostedService : BackgroundService
 
             string? traceId = _traceStore.IsFileTraceEnabled ? _traceStore.CreateTraceId() : null;
             await RecordInboundAudioTraceAsync(traceId, message, file, tempAudioPath, cancellationToken).ConfigureAwait(false);
+            (TelegramReplyContext? replyContext, bool replyContextWasOperationalBotCard) = await ResolveReplyContextAsync(message, cancellationToken).ConfigureAwait(false);
             TelegramInboundMessage inbound = new(
                 GetSenderId(message),
                 message.Chat.Id,
@@ -662,7 +666,8 @@ internal sealed class TelegramCodexBotHostedService : BackgroundService
                 message.MessageThreadId,
                 tempAudioPath,
                 SourceMessageId: message.MessageId,
-                ReplyContext: await ResolveReplyContextAsync(message, cancellationToken).ConfigureAwait(false),
+                ReplyContext: replyContext,
+                ReplyContextWasOperationalBotCard: replyContextWasOperationalBotCard,
                 TraceId: traceId);
 
             await _handler.HandleMessageAsync(inbound, sender, cancellationToken).ConfigureAwait(false);
@@ -702,20 +707,25 @@ internal sealed class TelegramCodexBotHostedService : BackgroundService
             cancellationToken).ConfigureAwait(false);
     }
 
-    private async Task<TelegramReplyContext?> ResolveReplyContextAsync(Message message, CancellationToken cancellationToken)
+    private async Task<(TelegramReplyContext? ReplyContext, bool ReplyContextWasOperationalBotCard)> ResolveReplyContextAsync(
+        Message message,
+        CancellationToken cancellationToken)
     {
         if (message.ReplyToMessage is null)
         {
-            return null;
+            return (null, false);
         }
 
         Message reply = message.ReplyToMessage;
-        return await _messageContextStore.ResolveReplyContextAsync(
+        bool replyContextWasOperationalBotCard = reply.From?.IsBot is true
+            && TelegramReplyContextTextClassifier.ShouldSuppressBotReplyContext(ExtractMessageSummary(reply));
+        TelegramReplyContext? replyContext = await _messageContextStore.ResolveReplyContextAsync(
             new TelegramConversationScope(message.Chat.Id, message.MessageThreadId),
             reply.MessageId,
             reply.From?.IsBot is true ? TelegramMessageAuthor.Bot : TelegramMessageAuthor.User,
             ExtractMessageSummary(reply),
             cancellationToken).ConfigureAwait(false);
+        return (replyContext, replyContextWasOperationalBotCard);
     }
 
     private static string? ExtractMessageSummary(Message message)

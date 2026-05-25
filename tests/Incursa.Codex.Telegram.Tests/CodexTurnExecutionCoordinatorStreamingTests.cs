@@ -86,6 +86,89 @@ public sealed class CodexTurnExecutionCoordinatorStreamingTests
     }
 
     [Fact]
+    public async Task StartAsync_ConsumesObservableNormalizedStream()
+    {
+        using ScriptedCodexRuntime runtime = new();
+        ScriptedCodexTurnScript script = runtime.QueueTurn("thread-1");
+        script.AddDelta("observable output.").Complete("observable output.");
+
+        ICodexThreadHandle thread = runtime.CreateThread("thread-1");
+        FakeOutboundTelegramQueue queue = new();
+        TelegramThreadFollowRegistry followRegistry = FollowThread();
+        TelegramTurnOutputRelay relay = CreateRelay(queue, followRegistry);
+        CodexTurnExecutionCoordinator coordinator = CreateCoordinator(relay);
+
+        await coordinator.StartAsync(thread, [], new CodexTurnOptions(), CancellationToken.None);
+        await script.Finished.Task.WaitAsync(TimeSpan.FromSeconds(1));
+        await WaitForConditionAsync(
+            () => queue.Messages.Any(message => message.Text.Contains("observable", StringComparison.OrdinalIgnoreCase)),
+            () => $"Messages: {string.Join(" | ", queue.Messages.Select(message => message.Text))}");
+
+        Assert.Equal(1, script.NormalizedObservableSubscriptionCount);
+        Assert.Equal(0, script.NormalizedStreamEnumerationCount);
+        Assert.Equal(0, script.RawObservableSubscriptionCount);
+        Assert.Equal(0, script.RawStreamEnumerationCount);
+    }
+
+    [Fact]
+    public async Task StartAsync_ObservablePipelinePublishesRepresentativeSdkMessageKinds()
+    {
+        using ScriptedCodexRuntime runtime = new();
+        ScriptedCodexTurnScript script = runtime.QueueTurn("thread-1");
+        script
+            .AddDelta("streamed ")
+            .AddAssistantMessage("assistant message")
+            .AddPlanUpdate(
+                "Plan changed",
+                [
+                    new CodexTurnPlanStep { Step = "Inspect", Status = CodexTurnPlanStepStatus.Completed },
+                    new CodexTurnPlanStep { Step = "Patch", Status = CodexTurnPlanStepStatus.InProgress },
+                ])
+            .AddPlanDelta("Patch")
+            .AddCommandProgress("dotnet test", CodexCommandExecutionStatus.InProgress)
+            .AddContextCompaction()
+            .AddThreadCompacted()
+            .AddApprovalRequest()
+            .AddImageArtifact("C:\\temp\\image.png")
+            .AddUnknownProgress("custom.telemetry")
+            .AddThreadError("recoverable warning", willRetry: false)
+            .Complete("streamed final");
+
+        ICodexThreadHandle thread = runtime.CreateThread("thread-1");
+        RecordingTurnOutputRelay relay = new();
+        CodexSessionEventLog eventLog = new();
+        CodexTurnExecutionCoordinator coordinator = CreateCoordinator(relay, eventLog: eventLog);
+
+        await coordinator.StartAsync(thread, [], new CodexTurnOptions(), CancellationToken.None);
+        await script.Finished.Task.WaitAsync(TimeSpan.FromSeconds(1));
+        await WaitForConditionAsync(() => relay.Entries.Any(entry =>
+            entry.Metadata.TryGetValue("terminal", out string? terminal)
+            && bool.TryParse(terminal, out bool terminalValue)
+            && terminalValue));
+
+        HashSet<string> normalizedKinds = relay.Entries
+            .Select(entry => entry.Metadata.TryGetValue("normalizedKind", out string? value) ? value : null)
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Select(value => value!)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        Assert.Contains(nameof(CodexTurnEventKind.Activity), normalizedKinds);
+        Assert.Contains(nameof(CodexTurnEventKind.Progress), normalizedKinds);
+        Assert.Contains(nameof(CodexTurnEventKind.AssistantDelta), normalizedKinds);
+        Assert.Contains(nameof(CodexTurnEventKind.AssistantMessage), normalizedKinds);
+        Assert.Contains(nameof(CodexTurnEventKind.FinalResponse), normalizedKinds);
+        Assert.Contains(nameof(CodexTurnEventKind.Artifact), normalizedKinds);
+        Assert.Contains(nameof(CodexTurnEventKind.ApprovalNeeded), normalizedKinds);
+        Assert.Contains(nameof(CodexTurnEventKind.Error), normalizedKinds);
+        Assert.Contains(nameof(CodexTurnEventKind.Terminal), normalizedKinds);
+        Assert.Contains(relay.Entries, entry => entry.Type == "custom.telemetry");
+        Assert.Contains(relay.Entries, entry => entry.Type == "turn.finalResponse" && entry.Body == "streamed final");
+        Assert.Contains(relay.Entries, entry => entry.Type == "turn.completed");
+        Assert.Equal(1, script.NormalizedObservableSubscriptionCount);
+        Assert.Equal(0, script.NormalizedStreamEnumerationCount);
+    }
+
+    [Fact]
     public async Task StartAsync_LeavesTurnActiveUntilDelayedCompletionGateIsReleased()
     {
         using ScriptedCodexRuntime runtime = new();
@@ -526,7 +609,7 @@ public sealed class CodexTurnExecutionCoordinatorStreamingTests
     }
 
     private static CodexTurnExecutionCoordinator CreateCoordinator(
-        TelegramTurnOutputRelay relay,
+        ITelegramTurnOutputRelay relay,
         TimeProvider? timeProvider = null,
         TimeSpan? terminalHoldDuration = null,
         IReadOnlyList<TimeSpan>? capacityRetryDelays = null,
@@ -623,6 +706,41 @@ public sealed class CodexTurnExecutionCoordinatorStreamingTests
 
         public Task<TelegramOutboundQueueStatus> GetStatusAsync(CancellationToken cancellationToken)
             => Task.FromResult(new TelegramOutboundQueueStatus(0, 0, 0, 0, null, null, null, []));
+    }
+
+    private sealed class RecordingTurnOutputRelay : ITelegramTurnOutputRelay
+    {
+        private readonly object _gate = new();
+        private readonly List<CodexTimelineEntryVm> _entries = [];
+
+        public IReadOnlyList<CodexTimelineEntryVm> Entries
+        {
+            get
+            {
+                lock (_gate)
+                {
+                    return _entries.ToArray();
+                }
+            }
+        }
+
+        public List<(string ThreadId, string TurnId)> AcceptedTurns { get; } = [];
+
+        public Task PublishTurnAcceptedAsync(string threadId, string turnId, CancellationToken cancellationToken)
+        {
+            AcceptedTurns.Add((threadId, turnId));
+            return Task.CompletedTask;
+        }
+
+        public Task PublishTurnEventAsync(CodexTimelineEntryVm entry, CancellationToken cancellationToken)
+        {
+            lock (_gate)
+            {
+                _entries.Add(entry);
+            }
+
+            return Task.CompletedTask;
+        }
     }
 
     private sealed class NoopTelegramBotMessageSender : ITelegramBotMessageSender

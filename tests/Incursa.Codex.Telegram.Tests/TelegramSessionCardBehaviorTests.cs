@@ -78,6 +78,29 @@ public sealed class TelegramSessionCardBehaviorTests
             Flatten(behavior.Buttons));
     }
 
+    [Fact]
+    public void Resolve_WhenInterruptedTerminal_ShowsInterruptedState()
+    {
+        CodexSessionSummary session = CreateSession(CodexSessionStatus.Exited);
+
+        TelegramSessionCardBehavior behavior = TelegramSessionCardBehavior.Resolve(
+            session,
+            activeTurnId: null,
+            activeTurn: null,
+            destination: null,
+            diagnostics: EmptyDiagnostics(session.Id) with
+            {
+                TerminalEventSeen = true,
+                TerminalEventType = "turn.interrupted",
+            });
+
+        Assert.Equal(TelegramSessionUiState.Interrupted, behavior.State);
+        Assert.Equal("Codex interrupted", behavior.StateText);
+        Assert.Equal(
+            ["Send / Add Input", "Tail / History", "Debug / Trace", "Output Mode", "Show Updates", "Model", "Thinking"],
+            Flatten(behavior.Buttons));
+    }
+
     private static CodexSessionSummary CreateSession(CodexSessionStatus status)
         => new(
             "thread-1",

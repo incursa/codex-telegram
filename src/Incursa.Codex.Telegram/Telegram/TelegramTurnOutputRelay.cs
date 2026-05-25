@@ -30,6 +30,22 @@ internal interface ITelegramTurnOutputRelay
     /// <param name="cancellationToken">Cancellation token for request aborts.</param>
     /// <returns>A task that completes when the entry has been queued or ignored.</returns>
     Task PublishTurnEventAsync(CodexTimelineEntryVm entry, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Reposts the current editable live card as a fresh message for a specific Telegram conversation.
+    /// If the conversation does not yet have a live card, a fresh one is created and shown.
+    /// </summary>
+    /// <param name="threadId">Codex thread ID.</param>
+    /// <param name="conversation">Telegram conversation that should receive the refreshed card.</param>
+    /// <param name="activity">Short activity line to place on the live card.</param>
+    /// <param name="cancellationToken">Cancellation token for request aborts.</param>
+    /// <returns><see langword="true" /> when a live card was refreshed or newly created; otherwise <see langword="false" />.</returns>
+    Task<bool> RepostLiveCardAsync(
+        string threadId,
+        TelegramConversationScope conversation,
+        string activity,
+        CancellationToken cancellationToken)
+        => Task.FromResult(false);
 }
 
 /// <summary>
@@ -41,6 +57,7 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
     private const string TurnStartedType = "turn.started";
     private const string TurnCompletedType = "turn.completed";
     private const string TurnFailedType = "turn.failed";
+    private const string TurnInterruptedType = "turn.interrupted";
     private const string TurnFinalResponseType = "turn.finalResponse";
     private const string TurnCompletionMarker = "~~ turn complete ~~";
     private const string LegacyTurnFinishedMarker = "~~ fin ~~";
@@ -267,6 +284,40 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
         }
     }
 
+    /// <inheritdoc />
+    public async Task<bool> RepostLiveCardAsync(
+        string threadId,
+        TelegramConversationScope conversation,
+        string activity,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(threadId))
+        {
+            return false;
+        }
+
+        TelegramOutputPresentationMode presentationMode = _outputModeState.CurrentMode;
+        if (presentationMode == TelegramOutputPresentationMode.Verbose)
+        {
+            return false;
+        }
+
+        TelegramLiveTurnCardKey key = new(threadId, conversation);
+        TelegramLiveTurnCardState state = _liveCards.GetOrAdd(
+            key,
+            _ => new TelegramLiveTurnCardState(threadId, UnknownTurnId, conversation));
+
+        TelegramOutboundQueueStatus outboundStatus = await GetOutboundStatusAsync(cancellationToken).ConfigureAwait(false);
+        TelegramLiveTurnCardSnapshot snapshot = state.RecordActivity(activity);
+        return await PublishLiveCardSnapshotAsync(
+            state,
+            snapshot,
+            outboundStatus,
+            presentationMode,
+            repost: true,
+            cancellationToken).ConfigureAwait(false);
+    }
+
     private async Task<bool> TryPublishExplicitMediaAsync(CodexTimelineEntryVm entry, CancellationToken cancellationToken)
     {
         if (!TryGetMetadata(entry, "explicitMediaKind", out _))
@@ -339,15 +390,7 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
             return;
         }
 
-        TelegramOutboundQueueStatus outboundStatus;
-        try
-        {
-            outboundStatus = await _outboundQueue.GetStatusAsync(cancellationToken).ConfigureAwait(false);
-        }
-        catch
-        {
-            outboundStatus = new TelegramOutboundQueueStatus(0, 0, 0, 0, null, null, null, []);
-        }
+        TelegramOutboundQueueStatus outboundStatus = await GetOutboundStatusAsync(cancellationToken).ConfigureAwait(false);
 
         foreach (TelegramConversationScope target in targets)
         {
@@ -361,70 +404,95 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
                 continue;
             }
 
-            TelegramOutboundDestinationStatus? destination = outboundStatus.Destinations.FirstOrDefault(item =>
-                item.ChatId == target.ChatId
-                && item.MessageThreadId == target.MessageThreadId);
-            string cardText = BuildLiveCardText(snapshot, destination, presentationMode);
-            IReadOnlyList<IReadOnlyList<TelegramReplyButton>> buttons = BuildLiveCardButtons(snapshot);
-            TelegramDebugMessageContext debugContext = new(
-                "turn-live-card",
-                snapshot.ThreadId,
-                ResolveTraceTurnId(snapshot.TurnId),
-                snapshot.TurnId,
-                presentationMode.ToString(),
-                TraceId: _traceStore.TryGetTraceIdForTurn(snapshot.ThreadId, ResolveTraceTurnId(snapshot.TurnId)));
+            await PublishLiveCardSnapshotAsync(state, snapshot, outboundStatus, presentationMode, repost: false, cancellationToken).ConfigureAwait(false);
+        }
+    }
 
-            try
+    private async Task<TelegramOutboundQueueStatus> GetOutboundStatusAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await _outboundQueue.GetStatusAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch
+        {
+            return new TelegramOutboundQueueStatus(0, 0, 0, 0, null, null, null, []);
+        }
+    }
+
+    private async Task<bool> PublishLiveCardSnapshotAsync(
+        TelegramLiveTurnCardState state,
+        TelegramLiveTurnCardSnapshot snapshot,
+        TelegramOutboundQueueStatus outboundStatus,
+        TelegramOutputPresentationMode presentationMode,
+        bool repost,
+        CancellationToken cancellationToken)
+    {
+        TelegramOutboundDestinationStatus? destination = outboundStatus.Destinations.FirstOrDefault(item =>
+            item.ChatId == snapshot.Conversation.ChatId
+            && item.MessageThreadId == snapshot.Conversation.MessageThreadId);
+        string cardText = BuildLiveCardText(snapshot, destination, presentationMode);
+        IReadOnlyList<IReadOnlyList<TelegramReplyButton>> buttons = BuildLiveCardButtons(snapshot);
+        TelegramDebugMessageContext debugContext = new(
+            "turn-live-card",
+            snapshot.ThreadId,
+            ResolveTraceTurnId(snapshot.TurnId),
+            snapshot.TurnId,
+            presentationMode.ToString(),
+            TraceId: _traceStore.TryGetTraceIdForTurn(snapshot.ThreadId, ResolveTraceTurnId(snapshot.TurnId)));
+
+        try
+        {
+            int? previousMessageId = snapshot.MessageId;
+            int? messageId;
+            if (previousMessageId.HasValue && !repost)
             {
-                int? previousMessageId = snapshot.MessageId;
-                int? messageId;
-                if (previousMessageId.HasValue)
+                bool edited = await _messageSender.TryEditTextMessageAsync(
+                    snapshot.Conversation,
+                    previousMessageId.Value,
+                    cardText,
+                    buttons,
+                    cancellationToken,
+                    debugContext).ConfigureAwait(false);
+                if (!edited)
                 {
-                    bool edited = await _messageSender.TryEditTextMessageAsync(
-                        target,
-                        previousMessageId.Value,
-                        cardText,
-                        buttons,
-                        cancellationToken,
-                        debugContext).ConfigureAwait(false);
-                    if (!edited)
-                    {
-                        state.MarkEdited(previousMessageId, now);
-                        await RecordLiveCardTraceAsync(snapshot, "telegram.live_card.edit_failed", previousMessageId, cancellationToken).ConfigureAwait(false);
-                        continue;
-                    }
-
-                    messageId = previousMessageId;
-                }
-                else
-                {
-                    messageId = await _messageSender.SendTextMessageAndGetIdAsync(target, cardText, buttons, cancellationToken, debugContext).ConfigureAwait(false);
+                    state.MarkEdited(previousMessageId, DateTimeOffset.UtcNow);
+                    await RecordLiveCardTraceAsync(snapshot, "telegram.live_card.edit_failed", previousMessageId, cancellationToken).ConfigureAwait(false);
+                    return false;
                 }
 
-                if (messageId.HasValue)
-                {
-                    state.MarkEdited(messageId.Value, now);
-                    if (previousMessageId.HasValue && previousMessageId.Value != messageId.Value)
-                    {
-                        await RecordLiveCardTraceAsync(snapshot, "telegram.live_card.replaced", messageId.Value, cancellationToken).ConfigureAwait(false);
-                    }
-                }
-                else
-                {
-                    state.MarkEdited(previousMessageId, now);
-                }
-
-                await RecordLiveCardTraceAsync(snapshot, "telegram.live_card.updated", messageId ?? previousMessageId, cancellationToken).ConfigureAwait(false);
+                messageId = previousMessageId;
             }
-            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            else
             {
-                throw;
+                messageId = await _messageSender.SendTextMessageAndGetIdAsync(snapshot.Conversation, cardText, buttons, cancellationToken, debugContext).ConfigureAwait(false);
             }
-            catch (Exception exception)
+
+            if (messageId.HasValue)
             {
-                _logger.LogWarning(exception, "Failed to update Telegram live turn card for thread {ThreadId} turn {TurnId}.", entry.ThreadId, entry.TurnId);
-                await RecordLiveCardTraceAsync(snapshot, "telegram.live_card.failed", snapshot.MessageId, cancellationToken, exception.Message).ConfigureAwait(false);
+                state.MarkEdited(messageId.Value, DateTimeOffset.UtcNow);
+                if (previousMessageId.HasValue && previousMessageId.Value != messageId.Value)
+                {
+                    await RecordLiveCardTraceAsync(snapshot, "telegram.live_card.reposted", messageId.Value, cancellationToken).ConfigureAwait(false);
+                }
             }
+            else
+            {
+                state.MarkEdited(previousMessageId, DateTimeOffset.UtcNow);
+            }
+
+            await RecordLiveCardTraceAsync(snapshot, "telegram.live_card.updated", messageId ?? previousMessageId, cancellationToken).ConfigureAwait(false);
+            return true;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            _logger.LogWarning(exception, "Failed to update Telegram live turn card for thread {ThreadId} turn {TurnId}.", snapshot.ThreadId, snapshot.TurnId);
+            await RecordLiveCardTraceAsync(snapshot, "telegram.live_card.failed", snapshot.MessageId, cancellationToken, exception.Message).ConfigureAwait(false);
+            return false;
         }
     }
 
@@ -473,6 +541,10 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
         string stateText = snapshot.TerminalEventSeen
             ? snapshot.Failed
                 ? "Codex failed"
+                : snapshot.Interrupted
+                    ? snapshot.FinalResponseCaptured
+                        ? draining ? "Codex interrupted; sending captured output" : "Codex interrupted; captured output sent"
+                        : draining ? "Codex interrupted; Telegram output still draining" : "Codex interrupted"
                 : draining ? "Codex finished; sending remaining Telegram output" : "Codex finished; Telegram delivery complete"
             : snapshot.FinalResponseCaptured ? "Final response captured" : "Codex is working";
 
@@ -720,6 +792,11 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
 
     private static string? FormatEntry(CodexTimelineEntryVm entry, AgentMessageFlush? bufferedAgentMessage)
     {
+        if (IsInterruptedTurnEvent(entry))
+        {
+            return null;
+        }
+
         if (string.Equals(entry.Type, TurnFinalResponseType, StringComparison.OrdinalIgnoreCase))
         {
             return RemoveTurnFinishedMarker(ResolveFinalResponseText(entry, bufferedAgentMessage));
@@ -839,7 +916,11 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
 
     private static bool IsTerminalTurnEvent(CodexTimelineEntryVm entry)
         => string.Equals(entry.Type, TurnCompletedType, StringComparison.OrdinalIgnoreCase)
-            || string.Equals(entry.Type, TurnFailedType, StringComparison.OrdinalIgnoreCase);
+            || string.Equals(entry.Type, TurnFailedType, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(entry.Type, TurnInterruptedType, StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsInterruptedTurnEvent(CodexTimelineEntryVm entry)
+        => string.Equals(entry.Type, TurnInterruptedType, StringComparison.OrdinalIgnoreCase);
 
     private static bool IsFinalResponse(CodexTimelineEntryVm entry)
         => string.Equals(entry.Type, TurnFinalResponseType, StringComparison.OrdinalIgnoreCase);
@@ -913,6 +994,11 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
             || string.Equals(entry.Severity, "danger", StringComparison.OrdinalIgnoreCase))
         {
             return CodexOutboundMessageKind.Error;
+        }
+
+        if (string.Equals(entry.Type, TurnInterruptedType, StringComparison.OrdinalIgnoreCase))
+        {
+            return CodexOutboundMessageKind.System;
         }
 
         if (string.Equals(entry.Type, TurnCompletedType, StringComparison.OrdinalIgnoreCase)
@@ -1021,6 +1107,11 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
 
     private static string? ResolveVisibleSummary(CodexTimelineEntryVm entry, CodexOutboundMessageKind kind, string? text)
     {
+        if (IsInterruptedTurnEvent(entry))
+        {
+            return null;
+        }
+
         string? candidate = !string.IsNullOrWhiteSpace(text)
             ? text
             : !string.IsNullOrWhiteSpace(entry.Body) ? entry.Body : entry.Subtitle ?? entry.Title;
@@ -1387,6 +1478,7 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
         int ArtifactCount,
         bool FinalResponseCaptured,
         bool TerminalEventSeen,
+        bool Interrupted,
         bool Failed);
 
     private sealed class TelegramLiveTurnCardState
@@ -1402,6 +1494,7 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
         private int _artifactCount;
         private bool _finalResponseCaptured;
         private bool _terminalEventSeen;
+        private bool _interrupted;
         private bool _failed;
 
         public TelegramLiveTurnCardState(string threadId, string turnId, TelegramConversationScope conversation)
@@ -1435,6 +1528,7 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
                     _artifactCount = 0;
                     _finalResponseCaptured = false;
                     _terminalEventSeen = false;
+                    _interrupted = false;
                     _failed = false;
                 }
 
@@ -1463,6 +1557,11 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
                     _activity = null;
                 }
 
+                if (string.Equals(entry.Type, TurnInterruptedType, StringComparison.OrdinalIgnoreCase))
+                {
+                    _interrupted = true;
+                }
+
                 if (string.Equals(entry.Type, TurnFailedType, StringComparison.OrdinalIgnoreCase)
                     || string.Equals(entry.Severity, "danger", StringComparison.OrdinalIgnoreCase))
                 {
@@ -1482,6 +1581,20 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
             }
         }
 
+        public TelegramLiveTurnCardSnapshot RecordActivity(string activity)
+        {
+            lock (_gate)
+            {
+                if (!string.IsNullOrWhiteSpace(activity))
+                {
+                    _activity = activity.Trim();
+                }
+
+                _progressCount++;
+                return Snapshot(turnChanged: false);
+            }
+        }
+
         public void MarkEdited(int? messageId, DateTimeOffset editedUtc)
         {
             lock (_gate)
@@ -1498,7 +1611,7 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
                 Conversation,
                 _messageId,
                 _lastEditUtc,
-                _terminalEventSeen ? _failed ? "failed" : "completed" : "working",
+                _terminalEventSeen ? _failed ? "failed" : _interrupted ? "interrupted" : "completed" : "working",
                 _latest,
                 _activity,
                 turnChanged,
@@ -1507,6 +1620,7 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
                 _artifactCount,
                 _finalResponseCaptured,
                 _terminalEventSeen,
+                _interrupted,
                 _failed);
     }
 

@@ -126,6 +126,7 @@ internal sealed record TelegramInboundMessage(
     IReadOnlyList<TelegramAttachmentDescriptor>? Attachments = null,
     int? SourceMessageId = null,
     TelegramReplyContext? ReplyContext = null,
+    bool ReplyContextWasOperationalBotCard = false,
     string? TraceId = null,
     IReadOnlyList<int>? SourceMessageIds = null)
 {
@@ -175,6 +176,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
     private readonly CodexWorkspaceBrowser _workspaceBrowser;
     private readonly ITelegramBotStateStore _stateStore;
     private readonly ICodexTurnExecutionCoordinator _turnCoordinator;
+    private readonly ITelegramTurnOutputRelay _turnOutputRelay;
     private readonly ITelegramThreadFollowRegistry _followRegistry;
     private readonly ITelegramTypingIndicatorRegistry _typingIndicatorRegistry;
     private readonly ITelegramTurnReactionRegistry _turnReactionRegistry;
@@ -207,6 +209,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         CodexWorkspaceBrowser workspaceBrowser,
         ITelegramBotStateStore stateStore,
         ICodexTurnExecutionCoordinator turnCoordinator,
+        ITelegramTurnOutputRelay turnOutputRelay,
         ITelegramThreadFollowRegistry followRegistry,
         ITelegramTypingIndicatorRegistry typingIndicatorRegistry,
         ITelegramTurnReactionRegistry turnReactionRegistry,
@@ -234,6 +237,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         _workspaceBrowser = workspaceBrowser;
         _stateStore = stateStore;
         _turnCoordinator = turnCoordinator;
+        _turnOutputRelay = turnOutputRelay;
         _followRegistry = followRegistry;
         _typingIndicatorRegistry = typingIndicatorRegistry;
         _turnReactionRegistry = turnReactionRegistry;
@@ -1683,6 +1687,11 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             {
                 _ = ObserveSlowTelegramSendAsync(sendTask, message, session, trimmed, sender, typingRegistration, planMode);
                 typingRegistration = null;
+                await _turnOutputRelay.RepostLiveCardAsync(
+                    session.Id,
+                    message.ConversationScope,
+                    planMode ? "Waiting for Plan mode events." : "Waiting for Codex events.",
+                    CancellationToken.None).ConfigureAwait(false);
                 await ReplyAsync(
                     sender,
                     message.ConversationScope,
@@ -1912,14 +1921,45 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             cancellationToken).ConfigureAwait(false);
 
         _followRegistry.FollowThread(message.ConversationScope, session.Id);
+        string acknowledgementText = planMode
+            ? $"Queued Plan mode request for {session.Name}. I'll send it when the active Codex turn or pending Telegram output finishes."
+            : $"Queued for {session.Name}. I'll send it when the active Codex turn or pending Telegram output finishes.";
+        if (message.ReplyContextWasOperationalBotCard)
+        {
+            await ReactToSourceMessageAsync(sender, message, TelegramMessageReactionKind.Accepted, cancellationToken).ConfigureAwait(false);
+            bool liveCardReposted = await _turnOutputRelay.RepostLiveCardAsync(
+                session.Id,
+                message.ConversationScope,
+                "Queued operator input.",
+                cancellationToken).ConfigureAwait(false);
+            if (liveCardReposted)
+            {
+                return;
+            }
+
+            await ReplyAsync(
+                sender,
+                message.ConversationScope,
+                acknowledgementText,
+                BuildSessionButtons([session], includeUse: false),
+                cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
         await ReplyAsync(
             sender,
             message,
-            planMode
-                ? $"Queued Plan mode request for {session.Name}. I'll send it when the active Codex turn or pending Telegram output finishes."
-                : $"Queued for {session.Name}. I'll send it when the active Codex turn or pending Telegram output finishes.",
+            acknowledgementText,
             BuildSessionButtons([session], includeUse: false),
             cancellationToken).ConfigureAwait(false);
+        if (!message.ReplyContextWasOperationalBotCard)
+        {
+            await _turnOutputRelay.RepostLiveCardAsync(
+                session.Id,
+                message.ConversationScope,
+                "Queued operator input.",
+                cancellationToken).ConfigureAwait(false);
+        }
     }
 
     private static bool HasPendingOutboundForConversation(TelegramOutboundQueueStatus status, TelegramConversationScope conversation)

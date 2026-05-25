@@ -153,6 +153,45 @@ public sealed class TelegramHostedServiceUpdateAdapterTests
     }
 
     [Fact]
+    public async Task HandleUpdateAsync_OmitsOperationalBotReplyContextFromStoredTelegramMessages()
+    {
+        using Harness harness = Harness.Create();
+        TelegramConversationScope conversation = new(5555, null);
+        string operationalText = """
+            Codex failed
+            Session: 019e5d81
+            Mode: LiveCard
+            Updates: 0 captured
+            Progress: 0 suppressed
+            Artifacts: 0
+            Final response: captured
+            Telegram delivery: draining (0 messages, 1 chunks)
+            Latest: Codex turn was interrupted.
+            """;
+        await harness.MessageContextStore.RecordAsync(new TelegramMessageContextRecord(conversation, 12, TelegramMessageAuthor.Bot, operationalText, DateTimeOffset.Parse("2026-05-10T12:02:00Z")), CancellationToken.None);
+
+        Message message = CreateMessage(text: "do not delete that", messageId: 13);
+        message.ReplyToMessage = CreateMessage(text: operationalText, messageId: 12);
+        message.ReplyToMessage.From = new User
+        {
+            Id = 999,
+            IsBot = true,
+            FirstName = "Codex",
+        };
+        Update update = new()
+        {
+            Id = 19,
+            Message = message,
+        };
+
+        await harness.Service.HandleUpdateAsync(harness.FileClient, update, harness.Sender, CancellationToken.None);
+
+        TelegramInboundMessage inbound = Assert.Single(harness.Handler.Messages);
+        Assert.Null(inbound.ReplyContext);
+        Assert.True(inbound.ReplyContextWasOperationalBotCard);
+    }
+
+    [Fact]
     public async Task HandleUpdateAsync_IgnoresEmptyAuthorizedMessageWithoutAttachments()
     {
         using Harness harness = Harness.Create();

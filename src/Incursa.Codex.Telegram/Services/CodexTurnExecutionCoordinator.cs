@@ -1,4 +1,6 @@
 using System.Collections.Concurrent;
+using System.Reactive.Linq;
+using System.Threading.Channels;
 using Incursa.OpenAI.Codex;
 using Incursa.Codex.Telegram.Models;
 using Incursa.Codex.Telegram.Telegram;
@@ -35,6 +37,8 @@ internal sealed class CodexTurnExecutionCoordinator
 {
     private const string TurnCompletionMarker = "~~ turn complete ~~";
     private const string LegacyTurnFinishedMarker = "~~ fin ~~";
+    private static readonly TimeSpan ObservableBufferWindow = TimeSpan.FromMilliseconds(10);
+    private const int ObservableBufferMaxCount = 32;
     private static readonly TimeSpan[] DefaultCapacityRetryDelays =
     [
         TimeSpan.FromSeconds(5),
@@ -243,8 +247,14 @@ internal sealed class CodexTurnExecutionCoordinator
         using CancellationTokenSource streamCancellation = CancellationTokenSource.CreateLinkedTokenSource(_applicationLifetime.ApplicationStopping);
         try
         {
-            await using IAsyncEnumerator<CodexTurnEvent> enumerator = state.Turn
-                .StreamNormalizedAsync(streamCancellation.Token)
+            await using ObservableTimelineSubscription subscription = ObservableTimelineSubscription.Subscribe(
+                state.Turn
+                    .ObserveNormalizedEventsAsync()
+                    .Select(evt => CodexViewModelMapper.ToTimelineEntryVm(evt, state.ThreadId))
+                    .Buffer(ObservableBufferWindow, ObservableBufferMaxCount)
+                    .Where(batch => batch.Count > 0));
+            await using IAsyncEnumerator<CodexTimelineEntryVm> enumerator = subscription
+                .ReadAllAsync(streamCancellation.Token)
                 .GetAsyncEnumerator(streamCancellation.Token);
 
             while (true)
@@ -256,7 +266,7 @@ internal sealed class CodexTurnExecutionCoordinator
                         break;
                     }
 
-                    CodexTimelineEntryVm streamEntry = CodexViewModelMapper.ToTimelineEntryVm(enumerator.Current, state.ThreadId);
+                    CodexTimelineEntryVm streamEntry = enumerator.Current;
                     CapacityRetryResult capacityRetryResult = await TryHandleCapacityRetryAsync(state, streamEntry, streamCancellation.Token).ConfigureAwait(false);
                     if (capacityRetryResult == CapacityRetryResult.Scheduled)
                     {
@@ -317,7 +327,7 @@ internal sealed class CodexTurnExecutionCoordinator
                     break;
                 }
 
-                CodexTimelineEntryVm postTerminalEntry = CodexViewModelMapper.ToTimelineEntryVm(enumerator.Current, state.ThreadId);
+                CodexTimelineEntryVm postTerminalEntry = enumerator.Current;
                 CapacityRetryResult postTerminalCapacityRetryResult = await TryHandleCapacityRetryAsync(state, postTerminalEntry, streamCancellation.Token).ConfigureAwait(false);
                 if (postTerminalCapacityRetryResult == CapacityRetryResult.Scheduled)
                 {
@@ -820,6 +830,7 @@ internal sealed class CodexTurnExecutionCoordinator
     private static bool IsTerminalTurnEvent(CodexTimelineEntryVm entry)
         => string.Equals(entry.Type, "turn.completed", StringComparison.OrdinalIgnoreCase)
             || string.Equals(entry.Type, "turn.failed", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(entry.Type, "turn.interrupted", StringComparison.OrdinalIgnoreCase)
             || IsMetadataFlagSet(entry, "terminal");
 
     private void RecordEvent(CodexTimelineEntryVm entry, CodexTurnCloseoutSummary? closeout = null)
@@ -828,11 +839,12 @@ internal sealed class CodexTurnExecutionCoordinator
     private CodexTurnCloseoutSummary BuildTurnCloseoutSummary(ActiveTurnState state, CodexTimelineEntryVm entry)
     {
         bool completed = string.Equals(entry.Type, "turn.completed", StringComparison.OrdinalIgnoreCase);
+        bool interrupted = string.Equals(entry.Type, "turn.interrupted", StringComparison.OrdinalIgnoreCase);
         bool terminalIncomplete = IsTerminalState(entry, CodexTurnTerminalState.Incomplete);
         bool finalResponseSeen = state.FinalResponseSeen || (completed && !IsEmptyCompletionBody(entry.Body));
         bool assistantTextSeen = state.HasVisibleAssistantOutput || _eventLog.HasVisibleAssistantOutput(state.ThreadId, state.TurnId);
         bool warning = completed && assistantTextSeen && !finalResponseSeen;
-        string status = terminalIncomplete ? "incomplete" : completed ? "completed" : "failed";
+        string status = terminalIncomplete ? "incomplete" : completed ? "completed" : interrupted ? "interrupted" : "failed";
         string message = warning
             ? "Codex streamed assistant text but ended the turn without a final response item."
             : ResolveCloseoutMessage(status, finalResponseSeen, entry.Body);
@@ -854,6 +866,15 @@ internal sealed class CodexTurnExecutionCoordinator
             return string.IsNullOrWhiteSpace(body)
                 ? "Turn failed without an error message."
                 : body.Trim();
+        }
+
+        if (string.Equals(status, "interrupted", StringComparison.OrdinalIgnoreCase))
+        {
+            return finalResponseSeen
+                ? "Turn was interrupted after capturing a final response."
+                : string.IsNullOrWhiteSpace(body)
+                    ? "Turn was interrupted."
+                    : body.Trim();
         }
 
         if (string.Equals(status, "incomplete", StringComparison.OrdinalIgnoreCase))
@@ -1020,6 +1041,53 @@ internal sealed class CodexTurnExecutionCoordinator
         }
 
         throw new InvalidOperationException($"Active turn '{turnId}' on thread '{threadId}' was not found.");
+    }
+
+    private sealed class ObservableTimelineSubscription : IObserver<IList<CodexTimelineEntryVm>>, IAsyncDisposable
+    {
+        private readonly Channel<CodexTimelineEntryVm> _channel = Channel.CreateUnbounded<CodexTimelineEntryVm>(
+            new UnboundedChannelOptions
+            {
+                SingleReader = true,
+                SingleWriter = false,
+                AllowSynchronousContinuations = false,
+            });
+        private IDisposable? _subscription;
+
+        private ObservableTimelineSubscription()
+        {
+        }
+
+        public static ObservableTimelineSubscription Subscribe(IObservable<IList<CodexTimelineEntryVm>> source)
+        {
+            ObservableTimelineSubscription observer = new();
+            observer._subscription = source.Subscribe(observer);
+            return observer;
+        }
+
+        public IAsyncEnumerable<CodexTimelineEntryVm> ReadAllAsync(CancellationToken cancellationToken)
+            => _channel.Reader.ReadAllAsync(cancellationToken);
+
+        public void OnNext(IList<CodexTimelineEntryVm> value)
+        {
+            foreach (CodexTimelineEntryVm item in value)
+            {
+                _channel.Writer.TryWrite(item);
+            }
+        }
+
+        public void OnError(Exception error)
+            => _channel.Writer.TryComplete(error);
+
+        public void OnCompleted()
+            => _channel.Writer.TryComplete();
+
+        public ValueTask DisposeAsync()
+        {
+            _subscription?.Dispose();
+            _channel.Writer.TryComplete();
+            return ValueTask.CompletedTask;
+        }
     }
 
     private sealed class ActiveTurnState

@@ -58,6 +58,23 @@ public sealed class TelegramDebugTraceStoreTests
     }
 
     [Fact]
+    public async Task RecordAsync_TreatsInterruptedTerminalAsInterrupted()
+    {
+        using TemporaryDirectory dataRoot = TemporaryDirectory.Create();
+        TelegramDebugTraceStore store = CreateStore(dataRoot.Path, enabled: true);
+        string traceId = store.CreateTraceId();
+        DateTimeOffset timestamp = DateTimeOffset.Parse("2026-05-23T12:00:00Z");
+
+        await store.RecordAsync(CreateEvent(traceId, timestamp, "codex.terminal", status: "turn.interrupted"), CancellationToken.None);
+
+        TelegramTurnDiagnostics diagnostics = store.GetDiagnostics(traceId);
+
+        Assert.True(diagnostics.TerminalEventSeen);
+        Assert.Equal("turn.interrupted", diagnostics.TerminalEventType);
+        Assert.Equal("Codex interrupted", diagnostics.LikelyStatus);
+    }
+
+    [Fact]
     public async Task RecordAsync_AggregatesInputRoutingDiagnosticsSeparatelyFromTurnStart()
     {
         using TemporaryDirectory dataRoot = TemporaryDirectory.Create();

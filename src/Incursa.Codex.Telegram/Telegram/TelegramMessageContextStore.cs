@@ -92,16 +92,23 @@ internal sealed class TelegramMessageContextStore : ITelegramMessageContextStore
 
             int matchIndex = messages.FindIndex(message => message.MessageId == messageId);
             TelegramMessageContextRecord? match = matchIndex >= 0 ? messages[matchIndex] : null;
-            TelegramMessageContextRecord[] priorMessages = ResolvePriorMessages(messages, matchIndex, messageId);
             string? text = match?.Text ?? Normalize(fallbackText, MaxStoredTextLength);
             if (string.IsNullOrWhiteSpace(text))
             {
                 return Task.FromResult<TelegramReplyContext?>(null);
             }
 
+            TelegramMessageAuthor resolvedAuthor = match?.Author ?? author;
+            if (resolvedAuthor == TelegramMessageAuthor.Bot && TelegramReplyContextTextClassifier.ShouldSuppressBotReplyContext(text))
+            {
+                return Task.FromResult<TelegramReplyContext?>(null);
+            }
+
+            TelegramMessageContextRecord[] priorMessages = ResolvePriorMessages(messages, matchIndex, messageId);
+
             return Task.FromResult<TelegramReplyContext?>(new TelegramReplyContext(
                 messageId,
-                match?.Author ?? author,
+                resolvedAuthor,
                 text,
                 priorMessages));
         }
@@ -113,9 +120,17 @@ internal sealed class TelegramMessageContextStore : ITelegramMessageContextStore
         string? fallbackText)
     {
         string text = Normalize(fallbackText, MaxStoredTextLength);
-        return string.IsNullOrWhiteSpace(text)
-            ? null
-            : new TelegramReplyContext(messageId, author, text, []);
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return null;
+        }
+
+        if (author == TelegramMessageAuthor.Bot && TelegramReplyContextTextClassifier.ShouldSuppressBotReplyContext(text))
+        {
+            return null;
+        }
+
+        return new TelegramReplyContext(messageId, author, text, []);
     }
 
     private List<TelegramMessageContextRecord> GetMessages(TelegramConversationScope conversation)
@@ -139,9 +154,14 @@ internal sealed class TelegramMessageContextStore : ITelegramMessageContextStore
             : messages.Where(message => message.MessageId < messageId);
 
         return prior
+            .Where(message => !ShouldSuppressBotReplyContext(message))
             .TakeLast(2)
             .ToArray();
     }
+
+    private static bool ShouldSuppressBotReplyContext(TelegramMessageContextRecord message)
+        => message.Author == TelegramMessageAuthor.Bot
+            && TelegramReplyContextTextClassifier.ShouldSuppressBotReplyContext(message.Text);
 
     private static void Trim(List<TelegramMessageContextRecord> messages)
     {
@@ -185,4 +205,33 @@ internal sealed class NullTelegramMessageContextStore : ITelegramMessageContextS
         string? fallbackText,
         CancellationToken cancellationToken)
         => Task.FromResult<TelegramReplyContext?>(null);
+}
+
+internal static class TelegramReplyContextTextClassifier
+{
+    public static bool ShouldSuppressBotReplyContext(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return false;
+        }
+
+        string normalized = text.Trim().ReplaceLineEndings("\n");
+
+        return normalized.StartsWith("Codex failed", StringComparison.OrdinalIgnoreCase)
+            || normalized.StartsWith("Codex interrupted", StringComparison.OrdinalIgnoreCase)
+            || normalized.StartsWith("Codex is working", StringComparison.OrdinalIgnoreCase)
+            || normalized.StartsWith("Codex finished", StringComparison.OrdinalIgnoreCase)
+            || normalized.StartsWith("Queued for ", StringComparison.OrdinalIgnoreCase)
+            || normalized.StartsWith("Queued Plan mode request", StringComparison.OrdinalIgnoreCase)
+            || normalized.StartsWith("Queued for next turn", StringComparison.OrdinalIgnoreCase)
+            || normalized.StartsWith("Session status card", StringComparison.OrdinalIgnoreCase)
+            || normalized.StartsWith("Input bundle", StringComparison.OrdinalIgnoreCase)
+            || normalized.Contains("\nSession:", StringComparison.OrdinalIgnoreCase)
+                && normalized.Contains("\nMode:", StringComparison.OrdinalIgnoreCase)
+                && normalized.Contains("\nLatest:", StringComparison.OrdinalIgnoreCase)
+            || normalized.Contains("\nState:", StringComparison.OrdinalIgnoreCase)
+                && normalized.Contains("\nQueue count:", StringComparison.OrdinalIgnoreCase)
+            || normalized.Contains("\nTelegram delivery:", StringComparison.OrdinalIgnoreCase);
+    }
 }

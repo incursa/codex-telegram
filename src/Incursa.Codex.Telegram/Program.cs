@@ -304,6 +304,7 @@ builder.Services.AddSingleton<ITelegramDebugTraceStore, TelegramDebugTraceStore>
 builder.Services.AddSingleton<ITelegramPlanInputCoordinator, TelegramPlanInputCoordinator>();
 builder.Services.AddSingleton<OutboundTelegramScheduler>();
 builder.Services.AddSingleton<IOutboundTelegramQueue>(sp => sp.GetRequiredService<OutboundTelegramScheduler>());
+builder.Services.AddSingleton<IOutboundTelegramDeliveryStream>(sp => sp.GetRequiredService<OutboundTelegramScheduler>());
 builder.Services.AddSingleton<ITelegramTurnOutputRelay, TelegramTurnOutputRelay>();
 builder.Services.AddHttpClient<OpenAiSpeechToTextService>();
 builder.Services.AddSingleton<IAudioTranscriptionService>(sp => sp.GetRequiredService<OpenAiSpeechToTextService>());
@@ -325,7 +326,7 @@ builder.Services.AddHostedService<TelegramCodexBotHostedService>();
 builder.Services.AddHostedService<TelegramInputBundleAutoDispatchHostedService>();
 builder.Services.AddHostedService<TelegramQueuedPromptProcessorHostedService>();
 builder.Services.AddHostedService<TelegramTypingHeartbeatHostedService>();
-builder.Services.AddHostedService(sp => sp.GetRequiredService<OutboundTelegramScheduler>());
+builder.Services.AddHostedService<OutboundTelegramDeliveryHostedService>();
 
 IHost host = builder.Build();
 await RehydrateTelegramThreadFollowsAsync(host.Services, CancellationToken.None);

@@ -11,6 +11,7 @@ internal enum TelegramSessionUiState
     Waiting,
     Draining,
     Completed,
+    Interrupted,
     Failed,
     Unavailable,
     DeliveryDelayed,
@@ -70,6 +71,11 @@ internal sealed record TelegramSessionCardBehavior(
 
         if (diagnostics.TerminalEventSeen)
         {
+            if (diagnostics.TerminalEventType?.Contains("interrupted", StringComparison.OrdinalIgnoreCase) == true)
+            {
+                return TelegramSessionUiState.Interrupted;
+            }
+
             return TelegramSessionUiState.Completed;
         }
 
@@ -160,6 +166,7 @@ internal sealed record TelegramSessionCardBehavior(
             TelegramSessionUiState.Waiting => "Codex is waiting for input",
             TelegramSessionUiState.Draining => "Codex finished; sending remaining Telegram output",
             TelegramSessionUiState.Completed => "Codex finished; Telegram delivery complete",
+            TelegramSessionUiState.Interrupted => "Codex interrupted",
             TelegramSessionUiState.Failed => "Codex failed",
             TelegramSessionUiState.Unavailable => "Session unavailable",
             TelegramSessionUiState.DeliveryDelayed => "Telegram delivery delayed",

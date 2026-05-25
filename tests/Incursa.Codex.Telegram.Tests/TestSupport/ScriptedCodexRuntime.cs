@@ -141,7 +141,19 @@ internal sealed class ScriptedCodexTurnHandle : ICodexTurnHandle
 
     public string? ThreadId => _script.ThreadId;
 
-    public async IAsyncEnumerable<CodexThreadEvent> StreamAsync([EnumeratorCancellation] CancellationToken cancellationToken)
+    public IAsyncEnumerable<CodexThreadEvent> StreamAsync(CancellationToken cancellationToken)
+    {
+        _script.RecordRawStreamEnumeration();
+        return EnumerateRawEventsAsync(cancellationToken);
+    }
+
+    public IObservable<CodexThreadEvent> ObserveEventsAsync()
+    {
+        _script.RecordRawObservableSubscription();
+        return new ScriptedObservable<CodexThreadEvent>(EnumerateRawEventsAsync);
+    }
+
+    private async IAsyncEnumerable<CodexThreadEvent> EnumerateRawEventsAsync([EnumeratorCancellation] CancellationToken cancellationToken)
     {
         try
         {
@@ -182,7 +194,19 @@ internal sealed class ScriptedCodexTurnHandle : ICodexTurnHandle
         }
     }
 
-    public async IAsyncEnumerable<CodexTurnEvent> StreamNormalizedAsync([EnumeratorCancellation] CancellationToken cancellationToken)
+    public IAsyncEnumerable<CodexTurnEvent> StreamNormalizedAsync(CancellationToken cancellationToken)
+    {
+        _script.RecordNormalizedStreamEnumeration();
+        return EnumerateNormalizedEventsAsync(cancellationToken);
+    }
+
+    public IObservable<CodexTurnEvent> ObserveNormalizedEventsAsync()
+    {
+        _script.RecordNormalizedObservableSubscription();
+        return new ScriptedObservable<CodexTurnEvent>(EnumerateNormalizedEventsAsync);
+    }
+
+    private async IAsyncEnumerable<CodexTurnEvent> EnumerateNormalizedEventsAsync([EnumeratorCancellation] CancellationToken cancellationToken)
     {
         int sequenceNumber = 0;
         ScriptedNormalizationState normalizationState = new();
@@ -422,6 +446,49 @@ internal sealed class ScriptedCodexTurnHandle : ICodexTurnHandle
                     true);
                 break;
 
+            case CodexPlanDeltaEvent planDelta:
+                yield return createEvent(
+                    evt.Type,
+                    CodexTurnEventKind.Activity,
+                    "Plan delta",
+                    planDelta.Delta,
+                    new Dictionary<string, string?> { ["itemId"] = planDelta.ItemId },
+                    CodexTurnEventImportance.Normal,
+                    false,
+                    CodexTurnTerminalState.None,
+                    false,
+                    false);
+                break;
+
+            case CodexThreadCompactedEvent:
+                yield return createEvent(
+                    evt.Type,
+                    CodexTurnEventKind.Activity,
+                    "Thread compacted",
+                    null,
+                    new Dictionary<string, string?>(),
+                    CodexTurnEventImportance.High,
+                    false,
+                    CodexTurnTerminalState.None,
+                    false,
+                    true);
+                break;
+
+            case CodexUnknownThreadEvent unknown when unknown.UnknownType.Contains("requestApproval", StringComparison.OrdinalIgnoreCase)
+                || unknown.UnknownType.Contains("approval.required", StringComparison.OrdinalIgnoreCase):
+                yield return createEvent(
+                    unknown.UnknownType,
+                    CodexTurnEventKind.ApprovalNeeded,
+                    "Approval needed",
+                    null,
+                    new Dictionary<string, string?>(),
+                    CodexTurnEventImportance.Critical,
+                    false,
+                    CodexTurnTerminalState.None,
+                    false,
+                    true);
+                break;
+
             case CodexItemStartedEvent itemStarted:
                 yield return NormalizeItemEvent(evt.Type, itemStarted.Item, createEvent);
                 break;
@@ -431,11 +498,26 @@ internal sealed class ScriptedCodexTurnHandle : ICodexTurnHandle
                 break;
 
             case CodexItemCompletedEvent itemCompleted:
-                if (itemCompleted.Item is CodexAgentMessageItem agentMessage
-                    && agentMessage.Phase == CodexMessagePhase.FinalAnswer
-                    && !string.IsNullOrWhiteSpace(agentMessage.Text))
+                if (itemCompleted.Item is CodexAgentMessageItem agentMessage && !string.IsNullOrWhiteSpace(agentMessage.Text))
                 {
-                    yield return CreateFinalResponse(agentMessage.Text, CodexFinalResponseSource.CompletedItem, complete: false, createEvent);
+                    if (agentMessage.Phase == CodexMessagePhase.FinalAnswer)
+                    {
+                        yield return CreateFinalResponse(agentMessage.Text, CodexFinalResponseSource.CompletedItem, complete: false, createEvent);
+                    }
+                    else
+                    {
+                        yield return createEvent(
+                            evt.Type,
+                            CodexTurnEventKind.AssistantMessage,
+                            "Assistant message",
+                            agentMessage.Text,
+                            new Dictionary<string, string?> { ["phase"] = agentMessage.Phase?.ToString() },
+                            CodexTurnEventImportance.Normal,
+                            false,
+                            CodexTurnTerminalState.None,
+                            agentMessage.Phase is null,
+                            agentMessage.Phase is null);
+                    }
                 }
                 else
                 {
@@ -494,6 +576,20 @@ internal sealed class ScriptedCodexTurnHandle : ICodexTurnHandle
                     CodexTurnTerminalState.Failed,
                     false,
                     true);
+                break;
+
+            default:
+                yield return createEvent(
+                    evt.Type,
+                    CodexTurnEventKind.Progress,
+                    evt.Type,
+                    null,
+                    new Dictionary<string, string?>(),
+                    CodexTurnEventImportance.Low,
+                    false,
+                    CodexTurnTerminalState.None,
+                    false,
+                    false);
                 break;
         }
     }
@@ -570,6 +666,62 @@ internal sealed class ScriptedCodexTurnHandle : ICodexTurnHandle
     }
 }
 
+internal sealed class ScriptedObservable<T> : IObservable<T>
+{
+    private readonly Func<CancellationToken, IAsyncEnumerable<T>> _sourceFactory;
+
+    public ScriptedObservable(Func<CancellationToken, IAsyncEnumerable<T>> sourceFactory)
+    {
+        _sourceFactory = sourceFactory;
+    }
+
+    public IDisposable Subscribe(IObserver<T> observer)
+    {
+        CancellationTokenSource cancellation = new();
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await foreach (T item in _sourceFactory(cancellation.Token).ConfigureAwait(false))
+                {
+                    observer.OnNext(item);
+                }
+
+                observer.OnCompleted();
+            }
+            catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
+            {
+                observer.OnCompleted();
+            }
+            catch (Exception exception)
+            {
+                observer.OnError(exception);
+            }
+        });
+
+        return new Subscription(cancellation);
+    }
+
+    private sealed class Subscription : IDisposable
+    {
+        private readonly CancellationTokenSource _cancellation;
+        private int _disposed;
+
+        public Subscription(CancellationTokenSource cancellation)
+        {
+            _cancellation = cancellation;
+        }
+
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref _disposed, 1) == 0)
+            {
+                _cancellation.Cancel();
+            }
+        }
+    }
+}
+
 internal sealed class ScriptedCodexTurnScriptQueue
 {
     private readonly Dictionary<string, Queue<ScriptedCodexTurnScript>> _turnScriptsByThread = new(StringComparer.OrdinalIgnoreCase);
@@ -621,6 +773,10 @@ internal sealed class ScriptedCodexTurnScript
     private IReadOnlyList<CodexThreadItem>? _terminalItems;
     private CodexUsage? _usage;
     private int _interruptCount;
+    private int _rawObservableSubscriptionCount;
+    private int _normalizedObservableSubscriptionCount;
+    private int _rawStreamEnumerationCount;
+    private int _normalizedStreamEnumerationCount;
     private bool _emitAutoCompletion = true;
 
     public ScriptedCodexTurnScript(string threadId, string turnId)
@@ -656,6 +812,14 @@ internal sealed class ScriptedCodexTurnScript
 
     public int InterruptCount => _interruptCount;
 
+    public int RawObservableSubscriptionCount => _rawObservableSubscriptionCount;
+
+    public int NormalizedObservableSubscriptionCount => _normalizedObservableSubscriptionCount;
+
+    public int RawStreamEnumerationCount => _rawStreamEnumerationCount;
+
+    public int NormalizedStreamEnumerationCount => _normalizedStreamEnumerationCount;
+
     public ScriptedCodexTurnScript AddEvent(CodexThreadEvent evt)
     {
         _events.Add(evt);
@@ -681,11 +845,29 @@ internal sealed class ScriptedCodexTurnScript
         string? threadId = null)
         => AddEvent(ScriptedCodexTurnEvents.PlanUpdated(threadId ?? ThreadId, TurnId, explanation, plan));
 
+    public ScriptedCodexTurnScript AddPlanDelta(string delta, string? threadId = null)
+        => AddEvent(ScriptedCodexTurnEvents.PlanDelta(threadId ?? ThreadId, TurnId, delta));
+
     public ScriptedCodexTurnScript AddContextCompaction(string? threadId = null)
         => AddEvent(ScriptedCodexTurnEvents.ContextCompaction(threadId ?? ThreadId, TurnId));
 
+    public ScriptedCodexTurnScript AddThreadCompacted(string? threadId = null)
+        => AddEvent(ScriptedCodexTurnEvents.ThreadCompacted(threadId ?? ThreadId, TurnId));
+
     public ScriptedCodexTurnScript AddUserInputRequest(string prompt, string? threadId = null)
         => AddEvent(ScriptedCodexTurnEvents.UserInputRequest(threadId ?? ThreadId, TurnId, prompt));
+
+    public ScriptedCodexTurnScript AddApprovalRequest(string? threadId = null)
+        => AddEvent(ScriptedCodexTurnEvents.ApprovalRequest(threadId ?? ThreadId, TurnId));
+
+    public ScriptedCodexTurnScript AddUnknownProgress(string type, string? threadId = null)
+        => AddEvent(ScriptedCodexTurnEvents.UnknownProgress(type, threadId ?? ThreadId, TurnId));
+
+    public ScriptedCodexTurnScript AddAssistantMessage(string text, string? threadId = null)
+        => AddEvent(ScriptedCodexTurnEvents.AssistantMessage(threadId ?? ThreadId, TurnId, text));
+
+    public ScriptedCodexTurnScript AddImageArtifact(string path, string? threadId = null)
+        => AddEvent(ScriptedCodexTurnEvents.ImageArtifact(threadId ?? ThreadId, TurnId, path));
 
     public ScriptedCodexTurnScript AddThreadError(string message, bool willRetry = false, string? threadId = null)
         => AddEvent(ScriptedCodexTurnEvents.ThreadError(threadId ?? ThreadId, TurnId, message, willRetry));
@@ -765,6 +947,18 @@ internal sealed class ScriptedCodexTurnScript
     internal void RecordInterrupt()
         => _interruptCount++;
 
+    internal void RecordRawObservableSubscription()
+        => _rawObservableSubscriptionCount++;
+
+    internal void RecordNormalizedObservableSubscription()
+        => _normalizedObservableSubscriptionCount++;
+
+    internal void RecordRawStreamEnumeration()
+        => _rawStreamEnumerationCount++;
+
+    internal void RecordNormalizedStreamEnumeration()
+        => _normalizedStreamEnumerationCount++;
+
     internal CodexTurnCompletedEvent ToCompletedEvent()
         => ScriptedCodexTurnEvents.TurnCompleted(ThreadId, TurnId, FinalResponseText, _terminalItems, _usage);
 
@@ -811,6 +1005,16 @@ internal static class ScriptedCodexTurnEvents
             Plan = plan,
         };
 
+    public static CodexPlanDeltaEvent PlanDelta(string threadId, string turnId, string delta)
+        => new()
+        {
+            Type = "item.plan.delta",
+            ThreadId = threadId,
+            TurnId = turnId,
+            ItemId = "plan-item-1",
+            Delta = delta,
+        };
+
     public static CodexItemStartedEvent ContextCompaction(string threadId, string turnId)
         => new()
         {
@@ -818,6 +1022,14 @@ internal static class ScriptedCodexTurnEvents
             ThreadId = threadId,
             TurnId = turnId,
             Item = new CodexContextCompactionItem(),
+        };
+
+    public static CodexThreadCompactedEvent ThreadCompacted(string threadId, string turnId)
+        => new()
+        {
+            Type = "thread.compacted",
+            ThreadId = threadId,
+            TurnId = turnId,
         };
 
     public static CodexUnknownThreadEvent UserInputRequest(string threadId, string turnId, string prompt)
@@ -828,6 +1040,50 @@ internal static class ScriptedCodexTurnEvents
                 ["threadId"] = threadId,
                 ["turnId"] = turnId,
                 ["prompt"] = prompt,
+            },
+        };
+
+    public static CodexUnknownThreadEvent ApprovalRequest(string threadId, string turnId)
+        => new("requestApproval")
+        {
+            RawPayload = new JsonObject
+            {
+                ["threadId"] = threadId,
+                ["turnId"] = turnId,
+            },
+        };
+
+    public static CodexUnknownThreadEvent UnknownProgress(string type, string threadId, string turnId)
+        => new(type)
+        {
+            RawPayload = new JsonObject
+            {
+                ["threadId"] = threadId,
+                ["turnId"] = turnId,
+            },
+        };
+
+    public static CodexItemCompletedEvent AssistantMessage(string threadId, string turnId, string text)
+        => new()
+        {
+            Type = "item.completed",
+            ThreadId = threadId,
+            TurnId = turnId,
+            Item = new CodexAgentMessageItem
+            {
+                Text = text,
+            },
+        };
+
+    public static CodexItemCompletedEvent ImageArtifact(string threadId, string turnId, string path)
+        => new()
+        {
+            Type = "item.completed",
+            ThreadId = threadId,
+            TurnId = turnId,
+            Item = new CodexImageViewItem
+            {
+                Path = path,
             },
         };
 

@@ -397,6 +397,146 @@ public sealed class TelegramTurnOutputRelayTests
     }
 
     [Fact]
+    public async Task PublishTurnEventAsync_InterruptedTurnShowsInterruptedStateWithoutLatestSummary()
+    {
+        FakeOutboundTelegramQueue queue = new();
+        TelegramThreadFollowRegistry followRegistry = FollowThread();
+        TestTelegramBotMessageSender sender = new();
+        TelegramTurnOutputRelay relay = CreateRelay(
+            queue,
+            followRegistry,
+            outputOptions: new TelegramOutputOptions
+            {
+                PresentationMode = TelegramOutputPresentationMode.LiveCard,
+                LiveCardMinEditIntervalSeconds = 0,
+            },
+            messageSender: sender);
+
+        await relay.PublishTurnEventAsync(
+            CreateEntry(
+                type: "turn.interrupted",
+                title: "Turn interrupted",
+                body: "Codex turn was interrupted.",
+                severity: "warning"),
+            CancellationToken.None);
+
+        Assert.Empty(queue.Messages);
+        Assert.Single(sender.Sent);
+        Assert.Empty(sender.Edited);
+
+        string cardText = sender.Sent.Single().Text;
+        Assert.Contains("Codex interrupted", cardText);
+        Assert.DoesNotContain("Codex failed", cardText);
+        Assert.DoesNotContain("Latest:", cardText, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("Codex turn was interrupted.", cardText, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task PublishTurnEventAsync_InterruptedTurnAfterFinalResponseShowsCapturedOutputState()
+    {
+        FakeOutboundTelegramQueue queue = new()
+        {
+            Status = new TelegramOutboundQueueStatus(
+                1,
+                1,
+                0,
+                0,
+                null,
+                null,
+                null,
+                [new TelegramOutboundDestinationStatus(1234, 55, "thread-1", 1, 1, 0, null, null, null, null)]),
+        };
+        TelegramThreadFollowRegistry followRegistry = FollowThread();
+        TestTelegramBotMessageSender sender = new();
+        TelegramTurnOutputRelay relay = CreateRelay(
+            queue,
+            followRegistry,
+            outputOptions: new TelegramOutputOptions
+            {
+                PresentationMode = TelegramOutputPresentationMode.LiveCard,
+                LiveCardMinEditIntervalSeconds = 0,
+            },
+            messageSender: sender);
+
+        await relay.PublishTurnEventAsync(
+            CreateEntry(type: "turn.finalResponse", title: "Final response", body: "Final answer before interruption."),
+            CancellationToken.None);
+        await relay.PublishTurnEventAsync(
+            CreateEntry(
+                type: "turn.interrupted",
+                title: "Turn interrupted",
+                body: "Codex turn was interrupted.",
+                severity: "warning"),
+            CancellationToken.None);
+
+        Assert.Equal("Final answer before interruption.", Assert.Single(queue.Messages).Text);
+        Assert.Single(sender.Sent);
+        EditedTelegramMessage edit = Assert.Single(sender.Edited);
+        Assert.Contains("Codex interrupted; sending captured output", edit.Text);
+        Assert.Contains("Final response: captured", edit.Text);
+        Assert.DoesNotContain("Codex failed", edit.Text);
+        Assert.DoesNotContain("Latest: Codex turn was interrupted.", edit.Text, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task RepostLiveCardAsync_SendsFreshCopyWhenLiveCardExists()
+    {
+        FakeOutboundTelegramQueue queue = new();
+        TelegramThreadFollowRegistry followRegistry = FollowThread();
+        TestTelegramBotMessageSender sender = new();
+        TelegramTurnOutputRelay relay = CreateRelay(
+            queue,
+            followRegistry,
+            outputOptions: new TelegramOutputOptions
+            {
+                PresentationMode = TelegramOutputPresentationMode.LiveCard,
+                LiveCardMinEditIntervalSeconds = 0,
+            },
+            messageSender: sender);
+
+        await relay.PublishTurnAcceptedAsync("thread-1", "turn-1", CancellationToken.None);
+        bool reposted = await relay.RepostLiveCardAsync(
+            "thread-1",
+            new TelegramConversationScope(1234, 55),
+            "Queued operator input.",
+            CancellationToken.None);
+
+        Assert.True(reposted);
+        Assert.Equal(2, sender.Sent.Count);
+        Assert.Empty(sender.Edited);
+        Assert.Contains("Activity: Queued operator input.", sender.Sent[1].Text);
+    }
+
+    [Fact]
+    public async Task RepostLiveCardAsync_CreatesFreshCopyWhenNoLiveCardExists()
+    {
+        FakeOutboundTelegramQueue queue = new();
+        TestTelegramBotMessageSender sender = new();
+        TelegramTurnOutputRelay relay = CreateRelay(
+            queue,
+            FollowThread(),
+            outputOptions: new TelegramOutputOptions
+            {
+                PresentationMode = TelegramOutputPresentationMode.LiveCard,
+            },
+            messageSender: sender);
+
+        bool reposted = await relay.RepostLiveCardAsync(
+            "thread-1",
+            new TelegramConversationScope(1234, 55),
+            "Queued operator input.",
+            CancellationToken.None);
+
+        Assert.True(reposted);
+        Assert.Empty(queue.Messages);
+        SentTelegramMessage card = Assert.Single(sender.Sent);
+        Assert.Contains("Codex is working", card.Text);
+        Assert.Contains("Activity: Queued operator input.", card.Text);
+        Assert.Contains("Mode: LiveCard", card.Text);
+        Assert.Empty(sender.Edited);
+    }
+
+    [Fact]
     public async Task PublishTurnEventAsync_LiveCardEditFailureKeepsPinnedCardAndFinalDelivery()
     {
         FakeOutboundTelegramQueue queue = new();
@@ -1308,6 +1448,8 @@ public sealed class TelegramTurnOutputRelayTests
 
         public Queue<Exception> Exceptions { get; } = [];
 
+        public TelegramOutboundQueueStatus Status { get; set; } = new(0, 0, 0, 0, null, null, null, []);
+
         public ValueTask EnqueueAsync(OutboundTelegramMessage message, CancellationToken cancellationToken)
         {
             if (Exceptions.TryDequeue(out Exception? exception))
@@ -1320,7 +1462,7 @@ public sealed class TelegramTurnOutputRelayTests
         }
 
         public Task<TelegramOutboundQueueStatus> GetStatusAsync(CancellationToken cancellationToken)
-            => Task.FromResult(new TelegramOutboundQueueStatus(0, 0, 0, 0, null, null, null, []));
+            => Task.FromResult(Status);
     }
 
     private sealed class TestTelegramBotMessageSender : ITelegramBotMessageSender

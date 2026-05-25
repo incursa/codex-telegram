@@ -87,6 +87,7 @@ internal sealed record TelegramTurnDiagnostics(
     {
         get
         {
+            bool interrupted = TerminalEventType?.Contains("interrupted", StringComparison.OrdinalIgnoreCase) == true;
             if (SendFailed || RateLimited || SendTimedOut || !string.IsNullOrWhiteSpace(LastError))
             {
                 return "Telegram delivery delayed";
@@ -102,6 +103,13 @@ internal sealed record TelegramTurnDiagnostics(
                 return "Codex failed";
             }
 
+            if (interrupted && PendingChunks > 0)
+            {
+                return FinalAssistantOutputCaptured
+                    ? "Codex interrupted; sending captured output"
+                    : "Codex interrupted; Telegram output still draining";
+            }
+
             if (PendingChunks > 0)
             {
                 return TerminalEventSeen
@@ -112,6 +120,13 @@ internal sealed record TelegramTurnDiagnostics(
             if (Compacted)
             {
                 return "Output compacted; open trace/history for full details";
+            }
+
+            if (interrupted)
+            {
+                return FinalAssistantOutputCaptured
+                    ? "Codex interrupted; captured output sent"
+                    : "Codex interrupted";
             }
 
             return TerminalEventSeen

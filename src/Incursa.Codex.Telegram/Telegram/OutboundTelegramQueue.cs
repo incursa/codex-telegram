@@ -125,6 +125,110 @@ internal sealed record OutboundTelegramMessage
 }
 
 /// <summary>
+/// Prepared Telegram delivery emitted by the outbound observable stream.
+/// </summary>
+internal sealed class OutboundTelegramDelivery
+{
+    private readonly TaskCompletionSource<OutboundTelegramDeliveryResult> _completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly CancellationTokenSource _cancellation = new();
+
+    internal OutboundTelegramDelivery(
+        TelegramDestinationKey destination,
+        string? text,
+        OutboundTelegramFile? file,
+        TelegramDebugMessageContext? debugContext,
+        string? traceId,
+        string? sessionId,
+        string? turnId,
+        TelegramOutboundOptions options)
+    {
+        Destination = destination;
+        Text = text;
+        File = file;
+        DebugContext = debugContext;
+        TraceId = traceId;
+        SessionId = sessionId;
+        TurnId = turnId;
+        Options = options;
+    }
+
+    /// <summary>
+    /// Gets the Telegram conversation that should receive this delivery.
+    /// </summary>
+    public TelegramConversationScope Conversation => Destination.ToConversationScope();
+
+    /// <summary>
+    /// Gets the text payload to send, when this delivery is a text chunk.
+    /// </summary>
+    public string? Text { get; }
+
+    /// <summary>
+    /// Gets the Telegram-native file payload to send, when this delivery is a file item.
+    /// </summary>
+    public OutboundTelegramFile? File { get; }
+
+    /// <summary>
+    /// Gets optional diagnostic context for Telegram debug preambles.
+    /// </summary>
+    public TelegramDebugMessageContext? DebugContext { get; }
+
+    /// <summary>
+    /// Gets a token that is cancelled when the scheduler times out this delivery.
+    /// </summary>
+    public CancellationToken CancellationToken => _cancellation.Token;
+
+    internal TelegramDestinationKey Destination { get; }
+
+    internal string? TraceId { get; }
+
+    internal string? SessionId { get; }
+
+    internal string? TurnId { get; }
+
+    internal TelegramOutboundOptions Options { get; }
+
+    internal Task<OutboundTelegramDeliveryResult> Completion => _completion.Task;
+
+    /// <summary>
+    /// Reports that the subscriber successfully delivered the Telegram message.
+    /// </summary>
+    public void Complete()
+        => _completion.TrySetResult(OutboundTelegramDeliveryResult.Completed);
+
+    /// <summary>
+    /// Reports that the subscriber could not deliver the Telegram message.
+    /// </summary>
+    /// <param name="exception">Delivery failure.</param>
+    public void Fail(Exception exception)
+        => _completion.TrySetResult(OutboundTelegramDeliveryResult.Failed(exception));
+
+    internal void SetResult(OutboundTelegramDeliveryResult result)
+        => _completion.TrySetResult(result);
+
+    internal Task CancelAsync()
+        => _cancellation.CancelAsync();
+}
+
+/// <summary>
+/// Result reported by a subscriber after handling an observable outbound delivery.
+/// </summary>
+internal sealed record OutboundTelegramDeliveryResult(bool Succeeded, Exception? Exception)
+{
+    /// <summary>
+    /// Successful delivery result.
+    /// </summary>
+    public static OutboundTelegramDeliveryResult Completed { get; } = new(true, null);
+
+    /// <summary>
+    /// Creates a failed delivery result.
+    /// </summary>
+    /// <param name="exception">Delivery failure.</param>
+    /// <returns>Failed delivery result.</returns>
+    public static OutboundTelegramDeliveryResult Failed(Exception exception)
+        => new(false, exception);
+}
+
+/// <summary>
 /// Identifies one Telegram delivery destination.
 /// </summary>
 /// <param name="ChatId">Telegram chat ID.</param>
@@ -213,6 +317,18 @@ internal interface IOutboundTelegramQueue
 }
 
 /// <summary>
+/// Observable stream of ready-to-send Telegram deliveries.
+/// </summary>
+internal interface IOutboundTelegramDeliveryStream
+{
+    /// <summary>
+    /// Observes prepared Telegram deliveries after queueing, chunking, batching, and rate limits are applied.
+    /// </summary>
+    /// <returns>Observable delivery stream.</returns>
+    IObservable<OutboundTelegramDelivery> ObserveDeliveries();
+}
+
+/// <summary>
 /// Sends a prepared Telegram text chunk to the Telegram API.
 /// </summary>
 internal interface IOutboundTelegramMessageSender
@@ -293,7 +409,7 @@ internal sealed class TelegramOutboundSendTimeoutException : TimeoutException
 /// <summary>
 /// Background scheduler that chunks and rate-limits live Codex output for Telegram.
 /// </summary>
-internal sealed class OutboundTelegramScheduler : BackgroundService, IOutboundTelegramQueue
+internal sealed class OutboundTelegramScheduler : BackgroundService, IOutboundTelegramQueue, IOutboundTelegramDeliveryStream
 {
     private const int TelegramGroupChatIdUpperBound = -1;
     private const int GlobalSendBudgetWindowSeconds = 1;
@@ -311,6 +427,7 @@ internal sealed class OutboundTelegramScheduler : BackgroundService, IOutboundTe
     private TelegramOutboundOptions _options;
     private TaskCompletionSource<bool> _workAvailableSignal = CreateWorkAvailableSignal();
     private DateTimeOffset? _globalBackoffUntilUtc;
+    private int _activeDeliveryStreamSubscriptions;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="OutboundTelegramScheduler"/> class.
@@ -444,6 +561,10 @@ internal sealed class OutboundTelegramScheduler : BackgroundService, IOutboundTe
         }
     }
 
+    /// <inheritdoc />
+    public IObservable<OutboundTelegramDelivery> ObserveDeliveries()
+        => new OutboundTelegramDeliveryObservable(this);
+
     /// <summary>
     /// Attempts to send the next ready Telegram chunk.
     /// </summary>
@@ -451,97 +572,18 @@ internal sealed class OutboundTelegramScheduler : BackgroundService, IOutboundTe
     /// <returns><see langword="true"/> when a chunk was sent; otherwise <see langword="false"/>.</returns>
     internal async Task<bool> ProcessNextAsync(CancellationToken cancellationToken)
     {
-        PendingSend? pending = null;
-        TelegramOutboundOptions options = _options;
-        DateTimeOffset now = _timeProvider.GetUtcNow();
-
-        lock (_gate)
+        OutboundTelegramDelivery? delivery = TryTakeReadyDelivery(cancellationToken);
+        if (delivery is null)
         {
-            if (!options.Enabled || IsGlobalBlocked(now, options))
-            {
-                return false;
-            }
-
-            DestinationBuffer? buffer = SelectNextBuffer(now, options);
-            if (buffer is null)
-            {
-                return false;
-            }
-
-            PreparedOutboundChunk? chunk = buffer.PeekOrPrepareChunk(_chunker, options.MaxMessageChars);
-            if (chunk is null || !chunk.HasPayload)
-            {
-                _buffers.TryRemove(buffer.Destination, out _);
-                return false;
-            }
-
-            pending = new PendingSend(buffer.Destination, chunk.Text, chunk.File, chunk.DebugContext, chunk.TraceId, chunk.SessionId, chunk.TurnId);
-        }
-
-        try
-        {
-            await SendWithTimeoutAsync(pending.Value, options, cancellationToken).ConfigureAwait(false);
-        }
-        catch (TelegramOutboundRateLimitException exception)
-        {
-            ApplyBackoff(pending.Value.Destination.ChatId, exception.RetryAfter, global: false);
-            await RecordOutboundTraceAsync(pending.Value, "telegram.outbound.rate_limited", exception.Message, cancellationToken).ConfigureAwait(false);
-            _logger.LogWarning(
-                exception,
-                "Telegram outbound send was rate limited for chat {ChatId}; retry after {RetryAfter}.",
-                pending.Value.Destination.ChatId,
-                exception.RetryAfter);
-            return false;
-        }
-        catch (TelegramOutboundSendTimeoutException exception)
-        {
-            ApplyBackoff(pending.Value.Destination.ChatId, Max(GetChatInterval(pending.Value.Destination.ChatId, options), exception.Timeout), global: false);
-            await RecordOutboundTraceAsync(pending.Value, "telegram.outbound.timeout", exception.Message, cancellationToken).ConfigureAwait(false);
-            _logger.LogWarning(
-                exception,
-                "Telegram outbound send timed out for chat {ChatId} topic {MessageThreadId}; message remains queued and other destinations can continue.",
-                pending.Value.Destination.ChatId,
-                pending.Value.Destination.MessageThreadId);
-            return false;
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            throw;
-        }
-        catch (Exception exception)
-        {
-            ApplyBackoff(pending.Value.Destination.ChatId, GetChatInterval(pending.Value.Destination.ChatId, options), global: false);
-            await RecordOutboundTraceAsync(pending.Value, "telegram.outbound.failed", exception.Message, cancellationToken).ConfigureAwait(false);
-            _logger.LogWarning(
-                exception,
-                "Telegram outbound send failed for chat {ChatId} topic {MessageThreadId}; message remains queued.",
-                pending.Value.Destination.ChatId,
-                pending.Value.Destination.MessageThreadId);
             return false;
         }
 
-        lock (_gate)
-        {
-            DateTimeOffset sentAt = _timeProvider.GetUtcNow();
-            DestinationBuffer? buffer = _buffers.TryGetValue(pending.Value.Destination, out DestinationBuffer? current) ? current : null;
-            buffer?.CompleteCurrentChunk(sentAt);
-            if (buffer is not null && !buffer.HasPending)
-            {
-                _buffers.TryRemove(buffer.Destination, out _);
-            }
-
-            BudgetState budget = GetBudget(pending.Value.Destination.ChatId);
-            budget.LastSentUtc = sentAt;
-            _globalSendTimestamps.Enqueue(sentAt);
-            TrimGlobalSendTimestamps(sentAt);
-        }
-
-        await RecordOutboundTraceAsync(pending.Value, "telegram.outbound.sent", null, cancellationToken).ConfigureAwait(false);
-        return true;
+        OutboundTelegramDeliveryResult result = await SendDeliveryAsync(delivery, cancellationToken).ConfigureAwait(false);
+        return await CompleteDeliveryAsync(delivery, result, cancellationToken).ConfigureAwait(false);
     }
 
     private Task RecordOutboundTraceAsync(
-        PendingSend pending,
+        OutboundTelegramDelivery pending,
         string kind,
         string? error,
         CancellationToken cancellationToken)
@@ -562,7 +604,7 @@ internal sealed class OutboundTelegramScheduler : BackgroundService, IOutboundTe
                 Source: "TelegramOutbound"),
             cancellationToken);
 
-    private static IReadOnlyDictionary<string, string>? BuildPendingSendTraceMetadata(PendingSend pending)
+    private static IReadOnlyDictionary<string, string>? BuildPendingSendTraceMetadata(OutboundTelegramDelivery pending)
     {
         if (pending.File is null)
         {
@@ -587,13 +629,133 @@ internal sealed class OutboundTelegramScheduler : BackgroundService, IOutboundTe
         return metadata;
     }
 
-    private async Task SendWithTimeoutAsync(PendingSend pending, TelegramOutboundOptions options, CancellationToken cancellationToken)
+    private OutboundTelegramDelivery? TryTakeReadyDelivery(CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        TelegramOutboundOptions options = _options;
+        DateTimeOffset now = _timeProvider.GetUtcNow();
+
+        lock (_gate)
+        {
+            if (!options.Enabled || IsGlobalBlocked(now, options))
+            {
+                return null;
+            }
+
+            DestinationBuffer? buffer = SelectNextBuffer(now, options);
+            if (buffer is null)
+            {
+                return null;
+            }
+
+            PreparedOutboundChunk? chunk = buffer.PeekOrPrepareChunk(_chunker, options.MaxMessageChars);
+            if (chunk is null || !chunk.HasPayload)
+            {
+                _buffers.TryRemove(buffer.Destination, out _);
+                return null;
+            }
+
+            return new OutboundTelegramDelivery(
+                buffer.Destination,
+                chunk.Text,
+                chunk.File,
+                chunk.DebugContext,
+                chunk.TraceId,
+                chunk.SessionId,
+                chunk.TurnId,
+                options);
+        }
+    }
+
+    private async Task<OutboundTelegramDeliveryResult> SendDeliveryAsync(
+        OutboundTelegramDelivery delivery,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await SendWithTimeoutAsync(delivery, delivery.Options, cancellationToken).ConfigureAwait(false);
+            return OutboundTelegramDeliveryResult.Completed;
+        }
+        catch (Exception exception)
+        {
+            return OutboundTelegramDeliveryResult.Failed(exception);
+        }
+    }
+
+    private async Task<bool> CompleteDeliveryAsync(
+        OutboundTelegramDelivery delivery,
+        OutboundTelegramDeliveryResult result,
+        CancellationToken cancellationToken)
+    {
+        if (!result.Succeeded)
+        {
+            Exception exception = result.Exception ?? new InvalidOperationException("Telegram outbound delivery failed without an exception.");
+            if (exception is TelegramOutboundRateLimitException rateLimitException)
+            {
+                ApplyBackoff(delivery.Destination.ChatId, rateLimitException.RetryAfter, global: false);
+                await RecordOutboundTraceAsync(delivery, "telegram.outbound.rate_limited", rateLimitException.Message, cancellationToken).ConfigureAwait(false);
+                _logger.LogWarning(
+                    rateLimitException,
+                    "Telegram outbound send was rate limited for chat {ChatId}; retry after {RetryAfter}.",
+                    delivery.Destination.ChatId,
+                    rateLimitException.RetryAfter);
+                return false;
+            }
+
+            if (exception is TelegramOutboundSendTimeoutException timeoutException)
+            {
+                ApplyBackoff(delivery.Destination.ChatId, Max(GetChatInterval(delivery.Destination.ChatId, delivery.Options), timeoutException.Timeout), global: false);
+                await RecordOutboundTraceAsync(delivery, "telegram.outbound.timeout", timeoutException.Message, cancellationToken).ConfigureAwait(false);
+                _logger.LogWarning(
+                    timeoutException,
+                    "Telegram outbound send timed out for chat {ChatId} topic {MessageThreadId}; message remains queued and other destinations can continue.",
+                    delivery.Destination.ChatId,
+                    delivery.Destination.MessageThreadId);
+                return false;
+            }
+
+            if (exception is OperationCanceledException && cancellationToken.IsCancellationRequested)
+            {
+                throw exception;
+            }
+
+            ApplyBackoff(delivery.Destination.ChatId, GetChatInterval(delivery.Destination.ChatId, delivery.Options), global: false);
+            await RecordOutboundTraceAsync(delivery, "telegram.outbound.failed", exception.Message, cancellationToken).ConfigureAwait(false);
+            _logger.LogWarning(
+                exception,
+                "Telegram outbound send failed for chat {ChatId} topic {MessageThreadId}; message remains queued.",
+                delivery.Destination.ChatId,
+                delivery.Destination.MessageThreadId);
+            return false;
+        }
+
+        lock (_gate)
+        {
+            DateTimeOffset sentAt = _timeProvider.GetUtcNow();
+            DestinationBuffer? buffer = _buffers.TryGetValue(delivery.Destination, out DestinationBuffer? current) ? current : null;
+            buffer?.CompleteCurrentChunk(sentAt);
+            if (buffer is not null && !buffer.HasPending)
+            {
+                _buffers.TryRemove(buffer.Destination, out _);
+            }
+
+            BudgetState budget = GetBudget(delivery.Destination.ChatId);
+            budget.LastSentUtc = sentAt;
+            _globalSendTimestamps.Enqueue(sentAt);
+            TrimGlobalSendTimestamps(sentAt);
+        }
+
+        await RecordOutboundTraceAsync(delivery, "telegram.outbound.sent", null, cancellationToken).ConfigureAwait(false);
+        return true;
+    }
+
+    private async Task SendWithTimeoutAsync(OutboundTelegramDelivery pending, TelegramOutboundOptions options, CancellationToken cancellationToken)
     {
         TimeSpan timeout = TimeSpan.FromSeconds(Math.Max(1, options.SendTimeoutSeconds));
         using CancellationTokenSource sendCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         Task sendTask = pending.File is not null
-            ? _sender.SendFileMessageAsync(pending.Destination.ToConversationScope(), pending.File, sendCancellation.Token, pending.DebugContext)
-            : _sender.SendTextMessageAsync(pending.Destination.ToConversationScope(), pending.Text ?? string.Empty, sendCancellation.Token, pending.DebugContext);
+            ? _sender.SendFileMessageAsync(pending.Conversation, pending.File, sendCancellation.Token, pending.DebugContext)
+            : _sender.SendTextMessageAsync(pending.Conversation, pending.Text ?? string.Empty, sendCancellation.Token, pending.DebugContext);
         Task timeoutTask = Task.Delay(timeout, _timeProvider, cancellationToken);
 
         Task completed = await Task.WhenAny(sendTask, timeoutTask).ConfigureAwait(false);
@@ -609,7 +771,7 @@ internal sealed class OutboundTelegramScheduler : BackgroundService, IOutboundTe
         throw new TelegramOutboundSendTimeoutException(timeout);
     }
 
-    private void ObserveTimedOutSend(Task sendTask, PendingSend pending)
+    private void ObserveTimedOutSend(Task sendTask, OutboundTelegramDelivery pending)
     {
         _ = sendTask.ContinueWith(
             task =>
@@ -650,16 +812,9 @@ internal sealed class OutboundTelegramScheduler : BackgroundService, IOutboundTe
         {
             try
             {
-                bool processed;
-                do
-                {
-                    processed = await ProcessNextAsync(stoppingToken).ConfigureAwait(false);
-                }
-                while (processed && !stoppingToken.IsCancellationRequested);
-
-                await WaitForWorkOrDelayAsync(
-                    TimeSpan.FromMilliseconds(Math.Max(TelegramOutboundLimits.MinFlushIntervalMilliseconds, _options.FlushIntervalMilliseconds)),
-                    stoppingToken).ConfigureAwait(false);
+                using OutboundTelegramDeliverySender sender = new(this, stoppingToken);
+                using IDisposable subscription = ObserveDeliveries().Subscribe(sender);
+                await sender.Completion.WaitAsync(stoppingToken).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
@@ -670,6 +825,97 @@ internal sealed class OutboundTelegramScheduler : BackgroundService, IOutboundTe
                 await Task.Delay(TimeSpan.FromSeconds(SchedulerFailureDelaySeconds), _timeProvider, stoppingToken).ConfigureAwait(false);
             }
         }
+    }
+
+    private async Task RunDeliveryStreamAsync(IObserver<OutboundTelegramDelivery> observer, CancellationToken cancellationToken)
+    {
+        try
+        {
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                OutboundTelegramDelivery? delivery = TryTakeReadyDelivery(cancellationToken);
+                if (delivery is null)
+                {
+                    await WaitForWorkOrDelayAsync(GetFlushDelay(), cancellationToken).ConfigureAwait(false);
+                    continue;
+                }
+
+                observer.OnNext(delivery);
+                OutboundTelegramDeliveryResult result = await WaitForDeliveryCompletionAsync(delivery, cancellationToken).ConfigureAwait(false);
+                await CompleteDeliveryAsync(delivery, result, cancellationToken).ConfigureAwait(false);
+            }
+
+            observer.OnCompleted();
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            observer.OnCompleted();
+        }
+        catch (Exception exception)
+        {
+            observer.OnError(exception);
+        }
+        finally
+        {
+            Interlocked.Exchange(ref _activeDeliveryStreamSubscriptions, 0);
+        }
+    }
+
+    private TimeSpan GetFlushDelay()
+        => TimeSpan.FromMilliseconds(Math.Max(TelegramOutboundLimits.MinFlushIntervalMilliseconds, _options.FlushIntervalMilliseconds));
+
+    private async Task<OutboundTelegramDeliveryResult> WaitForDeliveryCompletionAsync(
+        OutboundTelegramDelivery delivery,
+        CancellationToken cancellationToken)
+    {
+        TimeSpan timeout = TimeSpan.FromSeconds(Math.Max(1, delivery.Options.SendTimeoutSeconds));
+        Task timeoutTask = Task.Delay(timeout, _timeProvider, cancellationToken);
+        Task<OutboundTelegramDeliveryResult> completionTask = delivery.Completion;
+        Task completed = await Task.WhenAny(completionTask, timeoutTask).ConfigureAwait(false);
+        if (ReferenceEquals(completed, completionTask))
+        {
+            return await completionTask.ConfigureAwait(false);
+        }
+
+        await timeoutTask.ConfigureAwait(false);
+        await delivery.CancelAsync().ConfigureAwait(false);
+        ObserveTimedOutDelivery(delivery);
+        return OutboundTelegramDeliveryResult.Failed(new TelegramOutboundSendTimeoutException(timeout));
+    }
+
+    private void ObserveTimedOutDelivery(OutboundTelegramDelivery delivery)
+    {
+        _ = delivery.Completion.ContinueWith(
+            task =>
+            {
+                if (!task.IsCompletedSuccessfully)
+                {
+                    _logger.LogDebug(
+                        task.Exception,
+                        "Timed-out Telegram outbound observable delivery later faulted for chat {ChatId} topic {MessageThreadId}.",
+                        delivery.Destination.ChatId,
+                        delivery.Destination.MessageThreadId);
+                    return;
+                }
+
+                if (!task.Result.Succeeded)
+                {
+                    _logger.LogDebug(
+                        task.Result.Exception,
+                        "Timed-out Telegram outbound observable delivery later reported failure for chat {ChatId} topic {MessageThreadId}.",
+                        delivery.Destination.ChatId,
+                        delivery.Destination.MessageThreadId);
+                    return;
+                }
+
+                _logger.LogWarning(
+                    "Timed-out Telegram outbound observable delivery later completed for chat {ChatId} topic {MessageThreadId}; the queued chunk may be retried because Telegram acceptance could not be confirmed before the timeout.",
+                    delivery.Destination.ChatId,
+                    delivery.Destination.MessageThreadId);
+            },
+            CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
     }
 
     // Never-sent destinations go first so one busy topic cannot starve a newly followed topic.
@@ -886,15 +1132,6 @@ internal sealed class OutboundTelegramScheduler : BackgroundService, IOutboundTe
 
     private static TimeSpan Max(TimeSpan left, TimeSpan right)
         => left >= right ? left : right;
-
-    private readonly record struct PendingSend(
-        TelegramDestinationKey Destination,
-        string? Text,
-        OutboundTelegramFile? File,
-        TelegramDebugMessageContext? DebugContext,
-        string? TraceId,
-        string? SessionId,
-        string? TurnId);
 
     private sealed class BudgetState
     {
@@ -1243,5 +1480,103 @@ internal sealed class OutboundTelegramScheduler : BackgroundService, IOutboundTe
         string? TurnId)
     {
         public bool HasPayload => File is not null || !string.IsNullOrWhiteSpace(Text);
+    }
+
+    private sealed class OutboundTelegramDeliveryObservable : IObservable<OutboundTelegramDelivery>
+    {
+        private readonly OutboundTelegramScheduler _scheduler;
+
+        public OutboundTelegramDeliveryObservable(OutboundTelegramScheduler scheduler)
+        {
+            _scheduler = scheduler;
+        }
+
+        public IDisposable Subscribe(IObserver<OutboundTelegramDelivery> observer)
+        {
+            if (Interlocked.CompareExchange(ref _scheduler._activeDeliveryStreamSubscriptions, 1, 0) != 0)
+            {
+                observer.OnError(new InvalidOperationException("The outbound Telegram delivery stream already has an active subscriber."));
+                return NoopDisposable.Instance;
+            }
+
+            CancellationTokenSource cancellation = new();
+            Task streamTask = Task.Run(() => _scheduler.RunDeliveryStreamAsync(observer, cancellation.Token), CancellationToken.None);
+            return new DeliveryStreamSubscription(cancellation, streamTask);
+        }
+    }
+
+    private sealed class DeliveryStreamSubscription : IDisposable
+    {
+        private readonly CancellationTokenSource _cancellation;
+        private int _disposed;
+
+        public DeliveryStreamSubscription(CancellationTokenSource cancellation, Task streamTask)
+        {
+            _cancellation = cancellation;
+            _ = streamTask.ContinueWith(
+                _ => _cancellation.Dispose(),
+                CancellationToken.None,
+                TaskContinuationOptions.ExecuteSynchronously,
+                TaskScheduler.Default);
+        }
+
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref _disposed, 1) == 0)
+            {
+                _cancellation.Cancel();
+            }
+        }
+    }
+
+    private sealed class OutboundTelegramDeliverySender : IObserver<OutboundTelegramDelivery>, IDisposable
+    {
+        private readonly OutboundTelegramScheduler _scheduler;
+        private readonly CancellationToken _stoppingToken;
+        private readonly TaskCompletionSource _completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private int _disposed;
+
+        public OutboundTelegramDeliverySender(OutboundTelegramScheduler scheduler, CancellationToken stoppingToken)
+        {
+            _scheduler = scheduler;
+            _stoppingToken = stoppingToken;
+        }
+
+        public Task Completion => _completion.Task;
+
+        public void OnNext(OutboundTelegramDelivery value)
+        {
+            if (_disposed != 0)
+            {
+                value.Fail(new OperationCanceledException(_stoppingToken));
+                return;
+            }
+
+            _ = SendAndReportAsync(value);
+        }
+
+        public void OnError(Exception error)
+            => _completion.TrySetException(error);
+
+        public void OnCompleted()
+            => _completion.TrySetResult();
+
+        public void Dispose()
+            => Interlocked.Exchange(ref _disposed, 1);
+
+        private async Task SendAndReportAsync(OutboundTelegramDelivery delivery)
+        {
+            OutboundTelegramDeliveryResult result = await _scheduler.SendDeliveryAsync(delivery, _stoppingToken).ConfigureAwait(false);
+            delivery.SetResult(result);
+        }
+    }
+
+    private sealed class NoopDisposable : IDisposable
+    {
+        public static NoopDisposable Instance { get; } = new();
+
+        public void Dispose()
+        {
+        }
     }
 }

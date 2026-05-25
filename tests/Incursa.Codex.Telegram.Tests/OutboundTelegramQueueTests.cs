@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Threading.Channels;
 using Incursa.Codex.Telegram.Options;
 using Incursa.Codex.Telegram.Telegram;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -157,6 +158,174 @@ public sealed class OutboundTelegramQueueTests
         finally
         {
             await scheduler.StopAsync(CancellationToken.None);
+        }
+    }
+
+    [Fact]
+    public async Task ObserveDeliveries_EmitsOnlyReadyDeliveriesAndKeepsQueueStateUpstream()
+    {
+        TestTelegramSender sender = new();
+        OutboundTelegramScheduler scheduler = CreateScheduler(sender, new TelegramOutboundOptions
+        {
+            BatchWindowSeconds = 120,
+            PrivateMinimumSendIntervalSeconds = 0,
+            GroupMinimumSendIntervalSeconds = 0,
+            FlushIntervalMilliseconds = TelegramOutboundLimits.MinFlushIntervalMilliseconds,
+        });
+        TestDeliveryObserver observer = new();
+        using IDisposable subscription = scheduler.ObserveDeliveries().Subscribe(observer);
+
+        await scheduler.EnqueueAsync(CreateMessage(CodexOutboundMessageKind.Update, "normal waits", chatId: 1, omitCreatedUtc: true), CancellationToken.None);
+
+        Assert.Null(await observer.ReadOrDefaultAsync(TimeSpan.FromMilliseconds(200)));
+
+        await scheduler.EnqueueAsync(
+            CreateMessage(CodexOutboundMessageKind.Error, "urgent now", chatId: 2, priority: OutboundPriority.High),
+            CancellationToken.None);
+
+        OutboundTelegramDelivery delivery = await observer.ReadRequiredAsync();
+
+        Assert.Equal(2, delivery.Conversation.ChatId);
+        Assert.Equal("urgent now", delivery.Text);
+
+        TelegramOutboundQueueStatus inFlight = await scheduler.GetStatusAsync(CancellationToken.None);
+        Assert.Contains(inFlight.Destinations, destination => destination.ChatId == 1 && destination.PendingMessageCount == 1);
+        Assert.Contains(inFlight.Destinations, destination => destination.ChatId == 2 && destination.PendingChunkCount == 1);
+
+        delivery.Complete();
+
+        await WaitForConditionAsync(async () =>
+        {
+            TelegramOutboundQueueStatus status = await scheduler.GetStatusAsync(CancellationToken.None);
+            return status.Destinations.Any(destination => destination.ChatId == 1 && destination.PendingMessageCount == 1)
+                && status.Destinations.All(destination => destination.ChatId != 2);
+        });
+    }
+
+    [Fact]
+    public async Task ObserveDeliveries_KeepsDispatchedChunkPendingUntilSubscriberCompletes()
+    {
+        TestTelegramSender sender = new();
+        OutboundTelegramScheduler scheduler = CreateScheduler(sender, new TelegramOutboundOptions
+        {
+            BatchWindowSeconds = 0,
+            PrivateMinimumSendIntervalSeconds = 0,
+            GroupMinimumSendIntervalSeconds = 0,
+            FlushIntervalMilliseconds = TelegramOutboundLimits.MinFlushIntervalMilliseconds,
+        });
+        TestDeliveryObserver observer = new();
+        using IDisposable subscription = scheduler.ObserveDeliveries().Subscribe(observer);
+
+        await scheduler.EnqueueAsync(CreateMessage(CodexOutboundMessageKind.Update, "observable send"), CancellationToken.None);
+
+        OutboundTelegramDelivery delivery = await observer.ReadRequiredAsync();
+        TelegramOutboundQueueStatus inFlight = await scheduler.GetStatusAsync(CancellationToken.None);
+
+        Assert.Equal("observable send", delivery.Text);
+        Assert.Equal(0, inFlight.PendingMessageCount);
+        Assert.Equal(1, inFlight.PendingChunkCount);
+
+        delivery.Complete();
+
+        await WaitForConditionAsync(async () =>
+            (await scheduler.GetStatusAsync(CancellationToken.None)).PendingChunkCount == 0);
+    }
+
+    [Fact]
+    public async Task ObserveDeliveries_AppliesBackoffWhenSubscriberReportsRateLimit()
+    {
+        TestTimeProvider timeProvider = new(TestNow);
+        TestTelegramSender sender = new();
+        OutboundTelegramScheduler scheduler = CreateScheduler(sender, new TelegramOutboundOptions
+        {
+            BatchWindowSeconds = 0,
+            PrivateMinimumSendIntervalSeconds = 0,
+            GroupMinimumSendIntervalSeconds = 0,
+            FlushIntervalMilliseconds = TelegramOutboundLimits.MinFlushIntervalMilliseconds,
+        }, timeProvider);
+        TestDeliveryObserver observer = new();
+        using IDisposable subscription = scheduler.ObserveDeliveries().Subscribe(observer);
+
+        await scheduler.EnqueueAsync(CreateMessage(CodexOutboundMessageKind.Update, "retry later", chatId: 9), CancellationToken.None);
+
+        OutboundTelegramDelivery delivery = await observer.ReadRequiredAsync();
+        delivery.Fail(new TelegramOutboundRateLimitException("limited", TimeSpan.FromSeconds(12)));
+
+        await WaitForConditionAsync(async () =>
+        {
+            TelegramOutboundQueueStatus status = await scheduler.GetStatusAsync(CancellationToken.None);
+            TelegramOutboundDestinationStatus? destination = status.Destinations.SingleOrDefault(item => item.ChatId == 9);
+            return destination is { PendingChunkCount: 1 }
+                && destination.ChatBackoffUntilUtc == TestNow + TimeSpan.FromSeconds(12);
+        });
+    }
+
+    [Fact]
+    public async Task DeliveryHostedService_SendsObservableDeliveriesAndCompletesQueueItem()
+    {
+        TestTelegramSender sender = new();
+        OutboundTelegramScheduler scheduler = CreateScheduler(sender, new TelegramOutboundOptions
+        {
+            BatchWindowSeconds = 0,
+            PrivateMinimumSendIntervalSeconds = 0,
+            GroupMinimumSendIntervalSeconds = 0,
+            FlushIntervalMilliseconds = TelegramOutboundLimits.MinFlushIntervalMilliseconds,
+        });
+        OutboundTelegramDeliveryHostedService service = new(
+            scheduler,
+            sender,
+            NullLogger<OutboundTelegramDeliveryHostedService>.Instance);
+
+        await service.StartAsync(CancellationToken.None);
+        try
+        {
+            await scheduler.EnqueueAsync(CreateMessage(CodexOutboundMessageKind.Update, "sent by subscriber"), CancellationToken.None);
+
+            SentTelegramMessage sent = await sender.NextSend.WaitAsync(TimeSpan.FromSeconds(2));
+
+            Assert.Equal("sent by subscriber", sent.Text);
+            await WaitForConditionAsync(async () =>
+                (await scheduler.GetStatusAsync(CancellationToken.None)).PendingDestinationCount == 0);
+        }
+        finally
+        {
+            await service.StopAsync(CancellationToken.None);
+        }
+    }
+
+    [Fact]
+    public async Task DeliveryHostedService_WhenSendFailsReportsFailureBackToQueue()
+    {
+        TestTimeProvider timeProvider = new(TestNow);
+        TestTelegramSender sender = new() { ThrowOnSend = true };
+        OutboundTelegramScheduler scheduler = CreateScheduler(sender, new TelegramOutboundOptions
+        {
+            BatchWindowSeconds = 0,
+            GroupMinimumSendIntervalSeconds = 7,
+            PrivateMinimumSendIntervalSeconds = 0,
+            FlushIntervalMilliseconds = TelegramOutboundLimits.MinFlushIntervalMilliseconds,
+        }, timeProvider);
+        OutboundTelegramDeliveryHostedService service = new(
+            scheduler,
+            sender,
+            NullLogger<OutboundTelegramDeliveryHostedService>.Instance);
+
+        await service.StartAsync(CancellationToken.None);
+        try
+        {
+            await scheduler.EnqueueAsync(CreateMessage(CodexOutboundMessageKind.Update, "still queued", chatId: -100), CancellationToken.None);
+
+            await WaitForConditionAsync(async () =>
+            {
+                TelegramOutboundQueueStatus status = await scheduler.GetStatusAsync(CancellationToken.None);
+                TelegramOutboundDestinationStatus? destination = status.Destinations.SingleOrDefault(item => item.ChatId == -100);
+                return destination is { PendingChunkCount: 1 }
+                    && destination.ChatBackoffUntilUtc == TestNow + TimeSpan.FromSeconds(7);
+            });
+        }
+        finally
+        {
+            await service.StopAsync(CancellationToken.None);
         }
     }
 
@@ -1036,6 +1205,65 @@ public sealed class OutboundTelegramQueueTests
             CreatedUtc = createdUtc ?? TestNow,
             Priority = priority,
         };
+
+    private static async Task WaitForConditionAsync(
+        Func<Task<bool>> condition,
+        TimeSpan? timeout = null,
+        TimeSpan? pollInterval = null)
+    {
+        TimeSpan effectiveTimeout = timeout ?? TimeSpan.FromSeconds(2);
+        TimeSpan effectivePollInterval = pollInterval ?? TimeSpan.FromMilliseconds(20);
+        DateTimeOffset deadline = DateTimeOffset.UtcNow + effectiveTimeout;
+
+        while (DateTimeOffset.UtcNow < deadline)
+        {
+            if (await condition().ConfigureAwait(false))
+            {
+                return;
+            }
+
+            await Task.Delay(effectivePollInterval).ConfigureAwait(false);
+        }
+
+        Assert.True(await condition().ConfigureAwait(false), "Timed out waiting for the expected condition.");
+    }
+
+    private sealed class TestDeliveryObserver : IObserver<OutboundTelegramDelivery>
+    {
+        private readonly Channel<OutboundTelegramDelivery> _deliveries = Channel.CreateUnbounded<OutboundTelegramDelivery>(
+            new UnboundedChannelOptions
+            {
+                SingleReader = true,
+                SingleWriter = false,
+                AllowSynchronousContinuations = false,
+            });
+
+        public void OnNext(OutboundTelegramDelivery value)
+            => _deliveries.Writer.TryWrite(value);
+
+        public void OnError(Exception error)
+            => _deliveries.Writer.TryComplete(error);
+
+        public void OnCompleted()
+            => _deliveries.Writer.TryComplete();
+
+        public async Task<OutboundTelegramDelivery?> ReadOrDefaultAsync(TimeSpan timeout)
+        {
+            using CancellationTokenSource cancellation = new(timeout);
+            try
+            {
+                return await _deliveries.Reader.ReadAsync(cancellation.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                return null;
+            }
+        }
+
+        public async Task<OutboundTelegramDelivery> ReadRequiredAsync()
+            => await ReadOrDefaultAsync(TimeSpan.FromSeconds(2)).ConfigureAwait(false)
+                ?? throw new TimeoutException("Timed out waiting for an observable Telegram delivery.");
+    }
 
     private sealed class TestTelegramSender : IOutboundTelegramMessageSender
     {

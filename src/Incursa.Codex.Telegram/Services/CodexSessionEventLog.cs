@@ -258,6 +258,7 @@ internal enum CodexSessionEventKind
     AssistantOutput,
     ToolProgress,
     TerminalSuccess,
+    TerminalInterrupted,
     TerminalFailure,
     RetryScheduled,
     CloseoutWarning,
@@ -287,6 +288,11 @@ internal static class CodexSessionEventClassifier
         if (string.Equals(entry.Type, "turn.completed", StringComparison.OrdinalIgnoreCase))
         {
             return CodexSessionEventKind.TerminalSuccess;
+        }
+
+        if (string.Equals(entry.Type, "turn.interrupted", StringComparison.OrdinalIgnoreCase))
+        {
+            return CodexSessionEventKind.TerminalInterrupted;
         }
 
         if (string.Equals(entry.Type, "turn.failed", StringComparison.OrdinalIgnoreCase)
@@ -326,6 +332,7 @@ internal static class CodexSessionEventClassifier
         {
             CodexSessionEventKind.AssistantOutput => CodexSessionEventLane.Timeline,
             CodexSessionEventKind.TerminalFailure => CodexSessionEventLane.Timeline,
+            CodexSessionEventKind.TerminalInterrupted => CodexSessionEventLane.Timeline,
             CodexSessionEventKind.Artifact => CodexSessionEventLane.Timeline,
             CodexSessionEventKind.CloseoutWarning => CodexSessionEventLane.Timeline,
             CodexSessionEventKind.TerminalSuccess => CodexSessionEventLane.State,

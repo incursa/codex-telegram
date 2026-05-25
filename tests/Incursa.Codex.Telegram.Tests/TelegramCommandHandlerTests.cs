@@ -1406,6 +1406,75 @@ public sealed class TelegramCommandHandlerTests
     }
 
     [Fact]
+    public async Task HandleMessageAsync_QueuesReplyToOperationalBotCardWithoutDurableAck()
+    {
+        using CommandHandlerHarness harness = CommandHandlerHarness.Create();
+        TelegramConversationScope conversation = new(5555, null);
+        harness.SessionManager.Sessions.Add(CreateSession(
+            "thread-1",
+            "Goal session",
+            harness.Temp.Path,
+            CodexSessionStatus.Running));
+        await harness.StateStore.SetActiveSessionIdAsync(conversation, "thread-1", CancellationToken.None);
+
+        await harness.Handler.HandleMessageAsync(
+            new TelegramInboundMessage(
+                1234,
+                conversation.ChatId,
+                "private",
+                "do not delete that",
+                SourceMessageId: 77,
+                ReplyContextWasOperationalBotCard: true),
+            harness.Sender,
+            CancellationToken.None);
+
+        Assert.Empty(harness.Sender.Sent);
+        TelegramMessageReaction reaction = Assert.Single(harness.Sender.Reactions);
+        Assert.Equal(TelegramMessageReactionKind.Accepted, reaction.Kind);
+        Assert.Equal(77, reaction.MessageId);
+        (string ThreadId, TelegramConversationScope Conversation, string Activity) repost = Assert.Single(harness.TurnOutputRelay.RepostRequests);
+        Assert.Equal("thread-1", repost.ThreadId);
+        Assert.Equal(conversation, repost.Conversation);
+        Assert.Equal("Queued operator input.", repost.Activity);
+        TelegramQueuedPrompt queued = Assert.Single(await harness.StateStore.ListQueuedPromptsAsync(1234, conversation, CancellationToken.None));
+        Assert.Equal("thread-1", queued.SessionId);
+        Assert.Equal("do not delete that", queued.Text);
+    }
+
+    [Fact]
+    public async Task HandleMessageAsync_QueuesReplyToOperationalBotCardSendsAckWhenLiveCardCannotBeReposted()
+    {
+        using CommandHandlerHarness harness = CommandHandlerHarness.Create();
+        TelegramConversationScope conversation = new(5555, null);
+        harness.TurnOutputRelay.RepostResult = false;
+        harness.SessionManager.Sessions.Add(CreateSession(
+            "thread-1",
+            "Goal session",
+            harness.Temp.Path,
+            CodexSessionStatus.Running));
+        await harness.StateStore.SetActiveSessionIdAsync(conversation, "thread-1", CancellationToken.None);
+
+        await harness.Handler.HandleMessageAsync(
+            new TelegramInboundMessage(
+                1234,
+                conversation.ChatId,
+                "private",
+                "do not delete that",
+                SourceMessageId: 77,
+                ReplyContextWasOperationalBotCard: true),
+            harness.Sender,
+            CancellationToken.None);
+
+        Assert.Contains("Queued for Goal session", Assert.Single(harness.Sender.Sent).Text);
+        TelegramMessageReaction reaction = Assert.Single(harness.Sender.Reactions);
+        Assert.Equal(TelegramMessageReactionKind.Accepted, reaction.Kind);
+        Assert.Single(harness.TurnOutputRelay.RepostRequests);
+        TelegramQueuedPrompt queued = Assert.Single(await harness.StateStore.ListQueuedPromptsAsync(1234, conversation, CancellationToken.None));
+        Assert.Equal("thread-1", queued.SessionId);
+        Assert.Equal("do not delete that", queued.Text);
+    }
+
+    [Fact]
     public async Task HandleMessageAsync_ReplyPlainTextQueuesTelegramContextWhenSessionIsRunning()
     {
         using CommandHandlerHarness harness = CommandHandlerHarness.Create();
@@ -2746,6 +2815,7 @@ public sealed class TelegramCommandHandlerTests
             TelegramBotStateStore stateStore,
             FakeOutboundTelegramQueue outboundQueue,
             FakeTurnExecutionCoordinator turnCoordinator,
+            FakeTelegramTurnOutputRelay turnOutputRelay,
             TelegramInputBundleStore inputBundleStore,
             TelegramTypingIndicatorRegistry typingIndicatorRegistry,
             TelegramTurnReactionRegistry turnReactionRegistry,
@@ -2765,6 +2835,7 @@ public sealed class TelegramCommandHandlerTests
             StateStore = stateStore;
             OutboundQueue = outboundQueue;
             TurnCoordinator = turnCoordinator;
+            TurnOutputRelay = turnOutputRelay;
             InputBundleStore = inputBundleStore;
             TypingIndicatorRegistry = typingIndicatorRegistry;
             TurnReactionRegistry = turnReactionRegistry;
@@ -2791,6 +2862,8 @@ public sealed class TelegramCommandHandlerTests
         public FakeOutboundTelegramQueue OutboundQueue { get; }
 
         public FakeTurnExecutionCoordinator TurnCoordinator { get; }
+
+        public FakeTelegramTurnOutputRelay TurnOutputRelay { get; }
 
         public TelegramInputBundleStore InputBundleStore { get; }
 
@@ -2841,6 +2914,7 @@ public sealed class TelegramCommandHandlerTests
             FakeTelegramForumTopicService topicService = new();
             FakeAudioTranscriptionService audioTranscription = new();
             TestTelegramBotMessageSender sender = new();
+            FakeTelegramTurnOutputRelay turnOutputRelay = new();
             IOptions<TelegramInputOptions> inputOptions = Microsoft.Extensions.Options.Options.Create(inputOptionsOverride ?? new TelegramInputOptions
             {
                 DefaultCaptureMode = TelegramInputCaptureMode.ImmediateText,
@@ -2862,6 +2936,7 @@ public sealed class TelegramCommandHandlerTests
                 new CodexWorkspaceBrowser(codexOptions),
                 stateStore,
                 turnCoordinator,
+                turnOutputRelay,
                 new TelegramThreadFollowRegistry(),
                 typingIndicatorRegistry,
                 turnReactionRegistry,
@@ -2884,7 +2959,7 @@ public sealed class TelegramCommandHandlerTests
                 NullLogger<TelegramCodexBotCommandHandler>.Instance,
                 steerStartTimeout);
 
-            return new CommandHandlerHarness(temp, sessionManager, accountUsage, projectCatalog, stateStore, outboundQueue, turnCoordinator, inputBundleStore, typingIndicatorRegistry, turnReactionRegistry, debugPreambleMode, outputModeState, traceStore, eventLog, topicService, audioTranscription, sender, handler);
+            return new CommandHandlerHarness(temp, sessionManager, accountUsage, projectCatalog, stateStore, outboundQueue, turnCoordinator, turnOutputRelay, inputBundleStore, typingIndicatorRegistry, turnReactionRegistry, debugPreambleMode, outputModeState, traceStore, eventLog, topicService, audioTranscription, sender, handler);
         }
 
         public void Dispose()
@@ -3177,6 +3252,26 @@ public sealed class TelegramCommandHandlerTests
 
         public Task InterruptAsync(string threadId, string turnId, CancellationToken cancellationToken)
             => Task.CompletedTask;
+    }
+
+    private sealed class FakeTelegramTurnOutputRelay : ITelegramTurnOutputRelay
+    {
+        public bool RepostResult { get; set; } = true;
+
+        public List<(string ThreadId, TelegramConversationScope Conversation, string Activity)> RepostRequests { get; } = [];
+
+        public Task PublishTurnEventAsync(CodexTimelineEntryVm entry, CancellationToken cancellationToken)
+            => Task.CompletedTask;
+
+        public Task<bool> RepostLiveCardAsync(
+            string threadId,
+            TelegramConversationScope conversation,
+            string activity,
+            CancellationToken cancellationToken)
+        {
+            RepostRequests.Add((threadId, conversation, activity));
+            return Task.FromResult(RepostResult);
+        }
     }
 
     private sealed class FakeTelegramPlanInputCoordinator : ITelegramPlanInputCoordinator
