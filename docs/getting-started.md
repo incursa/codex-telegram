@@ -1,3 +1,7 @@
+---
+title: "Getting Started"
+---
+
 # Getting Started
 
 This is the operator guide for a fresh install of `Incursa.Codex.Telegram`.

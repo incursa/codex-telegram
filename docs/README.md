@@ -1,3 +1,7 @@
+---
+title: "Documentation"
+---
+
 # Documentation
 
 This directory contains user, operator, and maintainer documentation for Incursa Codex Telegram.

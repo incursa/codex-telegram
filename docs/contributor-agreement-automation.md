@@ -1,3 +1,7 @@
+---
+title: "Contributor Agreement Automation"
+---
+
 # Contributor Agreement Automation
 
 This repository uses the Incursa-owned contributor agreement action:

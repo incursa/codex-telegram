@@ -1,3 +1,7 @@
+---
+title: "Day-To-Day Usage"
+---
+
 # Day-To-Day Usage
 
 Use this guide after the bot is configured and the private-chat smoke test works.

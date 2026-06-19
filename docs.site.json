@@ -1,0 +1,8 @@
+{
+  "slug": "codex-telegram",
+  "title": "Codex Telegram",
+  "section": "open-source",
+  "sourcePath": "docs",
+  "targetPath": "src/content/docs/open-source/codex-telegram",
+  "publish": true
+}

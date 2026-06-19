@@ -1,3 +1,7 @@
+---
+title: "Manual Test Plan"
+---
+
 # Manual Test Plan
 
 Use this checklist before a demo, release tag, or release note that claims live Telegram behavior.

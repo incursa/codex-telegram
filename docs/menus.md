@@ -1,3 +1,7 @@
+---
+title: "Menus And Buttons"
+---
+
 # Menus And Buttons
 
 This guide explains the Telegram buttons and interactive menus shown by Incursa Codex Telegram.

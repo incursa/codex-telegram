@@ -1,3 +1,7 @@
+---
+title: "BotFather Setup"
+---
+
 # BotFather Setup
 
 Use this guide when creating the Telegram bot account that Incursa Codex Telegram will run behind.

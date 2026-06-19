@@ -1,3 +1,7 @@
+---
+title: "Development"
+---
+
 # Development
 
 This guide is for contributors who want to build, test, package, or change the source code. If you only want to install and use the bot, start with [README.md](../README.md).

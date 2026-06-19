@@ -1,3 +1,7 @@
+---
+title: "Operations"
+---
+
 # Operations
 
 This app is a standalone console process. It does not restart itself from Telegram. Use the terminal, scheduled task, service manager, or container/runtime supervisor that starts the process.

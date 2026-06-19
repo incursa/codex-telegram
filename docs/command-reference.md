@@ -1,3 +1,7 @@
+---
+title: "Command Reference"
+---
+
 # Command Reference
 
 This is the detailed reference for Telegram commands supported by Incursa Codex Telegram.

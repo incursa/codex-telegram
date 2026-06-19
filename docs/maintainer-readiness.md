@@ -1,3 +1,7 @@
+---
+title: "Maintainer Readiness"
+---
+
 # Maintainer Readiness
 
 This guide is for maintainers and operators validating `codex-telegram` from a local checkout. Use local commands and manual Telegram evidence as proof; do not rely on GitHub Actions alone.

@@ -1,0 +1,223 @@
+name: Sync Documentation
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - docs/**
+      - README.md
+      - docs.site.json
+      - .github/workflows/sync-docs.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sync-docs:
+    name: Mirror Codex Telegram docs
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Check out Codex Telegram
+        uses: actions/checkout@v4
+        with:
+          path: source
+
+      - name: Read docs site manifest
+        id: manifest
+        shell: bash
+        working-directory: source
+        run: |
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          import pathlib
+
+          manifest_path = pathlib.Path("docs.site.json")
+          manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+
+          required = ["slug", "sourcePath", "targetPath", "publish"]
+          missing = [key for key in required if key not in manifest]
+          if missing:
+              raise SystemExit(f"docs.site.json is missing required keys: {', '.join(missing)}")
+
+          def safe_relative(value: str, key: str) -> str:
+              path = pathlib.PurePosixPath(value.replace("\\", "/"))
+              if path.is_absolute() or ".." in path.parts:
+                  raise SystemExit(f"{key} must be a safe repository-relative path")
+              return path.as_posix()
+
+          source_path = safe_relative(manifest["sourcePath"], "sourcePath")
+          target_path = safe_relative(manifest["targetPath"], "targetPath")
+          publish = "true" if manifest.get("publish") is True else "false"
+
+          print(f"publish={publish}")
+          print(f"slug={manifest['slug']}")
+          print(f"title={manifest.get('title', manifest['slug'])}")
+          print(f"source_path={source_path}")
+          print(f"target_path={target_path}")
+          PY
+
+      - name: Stop when publishing is disabled
+        if: steps.manifest.outputs.publish != 'true'
+        shell: bash
+        run: echo "docs.site.json has publish=false; skipping documentation sync."
+
+      - name: Check out central docs repository
+        if: steps.manifest.outputs.publish == 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: incursa/incursa-docs
+          token: ${{ secrets.DOCS_SITE_SYNC_TOKEN }}
+          path: docs-site
+          ref: main
+
+      - name: Prepare sync branch
+        if: steps.manifest.outputs.publish == 'true'
+        id: branch
+        shell: bash
+        working-directory: docs-site
+        env:
+          SLUG: ${{ steps.manifest.outputs.slug }}
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          short_sha="${SOURCE_SHA:0:12}"
+          branch="sync/${SLUG}-${short_sha}"
+          git config user.name "incursa-docs-sync"
+          git config user.email "incursa-docs-sync@users.noreply.github.com"
+          git fetch origin main
+          if git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
+            git fetch origin "$branch"
+            git checkout -B "$branch" "origin/$branch"
+          else
+            git checkout -B "$branch" "origin/main"
+          fi
+          echo "name=$branch" >> "$GITHUB_OUTPUT"
+          echo "short_sha=$short_sha" >> "$GITHUB_OUTPUT"
+
+      - name: Mirror docs
+        if: steps.manifest.outputs.publish == 'true'
+        id: sync
+        shell: bash
+        env:
+          SOURCE_REPOSITORY: ${{ github.repository }}
+          SOURCE_SHA: ${{ github.sha }}
+          SOURCE_REF: ${{ github.ref }}
+          SOURCE_PATH: ${{ steps.manifest.outputs.source_path }}
+          TARGET_PATH: ${{ steps.manifest.outputs.target_path }}
+          GENERATED_BY: codex-telegram/.github/workflows/sync-docs.yml
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          import pathlib
+          import shutil
+          from datetime import datetime, timezone
+
+          source_root = pathlib.Path("source").resolve()
+          docs_root = pathlib.Path("docs-site").resolve()
+          source_path = pathlib.PurePosixPath(os.environ["SOURCE_PATH"])
+          target_path = pathlib.PurePosixPath(os.environ["TARGET_PATH"])
+
+          source_dir = source_root.joinpath(*source_path.parts)
+          target_dir = docs_root.joinpath(*target_path.parts)
+          docs_root_resolved = docs_root.resolve()
+          target_parent = target_dir.parent
+
+          if not source_dir.is_dir():
+              raise SystemExit(f"Source docs path does not exist: {source_path}")
+
+          target_parent.mkdir(parents=True, exist_ok=True)
+          target_resolved = target_dir.resolve() if target_dir.exists() else target_parent.resolve() / target_dir.name
+          if docs_root_resolved not in [target_resolved, *target_resolved.parents]:
+              raise SystemExit(f"Target path escapes docs repository: {target_path}")
+
+          existing_metadata_path = target_dir / "_source.json"
+          existing_metadata = {}
+          if existing_metadata_path.exists():
+              try:
+                  existing_metadata = json.loads(existing_metadata_path.read_text(encoding="utf-8"))
+              except json.JSONDecodeError:
+                  existing_metadata = {}
+
+          if target_dir.exists():
+              shutil.rmtree(target_dir)
+          shutil.copytree(source_dir, target_dir)
+
+          synced_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+          if existing_metadata.get("sourceSha") == os.environ["SOURCE_SHA"]:
+              synced_at = existing_metadata.get("syncedAtUtc", synced_at)
+
+          metadata = {
+              "sourceRepository": os.environ["SOURCE_REPOSITORY"],
+              "sourceSha": os.environ["SOURCE_SHA"],
+              "sourceRef": os.environ["SOURCE_REF"],
+              "sourcePath": os.environ["SOURCE_PATH"],
+              "syncedAtUtc": synced_at,
+              "generatedBy": os.environ["GENERATED_BY"],
+          }
+          (target_dir / "_source.json").write_text(
+              json.dumps(metadata, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          PY
+
+          if git -C docs-site status --porcelain -- "$TARGET_PATH" | grep -q .; then
+            echo "working_tree_changed=true" >> "$GITHUB_OUTPUT"
+            echo "branch_has_changes=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "working_tree_changed=false" >> "$GITHUB_OUTPUT"
+            if git -C docs-site diff --quiet origin/main...HEAD -- "$TARGET_PATH"; then
+              echo "branch_has_changes=false" >> "$GITHUB_OUTPUT"
+            else
+              echo "branch_has_changes=true" >> "$GITHUB_OUTPUT"
+            fi
+          fi
+
+      - name: Commit mirrored docs
+        if: steps.manifest.outputs.publish == 'true' && steps.sync.outputs.working_tree_changed == 'true'
+        shell: bash
+        working-directory: docs-site
+        env:
+          TARGET_PATH: ${{ steps.manifest.outputs.target_path }}
+          SHORT_SHA: ${{ steps.branch.outputs.short_sha }}
+        run: |
+          set -euo pipefail
+          git add -- "$TARGET_PATH"
+          git commit -m "Sync Codex Telegram docs from ${SHORT_SHA}"
+          git push --set-upstream origin "${{ steps.branch.outputs.name }}"
+
+      - name: Open pull request
+        if: steps.manifest.outputs.publish == 'true' && steps.sync.outputs.branch_has_changes == 'true'
+        shell: bash
+        working-directory: docs-site
+        env:
+          GH_TOKEN: ${{ secrets.DOCS_SITE_SYNC_TOKEN }}
+          BRANCH: ${{ steps.branch.outputs.name }}
+          SOURCE_SHA: ${{ github.sha }}
+          SOURCE_REF: ${{ github.ref }}
+          SOURCE_REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          existing_pr_url="$(gh pr list --repo incursa/incursa-docs --head "$BRANCH" --base main --state open --json url --jq '.[0].url // empty')"
+          if [ -n "$existing_pr_url" ]; then
+            echo "Existing documentation sync PR: $existing_pr_url"
+            exit 0
+          fi
+
+          body="$(printf 'Mirrors Codex Telegram documentation from %s@%s.\n\nSource ref: %s\n\nThis PR was created by codex-telegram/.github/workflows/sync-docs.yml.' "$SOURCE_REPOSITORY" "$SOURCE_SHA" "$SOURCE_REF")"
+
+          gh pr create \
+            --repo incursa/incursa-docs \
+            --base main \
+            --head "$BRANCH" \
+            --title "Sync Codex Telegram docs" \
+            --body "$body"
+
+      - name: Report no changes
+        if: steps.manifest.outputs.publish == 'true' && steps.sync.outputs.branch_has_changes != 'true'
+        shell: bash
+        run: echo "No mirrored documentation changes were detected."
