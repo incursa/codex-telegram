@@ -84,16 +84,11 @@ jobs:
         run: |
           set -euo pipefail
           short_sha="${SOURCE_SHA:0:12}"
-          branch="sync/${SLUG}-${short_sha}"
+          branch="sync/${SLUG}"
           git config user.name "incursa-docs-sync"
           git config user.email "incursa-docs-sync@users.noreply.github.com"
           git fetch origin main
-          if git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
-            git fetch origin "$branch"
-            git checkout -B "$branch" "origin/$branch"
-          else
-            git checkout -B "$branch" "origin/main"
-          fi
+          git checkout -B "$branch" "origin/main"
           echo "name=$branch" >> "$GITHUB_OUTPUT"
           echo "short_sha=$short_sha" >> "$GITHUB_OUTPUT"
 
@@ -188,7 +183,7 @@ jobs:
           set -euo pipefail
           git add -- "$TARGET_PATH"
           git commit -m "Sync Codex Telegram docs from ${SHORT_SHA}"
-          git push --set-upstream origin "${{ steps.branch.outputs.name }}"
+          git push --force-with-lease --set-upstream origin "${{ steps.branch.outputs.name }}"
 
       - name: Open pull request
         if: steps.manifest.outputs.publish == 'true' && steps.sync.outputs.branch_has_changes == 'true'
