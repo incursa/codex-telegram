@@ -12,6 +12,45 @@ Watch a two-minute private-chat demo showing a local Codex session controlled fr
 
 For the available Telegram buttons and menus, see the [menus and button reference](docs/menus.md).
 
+## Runtime Modes
+
+The service has a small set of operating modes:
+
+1. Start it with no arguments in an interactive terminal to open the bootstrap/admin menu.
+2. Start it with `--run` to skip the menu and run the hosted services directly.
+3. Start it with `--menu` to force the bootstrap/admin menu.
+4. Use private chat first, then trusted group roots or forum topics only after the private flow works.
+5. Use [docs/usage.md](docs/usage.md) for the user-facing output modes: `Compact`, `Verbose`, `LiveCard`, and `FinalOnly`.
+
+## Configuration And Secrets
+
+The main configuration file is `src/Incursa.Codex.Telegram/appsettings.json`. Keep local values in one of these places:
+
+1. `appsettings.Local.json`
+2. User secrets
+3. Environment variables
+4. An operator-managed secret store
+
+Keep these out of version control:
+
+1. Telegram bot tokens.
+2. OpenAI API keys.
+3. Local Codex auth state.
+4. `appsettings.Local.json`.
+5. Local debug traces and private transcripts.
+
+## Repository Layout
+
+The main folders and files are:
+
+1. `src/Incursa.Codex.Telegram`: the console host, Telegram routing, Codex integration, configuration, and runtime services.
+2. `tests/Incursa.Codex.Telegram.Tests`: unit and integration-style tests for commands, state, queueing, output, and Telegram behavior.
+3. `docs/`: source-authored operator, maintainer, and command documentation.
+4. `scripts/`: local release, publish, fuzz, mutation, and secret-scan scripts.
+5. `specs/`: repository-native requirements and architecture notes.
+6. `fuzz/corpus/`: checked-in Telegram fuzz seeds.
+7. `docs.site.json` and `.github/workflows/sync-docs.yml`: the docs mirror manifest and sync workflow.
+
 ## Download
 
 Download the latest release binary for your operating system:
@@ -396,6 +435,45 @@ Groups and forum topics require:
 4. Topic-management rights if the bot should create forum topics.
 
 Start privately first. Then use a trusted group root as a single project/session lane, or use forum topics when one group needs multiple independent sessions.
+
+## Local Validation
+
+Run these commands from the repository root:
+
+```powershell
+dotnet restore CodexTelegram.slnx
+dotnet build CodexTelegram.slnx -c Release -m:1 --no-restore
+dotnet test tests\Incursa.Codex.Telegram.Tests\Incursa.Codex.Telegram.Tests.csproj -c Release --no-build --no-restore -m:1
+.\scripts\Test-ReleaseReadiness.ps1 -Runtime win-x64 -SkipPublish
+git diff --check
+```
+
+## Release And Versioning
+
+The repository publishes self-contained release binaries through `scripts\Publish.ps1` and `.github/workflows/publish.yml`.
+
+Release tags that start with `v` produce GitHub Releases with Windows x64, Linux x64, and macOS arm64 assets, plus SHA-256 checksum files and a copied `LICENSE.txt`.
+
+Before a public release, run the repo-native release gate and the live Telegram checklist:
+
+```powershell
+.\scripts\Test-ReleaseReadiness.ps1 -Runtime win-x64
+```
+
+Then follow [docs/manual-test-plan.md](docs/manual-test-plan.md) against the exact commit or published asset being released.
+
+## Documentation Ownership
+
+The `docs/` tree is source-authored documentation.
+
+The docs sync workflow uses `docs.site.json` and `.github/workflows/sync-docs.yml` to mirror that tree into `incursa-docs/src/content/docs/open-source/codex-telegram/`. Edit the source files in this repository, not the mirrored copies in `incursa-docs`.
+
+## Known Gaps
+
+1. Live Telegram behavior still needs a real bot account and real credentials for validation.
+2. Group and forum-topic support is supported but higher risk than private chat; validate it separately before calling a release ready.
+3. Voice-note support depends on OpenAI and, when transcoding is needed, `ffmpeg`.
+4. The mirrored documentation tree is generated from this repository and should not be edited directly in the central docs repo.
 
 ## Support And Security
 

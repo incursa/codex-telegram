@@ -164,6 +164,12 @@ Use the publish script directly when validating packaging or refreshing a local 
 
 Before a tag or public release, also run the manual Telegram checklist in `docs/manual-test-plan.md` against the exact commit or published asset being released.
 
+## Documentation Ownership
+
+The `docs/` tree in this repository is the source of truth for documentation content.
+
+`docs.site.json` and `.github/workflows/sync-docs.yml` mirror that tree into `incursa-docs/src/content/docs/open-source/codex-telegram/` using the `DOCS_SITE_SYNC_TOKEN` secret. Treat the mirrored files as generated output and edit the source copies here.
+
 ## Deployment And Operator Checks
 
 This service is deployed by placing the published binary and local settings on an operator-owned machine. It is not a self-updating daemon.

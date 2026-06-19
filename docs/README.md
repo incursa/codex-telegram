@@ -1,10 +1,12 @@
 ---
-title: "Documentation"
+title: "Documentation Index"
 ---
 
-# Documentation
+# Documentation Index
 
 This directory contains user, operator, and maintainer documentation for Incursa Codex Telegram.
+
+This is the source-authored docs tree. The sync workflow mirrors it into `incursa-docs/src/content/docs/open-source/codex-telegram/` using `docs.site.json` and `.github/workflows/sync-docs.yml`. Edit the source files here; do not edit the mirrored copies in the central docs repo.
 
 ## User And Operator Guides
 
