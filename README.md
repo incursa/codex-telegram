@@ -408,6 +408,7 @@ For security issues, use GitHub private vulnerability reporting when it is enabl
 User and operator docs:
 
 - [Getting started guide](docs/getting-started.md)
+- [Documentation index](docs/README.md)
 - [Day-to-day usage](docs/usage.md)
 - [Operations](docs/operations.md)
 - [BotFather setup](docs/botfather.md)
@@ -418,6 +419,7 @@ User and operator docs:
 Developer and maintainer docs:
 
 - [Development guide](docs/development.md)
+- [Maintainer readiness](docs/maintainer-readiness.md)
 - [Contributing](CONTRIBUTING.md)
 - [Code of conduct](CODE_OF_CONDUCT.md)
 - [Testing and quality](docs/testing.md)

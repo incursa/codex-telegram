@@ -10,7 +10,7 @@ Run this before release validation, release tags, and pushes that affect runtime
 .\scripts\Test-ReleaseReadiness.ps1 -Runtime win-x64
 ```
 
-That gate builds, tests, formats, audits packages, runs a tracked-file secret scan, runs the checked-in Telegram fuzz corpus, and publishes unless `-SkipPublish` is passed.
+That gate builds, tests, formats this repository's source and tests, audits packages, runs a tracked-file secret scan, runs the checked-in Telegram fuzz corpus, and publishes unless `-SkipPublish` is passed.
 
 ## Telegram Fuzz Corpus
 

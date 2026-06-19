@@ -399,7 +399,7 @@ public sealed class CodexGatewayTests
         eventLog.Record(new CodexSessionEventRecord(
             "thread-1",
             "turn-1",
-            new DateTimeOffset(2026, 5, 13, 4, 0, 0, TimeSpan.Zero),
+            DateTimeOffset.UtcNow,
             "turn.closeout.warning",
             CodexSessionEventKind.CloseoutWarning,
             CodexSessionEventLane.Timeline,

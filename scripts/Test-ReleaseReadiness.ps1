@@ -16,7 +16,9 @@ try {
     dotnet build $solutionPath -c $Configuration -m:1
     dotnet test $testProjectPath -c $Configuration --no-build --no-restore -m:1
     & (Join-Path $repoRoot "scripts\Test-TelegramFuzzCorpus.ps1") -Configuration $Configuration -NoRestore -NoBuild
-    dotnet format $solutionPath --verify-no-changes --no-restore
+    dotnet format $solutionPath --verify-no-changes --no-restore --include `
+        "src\Incursa.Codex.Telegram" `
+        "tests\Incursa.Codex.Telegram.Tests"
     dotnet list $solutionPath package --vulnerable --include-transitive
     & (Join-Path $repoRoot "scripts\Test-TrackedSecretScan.ps1")
 

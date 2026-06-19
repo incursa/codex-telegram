@@ -68,7 +68,7 @@ That gate includes:
 1. Release build.
 2. Unit tests.
 3. Telegram fuzz corpus.
-4. Format verification.
+4. Format verification for this repository's source and tests.
 5. Package vulnerability reporting.
 6. Tracked-file secret scan.
 7. Publish verification unless `-SkipPublish` is used.

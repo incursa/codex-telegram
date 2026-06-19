@@ -60,7 +60,7 @@ Fast local checks:
 ```powershell
 dotnet build CodexTelegram.slnx
 dotnet test CodexTelegram.slnx
-dotnet format CodexTelegram.slnx --verify-no-changes --no-restore
+dotnet format CodexTelegram.slnx --verify-no-changes --no-restore --include src\Incursa.Codex.Telegram tests\Incursa.Codex.Telegram.Tests
 .\scripts\Test-TrackedSecretScan.ps1
 ```
 

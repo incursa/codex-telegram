@@ -372,7 +372,7 @@ internal sealed class CodexGatewaySessionManager : ICodexSessionManager
         CodexThreadManifestRecord? manifest = await _manifestStore.ReadAsync(sessionId, cancellationToken).ConfigureAwait(false);
         if (manifest is not null && string.IsNullOrWhiteSpace(manifest.LastTurnId))
         {
-            return "No transcript output is available for this session yet.";
+            return FormatRecentEventsOrNoTranscript(sessionId, lineCount);
         }
 
         CodexThreadDetailVm detail = await _gateway.GetThreadAsync(sessionId, cancellationToken: cancellationToken).ConfigureAwait(false);
@@ -418,6 +418,23 @@ internal sealed class CodexGatewaySessionManager : ICodexSessionManager
         if (lines.Count == 0)
         {
             return "No transcript output is available for this session yet.";
+        }
+
+        return string.Join(Environment.NewLine, lines.TakeLast(lineCount));
+    }
+
+    private string FormatRecentEventsOrNoTranscript(string sessionId, int lineCount)
+    {
+        IReadOnlyList<CodexSessionEventRecord> recentEvents = _eventLog.GetRecent(sessionId, Math.Min(lineCount, 25));
+        if (recentEvents.Count == 0)
+        {
+            return "No transcript output is available for this session yet.";
+        }
+
+        List<string> lines = ["recent events:"];
+        foreach (CodexSessionEventRecord evt in recentEvents)
+        {
+            lines.Add(FormatSessionEvent(evt));
         }
 
         return string.Join(Environment.NewLine, lines.TakeLast(lineCount));

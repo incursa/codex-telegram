@@ -144,10 +144,12 @@ public sealed class TelegramDebugTraceStoreTests
     public async Task RecordAsync_WhenTraceFileIsAtLimitKeepsInMemoryDiagnosticsWithoutAppending()
     {
         using TemporaryDirectory dataRoot = TemporaryDirectory.Create();
+        ManualTimeProvider clock = new(DateTimeOffset.Parse("2026-05-23T12:00:00Z"));
         TelegramDebugTraceStore store = CreateStore(
             dataRoot.Path,
             enabled: true,
-            maxTraceFileBytes: TelegramDebugTraceLimits.MinTraceFileBytes);
+            maxTraceFileBytes: TelegramDebugTraceLimits.MinTraceFileBytes,
+            timeProvider: clock);
         string traceId = store.CreateTraceId();
         DateTimeOffset timestamp = DateTimeOffset.Parse("2026-05-23T12:00:00Z");
         string tracePath = store.GetTracePath(traceId, timestamp);
