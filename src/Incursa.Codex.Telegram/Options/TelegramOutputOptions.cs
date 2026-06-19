@@ -6,6 +6,11 @@ namespace Incursa.Codex.Telegram.Options;
 public enum TelegramOutputPresentationMode
 {
     /// <summary>
+    /// Keep normal output quiet, send final output durably, and publish sparse "still working" pulses while a turn is active.
+    /// </summary>
+    Compact,
+
+    /// <summary>
     /// Send progress and update events as durable Telegram messages according to existing filters.
     /// </summary>
     Verbose,
@@ -29,7 +34,7 @@ public sealed class TelegramOutputOptions
     /// <summary>
     /// Gets or sets the configured presentation mode for Codex turn output.
     /// </summary>
-    public TelegramOutputPresentationMode PresentationMode { get; set; } = TelegramOutputPresentationMode.LiveCard;
+    public TelegramOutputPresentationMode PresentationMode { get; set; } = TelegramOutputPresentationMode.Compact;
 
     /// <summary>
     /// Gets or sets the number of days operational turn history should be retained.
@@ -50,6 +55,11 @@ public sealed class TelegramOutputOptions
     /// Gets or sets the minimum seconds between non-critical live card edits.
     /// </summary>
     public int LiveCardMinEditIntervalSeconds { get; set; } = 3;
+
+    /// <summary>
+    /// Gets or sets the minimum seconds between compact "still working" pulses.
+    /// </summary>
+    public int CompactPulseIntervalSeconds { get; set; } = 45;
 }
 
 /// <summary>
@@ -86,4 +96,14 @@ public static class TelegramOutputLimits
     /// Maximum allowed live card edit throttle in seconds.
     /// </summary>
     public const int MaxLiveCardEditIntervalSeconds = 30;
+
+    /// <summary>
+    /// Minimum allowed compact pulse interval in seconds.
+    /// </summary>
+    public const int MinCompactPulseIntervalSeconds = 30;
+
+    /// <summary>
+    /// Maximum allowed compact pulse interval in seconds.
+    /// </summary>
+    public const int MaxCompactPulseIntervalSeconds = 120;
 }

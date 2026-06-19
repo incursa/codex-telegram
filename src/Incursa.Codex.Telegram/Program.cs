@@ -252,6 +252,10 @@ builder.Services.PostConfigure<TelegramOutputOptions>(options =>
         options.LiveCardMinEditIntervalSeconds,
         TelegramOutputLimits.MinLiveCardEditIntervalSeconds,
         TelegramOutputLimits.MaxLiveCardEditIntervalSeconds);
+    options.CompactPulseIntervalSeconds = Math.Clamp(
+        options.CompactPulseIntervalSeconds,
+        TelegramOutputLimits.MinCompactPulseIntervalSeconds,
+        TelegramOutputLimits.MaxCompactPulseIntervalSeconds);
 });
 
 builder.Services.PostConfigure<TelegramDebugTraceOptions>(options =>

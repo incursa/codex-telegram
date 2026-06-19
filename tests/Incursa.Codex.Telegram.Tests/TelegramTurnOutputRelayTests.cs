@@ -88,6 +88,38 @@ public sealed class TelegramTurnOutputRelayTests
     }
 
     [Fact]
+    public async Task PublishTurnEventAsync_CompactModeSendsThrottledProgressPulseWithoutLiveCard()
+    {
+        FakeOutboundTelegramQueue queue = new();
+        TelegramThreadFollowRegistry followRegistry = FollowThread();
+        TestTelegramBotMessageSender sender = new();
+        TelegramTurnOutputRelay relay = CreateRelay(
+            queue,
+            followRegistry,
+            outputOptions: new TelegramOutputOptions
+            {
+                PresentationMode = TelegramOutputPresentationMode.Compact,
+                CompactPulseIntervalSeconds = 30,
+            },
+            messageSender: sender);
+
+        await relay.PublishTurnAcceptedAsync("thread-1", "turn-1", CancellationToken.None);
+        await relay.PublishTurnEventAsync(
+            CreateEntry(type: "item.tool_output", title: "Tool output", body: "Running tests."),
+            CancellationToken.None);
+        await relay.PublishTurnEventAsync(
+            CreateEntry(type: "item.tool_output", title: "Tool output", body: "Still running tests."),
+            CancellationToken.None);
+
+        Assert.Empty(sender.Sent);
+        Assert.Empty(sender.Edited);
+        OutboundTelegramMessage message = Assert.Single(queue.Messages);
+        Assert.Equal(CodexOutboundMessageKind.Progress, message.Kind);
+        Assert.Equal(OutboundPriority.Low, message.Priority);
+        Assert.Contains("Still working: Running tests.", message.Text);
+    }
+
+    [Fact]
     public async Task PublishTurnEventAsync_RestoresFollowerFromPersistedStateForDurableFinalResponse()
     {
         using TemporaryDirectory dataRoot = TemporaryDirectory.Create();
@@ -135,6 +167,8 @@ public sealed class TelegramTurnOutputRelayTests
 
         Assert.Single(sender.Sent);
         Assert.Single(sender.Edited);
+        AssertLiveCardShell(sender.Sent.Single().Text);
+        Assert.Contains("Started.", sender.Sent.Single().Text);
         AssertLiveCardShell(sender.Edited.Single().Text, "final captured");
         Assert.Contains("Final response captured", sender.Edited.Single().Text);
         Assert.DoesNotContain("Turn:", sender.Edited.Single().Text, StringComparison.OrdinalIgnoreCase);
@@ -370,6 +404,8 @@ public sealed class TelegramTurnOutputRelayTests
         AssertWrappedSpecialMessage(message.Text, "final", "Final answer.");
         Assert.Single(sender.Sent);
         Assert.Single(sender.Edited);
+        AssertLiveCardShell(sender.Sent.Single().Text);
+        Assert.Contains("Noisy update.", sender.Sent.Single().Text);
         AssertLiveCardShell(sender.Edited.Single().Text, "final captured");
         Assert.Contains("Final response captured", sender.Edited.Single().Text);
     }
@@ -481,7 +517,7 @@ public sealed class TelegramTurnOutputRelayTests
     }
 
     [Fact]
-    public async Task RepostLiveCardAsync_SendsFreshCopyWhenLiveCardExists()
+    public async Task RepostLiveCardAsync_UpdatesExistingLiveCardWhenLiveCardExists()
     {
         FakeOutboundTelegramQueue queue = new();
         TelegramThreadFollowRegistry followRegistry = FollowThread();
@@ -504,11 +540,64 @@ public sealed class TelegramTurnOutputRelayTests
             CancellationToken.None);
 
         Assert.True(reposted);
-        Assert.Equal(2, sender.Sent.Count);
-        Assert.Empty(sender.Edited);
-        AssertLiveCardShell(sender.Sent[1].Text);
-        Assert.Contains("Updates 0 | Progress 2", sender.Sent[1].Text);
-        Assert.DoesNotContain("Queued operator input.", sender.Sent[1].Text);
+        Assert.Single(sender.Sent);
+        Assert.Single(sender.Edited);
+        AssertLiveCardShell(sender.Edited.Single().Text);
+        Assert.Contains("Updates 0 | Progress 2", sender.Edited.Single().Text);
+        Assert.DoesNotContain("Queued operator input.", sender.Edited.Single().Text);
+    }
+
+    [Fact]
+    public async Task RepostLiveCardAsync_WaitsForPendingOutboundBeforeEditingExistingCard()
+    {
+        FakeOutboundTelegramQueue queue = new();
+        queue.StatusSequence.Enqueue(
+            new TelegramOutboundQueueStatus(
+                1,
+                1,
+                0,
+                11,
+                new TelegramDestinationKey(1234, 55),
+                DateTimeOffset.Parse("2026-05-04T00:00:00Z"),
+                null,
+                [
+                    new TelegramOutboundDestinationStatus(
+                        1234,
+                        55,
+                        "thread-1",
+                        PendingMessageCount: 1,
+                        PendingChunkCount: 0,
+                        PendingCharacterCount: 11,
+                        FirstPendingUtc: DateTimeOffset.Parse("2026-05-04T00:00:00Z"),
+                        LastEnqueuedUtc: DateTimeOffset.Parse("2026-05-04T00:00:00Z"),
+                        ChatBackoffUntilUtc: null,
+                        LastSentUtc: null),
+                ]));
+        queue.StatusSequence.Enqueue(new TelegramOutboundQueueStatus(0, 0, 0, 0, null, null, null, []));
+        TelegramThreadFollowRegistry followRegistry = FollowThread();
+        TestTelegramBotMessageSender sender = new();
+        TelegramTurnOutputRelay relay = CreateRelay(
+            queue,
+            followRegistry,
+            outputOptions: new TelegramOutputOptions
+            {
+                PresentationMode = TelegramOutputPresentationMode.LiveCard,
+                LiveCardMinEditIntervalSeconds = 0,
+            },
+            messageSender: sender);
+
+        await relay.PublishTurnAcceptedAsync("thread-1", "turn-1", CancellationToken.None);
+        bool reposted = await relay.RepostLiveCardAsync(
+            "thread-1",
+            new TelegramConversationScope(1234, 55),
+            "Queued operator input.",
+            CancellationToken.None);
+
+        Assert.True(reposted);
+        Assert.True(queue.StatusCalls >= 2);
+        Assert.Single(sender.Sent);
+        Assert.Single(sender.Edited);
+        AssertLiveCardShell(sender.Edited.Single().Text);
     }
 
     [Fact]
@@ -542,7 +631,7 @@ public sealed class TelegramTurnOutputRelayTests
     }
 
     [Fact]
-    public async Task PublishTurnEventAsync_LiveCardEditFailureKeepsPinnedCardAndFinalDelivery()
+    public async Task PublishTurnEventAsync_LiveCardEditsExistingCardAfterFinalResponseToKeepItVisible()
     {
         FakeOutboundTelegramQueue queue = new();
         TelegramThreadFollowRegistry followRegistry = FollowThread();
@@ -559,17 +648,15 @@ public sealed class TelegramTurnOutputRelayTests
         await relay.PublishTurnEventAsync(
             CreateEntry(type: "item.tool_output", title: "Tool output", body: "Initial update."),
             CancellationToken.None);
-        sender.EditFailures.Enqueue(new InvalidOperationException("message to edit not found"));
         await relay.PublishTurnEventAsync(
             CreateEntry(type: "turn.finalResponse", title: "Final response", body: "Final answer after replacement."),
             CancellationToken.None);
 
         Assert.Single(sender.Sent);
-        EditedTelegramMessage edit = Assert.Single(sender.Edited);
-        Assert.Equal(1, edit.MessageId);
+        Assert.Single(sender.Edited);
         Assert.Contains("Initial update.", sender.Sent.Single().Text);
-        AssertLiveCardShell(edit.Text, "final captured");
-        Assert.Contains("Final response captured", edit.Text);
+        AssertLiveCardShell(sender.Edited.Single().Text, "final captured");
+        Assert.Contains("Final response captured", sender.Edited.Single().Text);
         OutboundTelegramMessage message = Assert.Single(queue.Messages);
         Assert.Equal(CodexOutboundMessageKind.Completion, message.Kind);
         AssertWrappedSpecialMessage(message.Text, "final", "Final answer after replacement.");
@@ -1471,6 +1558,10 @@ public sealed class TelegramTurnOutputRelayTests
 
         public Queue<Exception> Exceptions { get; } = [];
 
+        public Queue<TelegramOutboundQueueStatus> StatusSequence { get; } = [];
+
+        public int StatusCalls { get; private set; }
+
         public TelegramOutboundQueueStatus Status { get; set; } = new(0, 0, 0, 0, null, null, null, []);
 
         public ValueTask EnqueueAsync(OutboundTelegramMessage message, CancellationToken cancellationToken)
@@ -1485,7 +1576,16 @@ public sealed class TelegramTurnOutputRelayTests
         }
 
         public Task<TelegramOutboundQueueStatus> GetStatusAsync(CancellationToken cancellationToken)
-            => Task.FromResult(Status);
+        {
+            StatusCalls++;
+            if (StatusSequence.TryDequeue(out TelegramOutboundQueueStatus? queuedStatus))
+            {
+                Status = queuedStatus;
+                return Task.FromResult(queuedStatus);
+            }
+
+            return Task.FromResult(Status);
+        }
     }
 
     private sealed class TestTelegramBotMessageSender : ITelegramBotMessageSender

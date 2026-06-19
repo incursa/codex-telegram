@@ -223,6 +223,7 @@ Syntax:
 
 ```text
 /output mode
+/output mode compact
 /output mode verbose
 /output mode live
 /output mode final
@@ -232,11 +233,12 @@ Syntax:
 Expected behavior:
 
 1. `/output mode` shows the effective mode and whether it came from configuration or a runtime override.
-2. `verbose` sends progress and update events as durable Telegram messages according to the normal filters.
-3. `live` uses an editable live turn card for progress/update events while final output remains durable Telegram history.
-4. `final` suppresses normal progress/update chatter and sends final output, errors, approval requests, and artifacts.
-5. `reset` clears the runtime override and returns to `TelegramOutput:PresentationMode`.
-6. The same choices are available from the `Output Mode` button on session cards.
+2. `compact` sends final output durably and publishes sparse still-working pulses while active work is otherwise quiet.
+3. `verbose` sends progress and update events as durable Telegram messages according to the normal filters.
+4. `live` uses an editable live turn card for progress/update events while final output remains durable Telegram history.
+5. `final` suppresses normal progress/update chatter and sends final output, errors, approval requests, and artifacts.
+6. `reset` clears the runtime override and returns to `TelegramOutput:PresentationMode`.
+7. The same choices are available from the `Output Mode` button on session cards.
 
 ### `/turn`
 
@@ -610,8 +612,8 @@ Syntax:
 Expected behavior:
 
 1. Defaults to the active session.
-2. Renders a session status card with state wording such as `Codex is working`, `Telegram output still draining`, `Codex finished; sending remaining Telegram output`, `Codex finished; Telegram delivery complete`, `Codex failed`, `Telegram delivery delayed`, or `Output compacted; open trace/history for full details`.
-3. Shows active turn ID, queue count, pending Telegram messages, pending Telegram chunks, model, thinking effort, working directory, and last activity.
+2. Renders a concise snapshot with active state, current activity, elapsed time when active, queued prompt count, pending Telegram delivery when relevant, output mode, model, and last activity.
+3. Keeps trace IDs, working directories, detailed delivery counters, and closeout bodies out of the default snapshot; use `/debug`, `/trace`, `/outbound`, or `/turn` when you need that detail.
 4. Includes a compact `Rate limits` line with five-hour and weekly block percentages and reset times when Codex account data is available.
 5. Shows the last turn closeout when the current process has observed one, including missing-final-response warnings for streamed assistant text.
 6. Includes buttons for Send/Add Input, Steer, Queue, Refresh, Tail/History, Debug/Trace, Model, Thinking, and Stop/Cancel.

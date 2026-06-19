@@ -78,7 +78,7 @@ Use these Telegram commands during operation:
 4. `/status` to confirm the active session state.
 5. `/outbound` to inspect delayed Telegram output.
 6. `/usage` to inspect five-hour and weekly Codex usage percentages and reset timing.
-7. `/output mode` to confirm whether the bot is in `Verbose`, `LiveCard`, or `FinalOnly` mode.
+7. `/output mode` to confirm whether the bot is in `Compact`, `Verbose`, `LiveCard`, or `FinalOnly` mode.
 8. `/turn updates` or `/turn full` to inspect retained operational turn history.
 9. `/tail` to inspect recent session output.
 

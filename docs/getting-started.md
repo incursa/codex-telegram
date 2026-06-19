@@ -559,11 +559,12 @@ The app also clamps several of those values to safe ranges at startup, so wildly
 
 `TelegramOutput` controls how Codex turn output is projected into Telegram:
 
-1. `TelegramOutput:PresentationMode` is `LiveCard` by default. Allowed values are `Verbose`, `LiveCard`, and `FinalOnly`.
+1. `TelegramOutput:PresentationMode` is `Compact` by default. Allowed values are `Compact`, `Verbose`, `LiveCard`, and `FinalOnly`.
 2. `TelegramOutput:HistoryRetentionDays` controls how long normalized operational history is retained in memory.
 3. `TelegramOutput:MaxHistoryEventsPerTurn` caps retained operational history for one turn.
 4. `TelegramOutput:CaptureProgressHistory` controls whether low-value progress text is retained instead of summarized.
 5. `TelegramOutput:LiveCardMinEditIntervalSeconds` throttles non-critical live-card edits.
+6. `TelegramOutput:CompactPulseIntervalSeconds` throttles compact still-working pulses.
 
 Use `/output mode` to inspect or temporarily change the runtime presentation mode. Use `/turn updates`, `/turn full`, `/turn progress`, and `/turn final` to inspect retained operational history without enabling debug capture.
 

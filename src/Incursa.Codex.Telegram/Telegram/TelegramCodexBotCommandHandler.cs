@@ -2023,7 +2023,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
 
             if (!TryParseOutputMode(parts[1], out TelegramOutputPresentationMode mode))
             {
-                await ReplyAsync(sender, message, "Usage: /output mode [verbose|live|final|reset]", BuildOutputModeButtons(), cancellationToken, includeNavigationButtons: false).ConfigureAwait(false);
+                await ReplyAsync(sender, message, "Usage: /output mode [compact|verbose|live|final|reset]", BuildOutputModeButtons(), cancellationToken, includeNavigationButtons: false).ConfigureAwait(false);
                 return;
             }
 
@@ -2032,7 +2032,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             return;
         }
 
-        await ReplyAsync(sender, message, "Usage: /output mode [verbose|live|final|reset]", BuildOutputModeButtons(), cancellationToken, includeNavigationButtons: false).ConfigureAwait(false);
+        await ReplyAsync(sender, message, "Usage: /output mode [compact|verbose|live|final|reset]", BuildOutputModeButtons(), cancellationToken, includeNavigationButtons: false).ConfigureAwait(false);
     }
 
     private async Task HandleTurnAsync(TelegramInboundMessage message, string arguments, ITelegramBotMessageSender sender, CancellationToken cancellationToken)
@@ -4292,7 +4292,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             "/debug [status|on|off|reset] - show or change diagnostic message preambles",
             "/debug trace <on|off|status|latest> - control or inspect local trace diagnostics",
             "/trace [latest|traceId|status|on|off|reset] - inspect turn delivery diagnostics",
-            "/output mode [verbose|live|final|reset] - show or change Telegram output presentation mode",
+            "/output mode [compact|verbose|live|final|reset] - show or change Telegram output presentation mode",
             "/turn [updates|progress|full|final] [sessionId] [turnId] - show operational turn history",
             "/outbound - show outbound Telegram queue status",
             "/stop [sessionId] - gracefully stop a session",
@@ -4658,7 +4658,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         CancellationToken cancellationToken)
     {
         StringBuilder builder = new();
-        builder.AppendLine("Session status card");
+        builder.AppendLine("Status");
         builder.AppendLine($"Session: {session.Name} ({GetShortSessionId(session.Id)})");
         string? activeTurnId = _turnCoordinator.GetActiveTurnId(session.Id);
         string? diagnosticTurnId = activeTurnId ?? session.LastTurnCloseout?.TurnId;
@@ -4671,16 +4671,26 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         CodexActiveTurnStateVm? activeTurn = _turnCoordinator.TryGetActiveTurnState(session.Id);
         TelegramSessionCardBehavior behavior = TelegramSessionCardBehavior.Resolve(session, activeTurnId, activeTurn, destination, diagnostics);
 
-        builder.AppendLine($"State: {behavior.StateText}");
-        builder.AppendLine($"Active turn: {activeTurnId ?? "(none)"}");
-        builder.AppendLine($"Status: {FormatStatusValue(session.Status)}");
-        builder.AppendLine($"Queue count: {queued.Count.ToString(CultureInfo.InvariantCulture)}");
-        builder.AppendLine($"Pending Telegram messages: {(destination?.PendingMessageCount ?? 0).ToString(CultureInfo.InvariantCulture)}");
-        builder.AppendLine($"Pending Telegram chunks: {(destination?.PendingChunkCount ?? 0).ToString(CultureInfo.InvariantCulture)}");
+        bool active = activeTurnId is not null;
+        builder.AppendLine($"Active: {(active ? "yes" : "no")}");
+        builder.AppendLine($"Current: {FormatCurrentActivity(behavior, activeTurn)}");
+        if (activeTurn is not null)
+        {
+            builder.AppendLine($"Elapsed: {FormatDuration(DateTimeOffset.UtcNow - activeTurn.StartedAt)}");
+        }
+
+        builder.AppendLine($"Queue: {queued.Count.ToString(CultureInfo.InvariantCulture)} pending");
+        int pendingMessages = destination?.PendingMessageCount ?? 0;
+        int pendingChunks = destination?.PendingChunkCount ?? 0;
+        if (pendingMessages > 0 || pendingChunks > 0)
+        {
+            builder.AppendLine($"Telegram: {pendingMessages.ToString(CultureInfo.InvariantCulture)} messages, {pendingChunks.ToString(CultureInfo.InvariantCulture)} chunks pending");
+        }
+
+        builder.AppendLine($"Mode: {_outputModeState.CurrentMode}");
         if (settings is not null)
         {
             builder.AppendLine($"Model: {FormatModelDisplay(settings)}");
-            builder.AppendLine($"Thinking: {FormatValue(settings.ReasoningEffort)}");
         }
 
         if (!string.IsNullOrWhiteSpace(usageSummary))
@@ -4688,17 +4698,14 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             builder.AppendLine(usageSummary);
         }
 
-        builder.AppendLine($"Working directory: {session.WorkingDirectory ?? "<default>"}");
         builder.AppendLine($"Last activity: {FormatRelativeAge(session.LastActivityUtc)}");
         if (session.LastTurnCloseout is not null)
         {
             builder.AppendLine($"Last turn: {FormatTurnCloseout(session.LastTurnCloseout)}");
-            builder.AppendLine($"Closeout: {session.LastTurnCloseout.Message}");
         }
 
-        if (diagnostics.TraceId is not null)
+        if (!active && diagnostics.TraceId is not null && !string.Equals(diagnostics.LikelyStatus, "unknown", StringComparison.OrdinalIgnoreCase))
         {
-            builder.AppendLine($"Trace: {diagnostics.TraceId}");
             builder.AppendLine($"Delivery: {diagnostics.LikelyStatus}");
         }
 
@@ -4707,17 +4714,39 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             builder.AppendLine($"Telegram delivery delayed until: {backoff:u}");
         }
 
-        if (diagnostics.Compacted)
-        {
-            builder.AppendLine("Output compacted; open trace/history for full details.");
-        }
-
         if (!string.IsNullOrWhiteSpace(session.LastError))
         {
             builder.AppendLine($"Last error: {session.LastError}");
         }
 
         return new TelegramSessionStatusCard(builder.ToString().TrimEnd(), behavior.Buttons);
+    }
+
+    private static string FormatCurrentActivity(TelegramSessionCardBehavior behavior, CodexActiveTurnStateVm? activeTurn)
+    {
+        if (activeTurn?.LastEvent is null)
+        {
+            return behavior.StateText;
+        }
+
+        string? text = activeTurn.LastEvent.Title;
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            text = activeTurn.LastEvent.Body;
+        }
+
+        return string.IsNullOrWhiteSpace(text)
+            ? behavior.StateText
+            : FormatStatusActivity(text);
+    }
+
+    private static string FormatStatusActivity(string text)
+    {
+        string normalized = SingleLine(text.Trim());
+        const int maxActivityCharacters = 80;
+        return normalized.Length <= maxActivityCharacters
+            ? normalized
+            : normalized[..(maxActivityCharacters - 1)].TrimEnd() + "...";
     }
 
     private static string FormatTurnCloseout(CodexTurnCloseoutSummary closeout)
@@ -4739,6 +4768,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         builder.AppendLine($"Output mode: {_outputModeState.CurrentMode}");
         builder.AppendLine($"Source: {(_outputModeState.HasRuntimeOverride ? "runtime override" : "configuration")}");
         builder.AppendLine();
+        builder.AppendLine("Compact: final messages plus sparse still-working pulses.");
         builder.AppendLine("Verbose: durable progress/update/final messages.");
         builder.AppendLine("LiveCard: progress/update events update a card; final output stays durable.");
         builder.AppendLine("FinalOnly: only final output, errors, approvals, and artifacts are pushed.");
@@ -4749,11 +4779,12 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         =>
         [
             [
+                new TelegramReplyButton("Compact", "outmode:compact"),
                 new TelegramReplyButton("Verbose", "outmode:verbose"),
                 new TelegramReplyButton("LiveCard", "outmode:live"),
-                new TelegramReplyButton("FinalOnly", "outmode:final"),
             ],
             [
+                new TelegramReplyButton("FinalOnly", "outmode:final"),
                 new TelegramReplyButton("Reset", "outmode:reset"),
             ],
         ];
@@ -4761,6 +4792,13 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
     private static bool TryParseOutputMode(string value, out TelegramOutputPresentationMode mode)
     {
         string normalized = value.Trim();
+        if (normalized.Equals("compact", StringComparison.OrdinalIgnoreCase)
+            || normalized.Equals("quiet", StringComparison.OrdinalIgnoreCase))
+        {
+            mode = TelegramOutputPresentationMode.Compact;
+            return true;
+        }
+
         if (normalized.Equals("live", StringComparison.OrdinalIgnoreCase)
             || normalized.Equals("card", StringComparison.OrdinalIgnoreCase))
         {
@@ -5204,12 +5242,12 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
 
     private static string BuildQueueUsage()
         => string.Join(Environment.NewLine, [
-            "Usage:",
-            "/queue - show queued prompts for this conversation",
-            "/queue all - show your queued prompts across conversations",
-            "/queue edit <id> <new text> - replace queued prompt text",
-            "/queue delete <id> - delete a queued prompt",
-            "/queue send <id> - remove a queued prompt and steer the active turn with it"
+            "Queue commands:",
+            "/queue",
+            "/queue all",
+            "/queue edit <id> <new text>",
+            "/queue delete <id>",
+            "/queue send <id>"
         ]);
 
     private static string FormatQueuedPrompts(
@@ -5233,7 +5271,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             return builder.ToString();
         }
 
-        builder.AppendLine(includeAll ? "Your queued prompts:" : "Queued prompts:");
+        builder.AppendLine($"Queue: {prompts.Count.ToString(CultureInfo.InvariantCulture)} pending");
         for (int index = 0; index < prompts.Count; index++)
         {
             TelegramQueuedPrompt prompt = prompts[index];
@@ -5244,13 +5282,10 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
                 ? $" · {prompt.Attachments.Count.ToString(CultureInfo.InvariantCulture)} attachment(s)"
                 : string.Empty;
 
-            builder.AppendLine($"{index + 1}. {prompt.SessionName} · id {GetShortQueuedPromptId(prompt.Id)} · queued {FormatRelativeAge(prompt.EnqueuedAt)}{scopeText}{attachmentText}");
+            builder.AppendLine($"{index + 1}. {GetShortQueuedPromptId(prompt.Id)} · {prompt.SessionName} · {FormatRelativeAge(prompt.EnqueuedAt)}{scopeText}{attachmentText}");
             builder.AppendLine($"   {FormatQueuedPromptPreview(prompt)}");
         }
 
-        builder.AppendLine();
-        builder.AppendLine("Buttons can send now, edit, or delete each item. Send now steers the active turn; if no turn is active, the item stays queued.");
-        builder.AppendLine("Text edit command: /queue edit <id> <new text>");
         return builder.ToString().TrimEnd();
     }
 

@@ -1143,7 +1143,7 @@ public sealed class TelegramCommandHandlerTests
         SentTelegramMessage sent = Assert.Single(harness.Sender.Sent);
         Assert.Contains("Output mode set to FinalOnly.", sent.Text);
         Assert.Contains("Output mode: FinalOnly", sent.Text);
-        Assert.Equal(["Verbose", "LiveCard", "FinalOnly", "Reset"], FlattenButtonLabels(sent));
+        Assert.Equal(["Compact", "Verbose", "LiveCard", "FinalOnly", "Reset"], FlattenButtonLabels(sent));
     }
 
     [Fact]
@@ -1951,7 +1951,9 @@ public sealed class TelegramCommandHandlerTests
             CancellationToken.None);
 
         Assert.Contains("Demo session", Assert.Single(statusHarness.Sender.Sent).Text);
-        Assert.Contains("Status: idle", statusHarness.Sender.Sent.Single().Text);
+        Assert.Contains("Active: no", statusHarness.Sender.Sent.Single().Text);
+        Assert.Contains("Queue: 0 pending", statusHarness.Sender.Sent.Single().Text);
+        Assert.Contains("Mode: LiveCard", statusHarness.Sender.Sent.Single().Text);
         AssertCompactUsageSummary(statusHarness.Sender.Sent.Single().Text);
 
         using CommandHandlerHarness closeoutHarness = CommandHandlerHarness.Create();
@@ -1976,7 +1978,7 @@ public sealed class TelegramCommandHandlerTests
         string closeoutStatus = Assert.Single(closeoutHarness.Sender.Sent).Text;
         Assert.Contains("Last turn: completed", closeoutStatus);
         Assert.Contains("warning", closeoutStatus);
-        Assert.Contains("Closeout: Codex streamed assistant text", closeoutStatus);
+        Assert.DoesNotContain("Closeout:", closeoutStatus);
 
         using CommandHandlerHarness cachedMissHarness = CommandHandlerHarness.Create();
         cachedMissHarness.SessionManager.Sessions.Add(CreateSession("thread-1", "Demo session", cachedMissHarness.Temp.Path));
@@ -2136,8 +2138,8 @@ public sealed class TelegramCommandHandlerTests
             CancellationToken.None);
 
         SentTelegramMessage sent = Assert.Single(harness.Sender.Sent);
-        Assert.Contains("Queued prompts:", sent.Text);
-        Assert.Contains("id aaaaaaaa", sent.Text);
+        Assert.Contains("Queue: 1 pending", sent.Text);
+        Assert.Contains("1. aaaaaaaa", sent.Text);
         Assert.Contains("first line second line", sent.Text);
         Assert.DoesNotContain("other topic", sent.Text);
         Assert.Equal(["Send now", "Edit", "Delete", "Sessions", "Projects", "Help"], FlattenButtonLabels(sent));
@@ -2158,7 +2160,7 @@ public sealed class TelegramCommandHandlerTests
             CancellationToken.None);
 
         SentTelegramMessage sent = Assert.Single(harness.Sender.Sent);
-        Assert.Contains("Queued prompts:", sent.Text);
+        Assert.Contains("Queue: 1 pending", sent.Text);
         Assert.Contains("queued text", sent.Text);
     }
 

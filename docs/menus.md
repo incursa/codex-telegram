@@ -186,7 +186,7 @@ Buttons:
 
 ## Live Turn Card
 
-In `LiveCard` and `FinalOnly` output modes, progress and update events can be projected into one editable live turn card instead of a stream of chat messages. In `LiveCard`, the card keeps a visible `Latest` line for assistant output and a separate `Activity` line for ephemeral internal work. The card does not show the internal Codex turn ID, and a retry or internal restart keeps editing the same card in place.
+In `LiveCard` and `FinalOnly` output modes, progress and update events can be projected into one editable live turn card instead of a stream of chat messages. `Compact` mode is the default and uses sparse chronological still-working pulses instead of an editable card. In `LiveCard`, the card keeps a visible `Latest` line for assistant output and a separate `Activity` line for ephemeral internal work. The card does not show the internal Codex turn ID, and a retry or internal restart keeps editing the same card in place.
 
 Expected content:
 

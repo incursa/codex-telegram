@@ -30,7 +30,7 @@ Record the date, operator, OS, published asset or commit SHA, Codex CLI version,
 13. Send `/plan <request>` and confirm the bot starts the Plan mode flow; if Codex asks a follow-up question, answer it with `/answer <answer>` and confirm the conversation resumes cleanly.
 14. Send `/status` during and after a turn and confirm the card distinguishes Codex work from Telegram delivery drain.
 15. After a completed prompt, confirm Telegram appends a standalone `~~ fin ~~` marker rather than a bare `Turn completed` message, `/status` shows the last turn closeout, and `/tail` includes useful recent session events when available.
-16. Send `/output mode` and confirm `LiveCard` is the default unless local configuration intentionally changed it.
+16. Send `/output mode` and confirm `Compact` is the default unless local configuration intentionally changed it.
 17. Send `/output mode final`, run a short prompt, and confirm progress/update chatter is suppressed while final output and `~~ fin ~~` are still durable messages.
 18. Send `/output mode verbose`, run a short prompt, and confirm update messages are visible as durable Telegram messages.
 19. Send `/output mode live`, run a short prompt, and confirm updates edit one live turn card while the final answer is delivered as normal Telegram messages.
