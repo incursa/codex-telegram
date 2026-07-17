@@ -28,6 +28,10 @@ public sealed class CodexTurnExecutionCoordinatorStreamingTests
 
         CodexThreadExecutionVm execution = await coordinator.StartAsync(thread, [], new CodexTurnOptions(), CancellationToken.None);
         await script.Finished.Task.WaitAsync(TimeSpan.FromSeconds(1));
+        await WaitForConditionAsync(
+            () => queue.Messages.Any(message => message.Text == "hello world.")
+                && queue.Messages.Any(message => message.Text == "remaining"),
+            () => $"Messages: {string.Join(" | ", queue.Messages.Select(message => message.Text))}");
 
         Assert.Equal("thread-1", execution.ThreadId);
         Assert.Equal(script.TurnId, execution.TurnId);
