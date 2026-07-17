@@ -21,7 +21,7 @@ jobs:
 
     steps:
       - name: Check out Codex Telegram
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           path: source
 
@@ -66,7 +66,7 @@ jobs:
 
       - name: Check out central docs repository
         if: steps.manifest.outputs.publish == 'true'
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: incursa/incursa-docs
           token: ${{ secrets.DOCS_SITE_SYNC_TOKEN }}
