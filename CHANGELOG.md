@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 1.0.21 - 2026-09-10
+
 - Added additive `GeneralPurpose`/`Repository` workspace configuration with validated repository roots, safe labels, automatic repository-bound sessions, read-only `/repo` summaries, and fail-closed cross-repository resume/project actions.
 - Extended first-run setup into a mode, storage, Telegram identity, expiring pairing, Codex-readiness, command/menu, and optional profile walkthrough with resumable saves and explicit readiness outcomes.
 - Added conversation-scoped queue/input-bundle mutations, stale callback rejection, instance-aware state fallbacks, duplicate polling diagnostics, and the packaged opt-in avatar asset.
