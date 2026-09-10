@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "name": "codex-telegram",
+  "platform": { "os": "debian", "majorVersion": 13 },
+  "workingDirectory": ".",
+  "dependencies": {
+    "aptPackages": ["ffmpeg"],
+    "requiredCommands": ["ffmpeg"],
+    "dotnet": { "globalJson": "global.json", "installExactSdk": true },
+    "codexCli": { "install": true, "updateOnBootstrap": true }
+  },
+  "commands": {
+    "bootstrap": [
+      { "file": "dotnet", "args": ["restore", "CodexTelegram.slnx"] },
+      { "file": "dotnet", "args": ["build", "CodexTelegram.slnx", "--configuration", "Release", "--no-restore", "-m:1"] }
+    ],
+    "test": [
+      { "file": "dotnet", "args": ["test", "tests/Incursa.Codex.Telegram.Tests/Incursa.Codex.Telegram.Tests.csproj", "--configuration", "Release", "--no-build", "--no-restore", "-m:1"] },
+      { "file": "pwsh", "args": ["-NoProfile", "-File", "scripts/Test-TelegramFuzzCorpus.ps1", "-Configuration", "Release", "-NoRestore", "-NoBuild"] },
+      { "file": "pwsh", "args": ["-NoProfile", "-File", "scripts/Test-TrackedSecretScan.ps1"] }
+    ]
+  },
+  "readiness": { "codexAuthenticationRequired": true }
+}
