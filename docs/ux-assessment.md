@@ -1,0 +1,144 @@
+---
+title: "UX Assessment"
+---
+
+# UX Assessment
+
+This is an initial, evidence-labeled assessment of the operator experience. It records what the repository can currently support and what still needs a live user check. It is not a claim that the Telegram UI has been validated with a production bot.
+
+## Evidence Labels
+
+- `automated`: repository build, unit/integration tests, format checks, fuzz checks, or static inspection.
+- `synthetic`: a scripted Telegram/Codex test double or fixture. Useful for deterministic behavior, but not proof of a real external service.
+- `local-live`: a real local process connected to a real Codex installation or bot account under controlled credentials.
+- `Telegram-live`: a real Telegram chat, BotFather configuration, and observed messages in the intended private/group/forum scope.
+
+## Initial Findings
+
+| Finding | Evidence | User impact |
+| --- | --- | --- |
+| The first-run path can validate a BotFather token, capture an admin ID from a setup-code message, and fall back to manual ID entry. | `automated` source/test inspection; `Telegram-live` still required for the end-to-end path. | A failed capture should be recoverable without abandoning setup. |
+| `GeneralPurpose` and `Repository` are distinct workspace contracts. | `automated` configuration/source inspection. | Operators need to choose scope before exposing a bot to a group or shared workflow. |
+| Private chat is simpler than a group root; forum topics add trust, privacy, and permission requirements. | `automated` routing/authorization tests and docs inspection; live Telegram scope remains open. | Silent group behavior is easy to misread as a Codex failure. |
+| Guided setup can apply the app-owned command list and menu button through the Bot API once, but there is no background synchronization; profile/privacy/group settings still need BotFather/manual handling. | `automated` source inspection. | The operator needs visible per-operation outcomes and a slash-command fallback. |
+| Codex authentication belongs to the local Codex installation, not this app. | `automated` source/config boundary inspection. | Two instances must not accidentally share credentials or state. |
+| Build, test, fuzz, and mutation results are not equivalent to live Telegram proof. | `automated` test and release-script inspection. | Release notes must name the evidence type and any skipped live checks. |
+
+## Delivered Improvements
+
+The current documentation slice delivers:
+
+1. Explicit `CodexTelegram:Mode` guidance for `GeneralPurpose` and `Repository`, including `RepositoryRoot`, `RepositoryDisplayLabel`, and `InstanceId`.
+2. Guided-setup outcome guidance for validated setup, manual fallback, save-after-warning, cancellation, and write failure.
+3. Two-instance examples with separate BotFather tokens, executable folders, and local `DataRoot` values.
+4. Configuration precedence and direct environment-variable fallback rules.
+5. Clear ownership boundaries between app commands/`/help`, one-time Bot API command/menu setup, BotFather profile/privacy/group settings, and manual slash-command fallbacks.
+6. Private-chat, trusted-group-root, and forum-topic requirements with `/send` and topic commands as operational fallbacks.
+7. Codex authentication isolation guidance that keeps credentials out of app state and repositories.
+8. Honest verification language distinguishing automated, synthetic, local-live, and Telegram-live evidence.
+
+## Synthetic Before/After Examples
+
+### Example: setup outcome
+
+Before (ambiguous):
+
+```text
+Setup complete. Start the bot.
+```
+
+After (evidence-aware):
+
+```text
+First-time setup is saved. The token was validated and the admin ID was captured from a private setup-code message.
+Next: review the workspace mode and repository boundary, then run /doctor in the private chat.
+```
+
+The after text reports what the wizard observed. It does not imply that a normal Codex turn or a group workflow has been tested.
+
+### Example: group troubleshooting
+
+Before (misleading):
+
+```text
+The bot is offline because the group message was ignored.
+```
+
+After (actionable):
+
+```text
+No group update was observed. Check the allowlisted user, trusted chat, and BotFather privacy mode. Try a command, mention, reply, or /send <text>; then inspect /doctor and /outbound.
+```
+
+### Example: verification report
+
+Before (overclaiming):
+
+```text
+All tests pass, so Telegram and Codex authentication are ready.
+```
+
+After (bounded):
+
+```text
+automated: build, tests, fuzz, and format checks passed.
+synthetic: scripted Codex routing checks passed.
+Telegram-live: not run; real bot, BotFather settings, and Codex account authentication remain unverified.
+```
+
+## Follow-Up User Stories
+
+### Title: Validate the guided setup path with a real private bot
+
+Description: As an operator, I want to complete first-run setup against a disposable BotFather bot so that token validation, setup-code capture, manual fallback, and saved settings are observed end to end.
+
+Acceptance criteria:
+
+- A real private chat captures the setup code and saves the expected numeric user ID.
+- An expired or skipped capture reaches the manual numeric-ID fallback.
+- Invalid-token and save-after-warning outcomes are visible and do not claim validation.
+- The resulting local settings file contains no plaintext value in the assessment artifact or published logs.
+
+### Title: Validate general-purpose and repository mode boundaries
+
+Description: As an operator, I want to exercise both workspace modes with disposable repositories so that project browsing and repository pinning are understandable and fail closed when configuration is invalid.
+
+Acceptance criteria:
+
+- `GeneralPurpose` can list/select a project under an allowlisted workspace root.
+- `Repository` requires a valid `RepositoryRoot` and does not select an unrelated path.
+- The configured repository label appears where the operator needs to distinguish instances.
+- Invalid or missing repository configuration reports an actionable error.
+
+### Title: Validate two-instance state and credential isolation
+
+Description: As an operator, I want two bot processes to run concurrently without cross-talk so that each instance has independent Telegram updates, local state, and Codex authentication context.
+
+Acceptance criteria:
+
+- Each process uses a distinct BotFather token and receives only its own test messages.
+- Each process uses a distinct `DataRoot`; project/session bindings never cross instance boundaries.
+- Codex authentication is verified under the intended OS account/context without copying auth files into the repository.
+- Restarting one instance does not alter the other instance's state or delivery queue.
+
+### Title: Validate command/profile ownership and stale-picker fallback
+
+Description: As an operator, I want to understand which command/profile operations guided setup applies through the Bot API and which remain manual in BotFather, so that I can continue using slash commands when the picker is stale.
+
+Acceptance criteria:
+
+- `/help` and the command reference describe the actual runtime command behavior.
+- Guided setup reports independent success, skip, and failure outcomes for its app-owned command/menu operations.
+- BotFather's description and privacy/group settings are updated through the documented manual steps.
+- A stale or unavailable picker does not block `/doctor`, `/send`, `/status`, and the other documented slash commands.
+
+### Title: Complete private, group-root, and forum-topic live smoke coverage
+
+Description: As a maintainer, I want evidence for each Telegram scope so that release readiness does not rely on private-chat behavior alone.
+
+Acceptance criteria:
+
+- Private-chat prompt, output, queue, and restart checks pass with a real bot.
+- Trusted group-root checks pass for an allowlisted user and chat under the intended privacy mode.
+- Forum-topic creation/attachment checks pass only in a forum-enabled supergroup with required permissions.
+- The release record labels each result `Telegram-live` and names skipped scopes explicitly.

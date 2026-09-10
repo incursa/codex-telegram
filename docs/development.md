@@ -13,6 +13,8 @@ This guide is for contributors who want to build, test, package, or change the s
 3. A Telegram bot token and numeric Telegram user ID for live manual checks.
 4. `OPENAI_API_KEY` and `ffmpeg` only if you are testing voice transcription.
 
+The app does not own Codex authentication. Development tests should use a disposable or explicitly selected Codex account/context; do not add Codex auth files to the repository or test artifacts. When testing two bot instances, isolate their settings/state roots and, if needed, their Codex auth contexts.
+
 ## Restore, Build, And Test
 
 ```powershell
@@ -77,6 +79,8 @@ That gate includes:
 6. Tracked-file secret scan.
 7. Publish verification unless `-SkipPublish` is used.
 
+This is repository evidence, not live integration evidence. It does not validate a real Telegram token, BotFather profile/privacy settings, group delivery, or Codex account authentication. Add the result of [manual-test-plan.md](manual-test-plan.md) separately when making those claims.
+
 Run the tracked-file secret scan directly when needed:
 
 ```powershell
@@ -121,3 +125,10 @@ Update docs when a change affects:
 6. Public support boundaries.
 
 Keep the README user-facing. Put source, test, and contribution workflow details here or in [CONTRIBUTING.md](../CONTRIBUTING.md).
+
+Ownership boundaries matter when changing docs:
+
+1. The app owns command parsing, callback behavior, and `/help`.
+2. Guided setup may apply the app-owned command list and menu button through the Bot API once; BotFather remains the manual path for profile text, privacy/group settings, and skipped/failed operations. There is no background synchronization.
+3. `CodexTelegram:Mode` owns workspace scope (`GeneralPurpose` or `Repository`), while `TelegramOutput:PresentationMode` owns Telegram output presentation.
+4. Use slash-command fallbacks in examples when a button or command picker may be unavailable.

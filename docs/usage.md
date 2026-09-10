@@ -28,6 +28,19 @@ Source example:
 dotnet run --project src\Incursa.Codex.Telegram -- --run
 ```
 
+## Workspace Modes And Instance Boundaries
+
+`CodexTelegram:Mode` selects the workspace contract, not the Telegram delivery mode:
+
+| Mode | Day-to-day behavior |
+| --- | --- |
+| `GeneralPurpose` | `/projects` and `/project add` operate over the configured workspace roots. Select the project before creating or continuing work. |
+| `Repository` | The instance is pinned to `CodexTelegram:RepositoryRoot`; use the configured label, when present, to distinguish it in operator messages. |
+
+For a two-instance setup, use separate BotFather tokens, executable folders, and `CodexTelegram:Workspace:DataRoot` values. A separate `CodexTelegram:InstanceId` is useful when the default data-root convention is used, but an explicit data root is easier to audit. Do not run two pollers with the same bot token.
+
+Configuration precedence is, from lowest to highest: `appsettings.json`, executable-local `appsettings.Local.json` (or launch-directory fallback), user secrets, `CODEX_TELEGRAM_` environment variables, then command-line arguments. The direct variables `TELEGRAM_BOT_TOKEN`, `TELEGRAM_ALLOWED_USER_IDS`, `TELEGRAM_ALLOWED_CHAT_IDS`, `OPENAI_API_KEY`, and `CODEX_PATH` fill only empty settings; they do not override a value already supplied by those layered sources.
+
 ## Daily Checklist
 
 Use this short checklist at the start of a real work session:
@@ -52,6 +65,16 @@ Use this short checklist at the start of a real work session:
 8. Use `/usage` when you need five-hour or weekly Codex reset timing.
 
 Private chat is the primary setup workflow. Trusted group roots and forum topics are useful once you understand Telegram privacy mode, permissions, and chat allowlists.
+
+Scope rules are deliberately cumulative:
+
+| Chat scope | Required access | Normal fallback |
+| --- | --- | --- |
+| Private chat | Allowlisted user | `/send <text>` for explicit dispatch. |
+| Trusted group root | Allowlisted user plus trusted/allowlisted chat | Mention/reply or `/send` when privacy mode hides ordinary text. |
+| Forum topic | All group-root requirements plus a forum-enabled supergroup and topic permissions | `/topic current`, `/topics`, or `/send`; fix trust/permissions before treating silence as a Codex failure. |
+
+The app owns command parsing and `/help`. Guided setup can apply the app-owned command list and menu button through the Bot API, but it does not maintain a background sync. BotFather remains the manual path for profile text, group/privacy settings, and skipped or failed setup operations. If the picker is stale, use the manual command forms in [command-reference.md](command-reference.md).
 
 ## Sending Work
 
@@ -99,6 +122,8 @@ Common flow:
 4. Send `/goal pause`, `/goal resume`, `/goal complete`, or `/goal clear` to change goal state.
 
 If the bot says goals are unavailable, update Codex and confirm the app-server backend is being used.
+
+The bot does not create or isolate Codex credentials. Confirm the configured Codex executable and authentication context in the same OS account/environment used by the process. Keep Codex auth files outside repositories and local Telegram configuration. Separate instances that require separate Codex identities need separate OS identities or a Codex-supported auth-home mechanism.
 
 ## Reading Output
 
@@ -192,6 +217,8 @@ Forum-topic flow:
 ```
 
 If `/topic new` fails, confirm the chat is a forum-enabled supergroup and the bot has the required topic-management rights.
+
+Do not infer live readiness from local output alone. A successful `/doctor` proves the bot's reported local state; it does not prove that an unobserved group update arrived or that a Codex turn was authenticated. Use `/tail`, `/outbound`, and the manual checklist when diagnosing delivery, then record whether the evidence was automated, synthetic, local live, or real Telegram live.
 
 ## Shutdown And Restart
 

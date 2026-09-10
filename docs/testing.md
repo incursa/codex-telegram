@@ -16,6 +16,8 @@ Run this before release validation, release tags, and pushes that affect runtime
 
 That gate builds, tests, formats this repository's source and tests, audits packages, runs a tracked-file secret scan, runs the checked-in Telegram fuzz corpus, and publishes unless `-SkipPublish` is passed.
 
+Evidence boundary: this gate is automated repository evidence. It does not prove a real Telegram update was received, a BotFather command/profile setting was applied, a group or forum topic is trusted, or the configured Codex account authenticated. Record those as separate live evidence from [manual-test-plan.md](manual-test-plan.md).
+
 ## Telegram Fuzz Corpus
 
 Run this directly when changing Telegram command parsing, message chunking, attachment mapping, or emoji/Unicode handling:
@@ -64,5 +66,9 @@ Latest local mutation evidence from the May 5, 2026 release-readiness pass:
 
 Mutation testing is not part of the normal release gate because it is slower and best used as focused quality evidence after meaningful Telegram behavior changes.
 Treat mutation scores as advisory evidence. The broader `handler` and `queue` profiles intentionally include large surfaces that are not exhaustively covered by unit tests, so record the score and investigate material survivors instead of presenting a passing Stryker run as full behavioral proof.
+
+When documenting a verification result, label it as `automated`, `synthetic`, `local-live`, or `Telegram-live`. A scripted Codex runtime is synthetic evidence; it cannot establish Codex authentication. Keep auth state outside the repository and run any local-live check under the same OS account/environment as the bot.
+
+For workspace-mode changes, cover both `CodexTelegram:Mode=GeneralPurpose` (workspace-root browsing/project selection) and `CodexTelegram:Mode=Repository` (explicit `RepositoryRoot` boundary). For two-instance tests, use distinct Telegram tokens and `DataRoot` values so one process cannot consume the other's updates or state.
 
 The canonical requirement IDs for Codex testability and validation live in [`specs/requirements/codex-telegram/_index.md`](../specs/requirements/codex-telegram/_index.md).

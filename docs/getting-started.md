@@ -18,6 +18,17 @@ The flow is:
 
 After that first setup succeeds, use [usage.md](usage.md) for the normal day-to-day operator workflow.
 
+## Choose A Workspace Mode
+
+`CodexTelegram:Mode` is independent of the Telegram chat type and output presentation mode:
+
+| Value | Use it for | Configuration |
+| --- | --- | --- |
+| `GeneralPurpose` | One personal bot that can browse and select among several local repositories. This is the default. | `CodexTelegram:Workspace:WorkspaceRoots` and, preferably, an explicit `CodexTelegram:Context:WorkingDirectory`. |
+| `Repository` | A dedicated bot instance constrained to one repository. | `CodexTelegram:RepositoryRoot`; `CodexTelegram:RepositoryDisplayLabel` is optional. |
+
+In `Repository` mode, treat `RepositoryRoot` as the source of truth for the instance's project boundary. Do not rely on the process current directory as an implicit repository. In either mode, configure a separate `CodexTelegram:Workspace:DataRoot` for each running instance.
+
 ## What This App Does
 
 `Incursa.Codex.Telegram` is a console host for a local Codex installation.
@@ -163,6 +174,20 @@ The model prompts are picker-based for the common cases, so you can choose a kno
 
 The menu understands `!clear` when a field prompt says it can be cleared.
 
+### Wizard outcomes
+
+Treat the wizard's ending message as an outcome, not as proof that every integration is ready:
+
+| Outcome | Meaning | Next action |
+| --- | --- | --- |
+| `First-time setup is saved` | The local settings file was written and the normal menu can open. | Review the displayed mode, repository/workspace, Codex executable, and allowlist, then start the bot. |
+| Telegram token validated and user ID captured | Telegram answered the token check and the wizard observed the exact setup code in a private message. | Confirm the numeric ID before saving; this is setup evidence, not a full conversation smoke test. |
+| Token saved after validation warning | The wizard could not validate the token but you explicitly chose to save it. | Fix connectivity/token configuration and run `/doctor` after starting; do not call setup complete based on this path alone. |
+| Automatic user capture timed out or was skipped | No qualifying private setup message was observed. | Enter the numeric ID manually, or run `/whoami` as the documented fallback while the allowlist is empty. |
+| Cancelled or unable to write settings | No usable setup file was produced. | Correct the path/permissions and rerun the wizard. |
+
+The wizard can optionally apply the app-owned command list and Telegram menu button through the Bot API. This is a one-time setup action, not background synchronization. Description/about text, group-join setting, privacy mode, and any skipped or failed operation remain manual BotFather work; use [botfather.md](botfather.md).
+
 ### 3. User secrets
 
 Use this during source-based development when you do not want values in plain JSON.
@@ -190,6 +215,8 @@ The configuration sources are layered in this order:
 5. Command-line arguments.
 
 Later sources win.
+
+The direct variables below are compatibility fallbacks. They are consulted only when the corresponding bound setting is empty; they do not override a non-empty value from the layered configuration sources. The app does not merge two values for an allowlist.
 
 The app also has a few direct environment-variable fallbacks for common secrets:
 
@@ -248,6 +275,10 @@ If you prefer to edit JSON by hand, this is a good starting point:
   },
   "CodexTelegram": {
     "InitializeOnStart": true,
+    "Mode": "GeneralPurpose",
+    "InstanceId": "personal",
+    "RepositoryRoot": "",
+    "RepositoryDisplayLabel": "",
     "TerminalEventHoldMilliseconds": 3000,
     "Context": {
       "WorkingDirectory": "C:\\src\\your-repo",
@@ -284,7 +315,9 @@ Configuration behavior:
 15. `CodexTelegram:Context:ReasoningEffort` is the default reasoning effort for normal turns.
 16. `Codex:PlanMode:ReasoningEffort` is the separate default reasoning effort for plan turns.
 17. `CodexTelegram:Workspace:WorkspaceRoots` are the directories users may add as projects.
-18. The Codex submenu will query live model names and effort choices when the configured executable is reachable.
+18. `CodexTelegram:Mode` accepts `GeneralPurpose` or `Repository`; repository mode requires `CodexTelegram:RepositoryRoot`.
+19. `CodexTelegram:InstanceId` is an optional instance label used to partition the default local state location. Use an explicit `DataRoot` when state separation matters.
+20. The Codex submenu will query live model names and effort choices when the configured executable is reachable.
 
 ## First Launch Checklist
 
@@ -303,6 +336,8 @@ When you launch the app for the first time, work through this list in order.
 
 If the menu shows warnings, do not ignore them casually. They usually mean one of the required pieces is still missing.
 If you leave workspace roots or the default working directory unset, the runtime falls back to the process current directory. That fallback exists for development convenience only; public, shared, or recorded setups should use explicit roots and an explicit default working directory.
+
+For repository mode, an unset or invalid `RepositoryRoot` is a configuration failure, not a reason to fall back to an unrelated current directory.
 
 ## Run It
 
@@ -352,6 +387,19 @@ The GitHub Actions release workflow currently publishes:
 2. Linux x64.
 3. macOS arm64.
 
+### Two-instance example
+
+For two concurrent bots, create two BotFather bot accounts and keep their local configuration and state separate:
+
+```text
+C:\tools\codex-telegram-general\codex-telegram.exe
+C:\tools\codex-telegram-repo\codex-telegram.exe
+```
+
+The general-purpose instance can use `CodexTelegram:Mode=GeneralPurpose` with workspace roots such as `C:\src`. The repository instance can use `CodexTelegram:Mode=Repository`, `CodexTelegram:RepositoryRoot=C:\src\docs-repo`, and a different `CodexTelegram:Workspace:DataRoot`. Set distinct `InstanceId` values when using the default state-root convention. Never use the same Telegram token or `DataRoot` for both processes.
+
+The effective configuration order is `appsettings.json`, executable-local `appsettings.Local.json` (launch-directory fallback), user secrets, `CODEX_TELEGRAM_` environment variables, and command-line arguments. Direct `TELEGRAM_BOT_TOKEN`, `TELEGRAM_ALLOWED_USER_IDS`, `TELEGRAM_ALLOWED_CHAT_IDS`, `OPENAI_API_KEY`, and `CODEX_PATH` values are consulted only when their corresponding setting is empty.
+
 ## Set Up Workspaces And Codex Defaults
 
 Workspaces are the directories the bot considers safe and intentional for project selection.
@@ -394,6 +442,8 @@ Suggested sequence:
 7. Try `/doctor`, `/tail`, `/status`, `/model`, and `/thinking`.
 
 If that flow works, the core integration is healthy.
+
+Label this result accurately: it is a live private-chat smoke result only when performed against a real bot and a real Codex installation. Unit tests, scripted Codex doubles, and a successful build do not prove Telegram delivery or Codex authentication.
 
 If the bot never replies, stop and check:
 
@@ -631,6 +681,8 @@ Check these:
 3. `Codex:CodexPathOverride` is set if `codex` is not on `PATH`.
 4. `TelegramBot:CodexExecutablePath` is set if you prefer that config key.
 5. `CODEX_PATH` is correct if you are using the environment-variable fallback.
+
+The bot does not provision Codex authentication. Confirm authentication by running the same executable as the bot, under the same OS account and process environment. For two instances that need separate Codex identities, use separate OS accounts or a Codex-supported per-process auth location; do not put auth state in either `appsettings.Local.json` or a repository. The Telegram bot token and Codex auth are separate credentials.
 
 ### Voice notes fail
 

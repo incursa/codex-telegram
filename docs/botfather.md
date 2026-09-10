@@ -20,6 +20,12 @@ Use this posture unless you are intentionally demoing group or forum-topic behav
 
 This keeps the first setup path narrow: one allowed Telegram user talking to one local Codex installation.
 
+## Ownership And Manual Sync
+
+The app owns command parsing, callback behavior, and the built-in `/help` response. Guided setup can apply the app-owned command list and Telegram menu button through the Bot API, one time; it does not run a background sync. BotFather is the manual owner for description, about text, group-join setting, privacy mode, and any command/profile operation that setup skips or cannot apply. Changes in `docs/` remain recommendations that an operator must review and apply where needed.
+
+After changing the command list, verify it in Telegram. If the picker has not refreshed, use `/help` and the exact forms in [command-reference.md](command-reference.md); a stale picker is a discoverability issue, not evidence that a command is unsupported.
+
 ## Create The Bot
 
 Open a Telegram chat with `@BotFather` and send:
@@ -135,6 +141,8 @@ Choose your bot, then choose the option that prevents adding it to groups.
 
 If you want group or forum-topic support, enable group joins and read [menus.md](menus.md) and [command-reference.md](command-reference.md) before relying on it.
 
+The group setting only controls whether the bot may be added. It does not authorize messages. Runtime authorization still requires an allowlisted user and, for groups/forums, a trusted or config-allowlisted chat. Forum topics additionally require a forum-enabled supergroup and the relevant bot permissions.
+
 ## Privacy Mode
 
 For private-chat-only use, privacy mode can stay enabled:
@@ -146,6 +154,8 @@ For private-chat-only use, privacy mode can stay enabled:
 Choose your bot, then keep privacy enabled.
 
 If you want ordinary group text to route to Codex, privacy mode may need to be disabled. That is an advanced mode. With privacy enabled, Telegram generally limits group updates to commands, mentions, replies, inline messages, and service messages.
+
+When privacy mode is enabled, test the intended group workflow with a command, mention, or reply before concluding that the bot is offline. `/send <text>` is the explicit manual dispatch fallback.
 
 ## Optional Profile Media
 

@@ -14,13 +14,24 @@ For the available Telegram buttons and menus, see the [menus and button referenc
 
 ## Runtime Modes
 
-The service has a small set of operating modes:
+The service has two workspace modes. Set `CodexTelegram:Mode` to one of these values:
+
+| Mode | Behavior | Required settings |
+| --- | --- | --- |
+| `GeneralPurpose` (default) | Browse the configured `CodexTelegram:Workspace:WorkspaceRoots` and select projects per Telegram conversation. | A workspace root is strongly recommended; the runtime otherwise falls back to its process directory. |
+| `Repository` | Pin the host to one repository and use it as the default project boundary. | `CodexTelegram:RepositoryRoot`; `RepositoryDisplayLabel` is optional. |
+
+Use `GeneralPurpose` for a personal launcher that works across several repositories. Use `Repository` for a dedicated bot instance whose Telegram users should stay within one repository. In repository mode, keep `RepositoryRoot` explicit and validate it locally before enabling polling.
+
+The service also has launch modes:
 
 1. Start it with no arguments in an interactive terminal to open the bootstrap/admin menu.
 2. Start it with `--run` to skip the menu and run the hosted services directly.
 3. Start it with `--menu` to force the bootstrap/admin menu.
 4. Use private chat first, then trusted group roots or forum topics only after the private flow works.
 5. Use [docs/usage.md](docs/usage.md) for the user-facing output modes: `Compact`, `Verbose`, `LiveCard`, and `FinalOnly`.
+
+`CodexTelegram:Mode` controls workspace scope; `TelegramOutput:PresentationMode` controls how turn output is presented. They are independent settings.
 
 ## Configuration And Secrets
 
@@ -38,6 +49,8 @@ Keep these out of version control:
 3. Local Codex auth state.
 4. `appsettings.Local.json`.
 5. Local debug traces and private transcripts.
+
+The app does not own or synchronize Codex authentication. Codex authentication belongs to the local Codex installation and the OS/user context that runs it. For separate bot instances, use separate OS identities or Codex-supported per-instance auth homes when you need auth isolation; never copy auth files into a repository or Telegram settings file. Verify each instance by running its configured `codex` executable in the same account/context before starting the bot.
 
 ## Repository Layout
 
@@ -174,6 +187,47 @@ Summarize this repository and tell me the next safest setup check to run.
 ```
 
 At this point you have a working private Telegram chat connected to a local Codex session.
+
+### Run two isolated instances
+
+Each long-polling instance needs its own BotFather token and its own local state root. Keep each executable in a separate folder so the executable-local settings file is unambiguous:
+
+```text
+C:\tools\codex-telegram-general\codex-telegram.exe
+C:\tools\codex-telegram-repo\codex-telegram.exe
+```
+
+Example settings differences:
+
+`codex-telegram-general\appsettings.Local.json`:
+
+```json
+{
+  "TelegramBot": { "Token": "<general-bot-token>", "AllowedUserIds": [123456789] },
+  "CodexTelegram": {
+    "Mode": "GeneralPurpose",
+    "InstanceId": "general",
+    "Workspace": { "DataRoot": "C:\\data\\codex-telegram-general", "WorkspaceRoots": ["C:\\src"] }
+  }
+}
+```
+
+`codex-telegram-repo\appsettings.Local.json`:
+
+```json
+{
+  "TelegramBot": { "Token": "<repo-bot-token>", "AllowedUserIds": [123456789] },
+  "CodexTelegram": {
+    "Mode": "Repository",
+    "InstanceId": "repo-docs",
+    "RepositoryRoot": "C:\\src\\docs-repo",
+    "RepositoryDisplayLabel": "Docs repository",
+    "Workspace": { "DataRoot": "C:\\data\\codex-telegram-repo", "WorkspaceRoots": ["C:\\src\\docs-repo"] }
+  }
+}
+```
+
+Do not run two processes with the same Telegram token or the same `DataRoot`. A separate `InstanceId` helps partition the default state location, but an explicit `DataRoot` is the clearest isolation boundary.
 
 ### Linux
 
@@ -436,6 +490,8 @@ Groups and forum topics require:
 
 Start privately first. Then use a trusted group root as a single project/session lane, or use forum topics when one group needs multiple independent sessions.
 
+Private chat is the least complicated authorization path: the user must be allowlisted. A group root requires both an allowlisted user and a trusted/allowlisted chat. A forum topic additionally requires a forum-enabled supergroup and the bot permissions needed for topic operations. With Telegram privacy mode enabled, ordinary group text may not arrive; use commands, mentions/replies, or `/send` as the manual fallback.
+
 ## Local Validation
 
 Run these commands from the repository root:
@@ -447,6 +503,8 @@ dotnet test tests\Incursa.Codex.Telegram.Tests\Incursa.Codex.Telegram.Tests.cspr
 .\scripts\Test-ReleaseReadiness.ps1 -Runtime win-x64 -SkipPublish
 git diff --check
 ```
+
+These commands are local evidence only. They prove build/test/format and repository checks; they do not prove that Telegram delivered an update, that BotFather settings are correct, or that the configured Codex account can authenticate. For those claims, run the live checklist in [docs/manual-test-plan.md](docs/manual-test-plan.md) against the exact commit or published binary and record the result.
 
 ## Release And Versioning
 
@@ -468,12 +526,15 @@ The `docs/` tree is source-authored documentation.
 
 The docs sync workflow uses `docs.site.json` and `.github/workflows/sync-docs.yml` to mirror that tree into `incursa-docs/src/content/docs/open-source/codex-telegram/`. Edit the source files in this repository, not the mirrored copies in `incursa-docs`.
 
+The app owns command parsing and built-in `/help`. During guided setup it can optionally apply the app-owned command list and Telegram menu button through the Bot API; this is a one-time setup action, not background synchronization. BotFather remains the manual owner for description/about text, group-join setting, privacy setting, and any command/profile operation the setup pass skips or cannot apply. Use `/help` or the command reference if Telegram's picker is stale or unavailable.
+
 ## Known Gaps
 
 1. Live Telegram behavior still needs a real bot account and real credentials for validation.
 2. Group and forum-topic support is supported but higher risk than private chat; validate it separately before calling a release ready.
 3. Voice-note support depends on OpenAI and, when transcoding is needed, `ffmpeg`.
 4. The mirrored documentation tree is generated from this repository and should not be edited directly in the central docs repo.
+5. Automated tests and synthetic fixtures do not replace live Telegram, BotFather, or Codex-auth verification.
 
 ## Support And Security
 

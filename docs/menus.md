@@ -8,6 +8,17 @@ This guide explains the Telegram buttons and interactive menus shown by Incursa 
 
 Use [README.md](../README.md) for first setup and [command-reference.md](command-reference.md) for command syntax.
 
+## Workspace Mode In The Admin Menu
+
+The terminal menu's workspace section is the configuration surface for the host mode:
+
+1. `GeneralPurpose` keeps the existing workspace-root/project browser behavior.
+2. `Repository` requires one `RepositoryRoot` and is intended for a dedicated bot instance.
+3. `RepositoryDisplayLabel` is optional operator-facing text; it is not a filesystem path.
+4. `InstanceId` is an optional state-partition label. Use a distinct explicit `DataRoot` when running more than one instance.
+
+These settings affect workspace scope. They do not change `Compact`, `Verbose`, `LiveCard`, or `FinalOnly` Telegram output presentation.
+
 ## Bootstrap/Admin Menu
 
 The terminal menu appears when the app starts without `--run` in an interactive terminal.
@@ -29,6 +40,8 @@ Behavior:
 3. `!clear` clears fields when the prompt says clearing is supported.
 4. When Codex is reachable, the menu can use live Codex model and effort choices.
 5. If Codex is not reachable, the menu falls back to curated examples.
+
+The menu's live model and effort pickers are convenience aids. If discovery is unavailable, choose a curated value or enter a known value manually, then verify the resulting session with `/status`. A picker value is not proof that the selected model is available to the authenticated Codex account.
 
 Callout:
 
@@ -122,6 +135,8 @@ Button behavior:
 5. `Back` returns to the session status view.
 
 The `Rate limits` line is compact by design. Use `/usage` for full details and setup errors.
+
+If a button is unavailable or Telegram shows an old menu, use the slash command equivalent. The app owns callback and command behavior and can apply its command list/menu button during guided setup; there is no background sync. Use BotFather manually for profile text, privacy/group settings, or any setup operation reported as skipped or failed.
 
 Manual equivalent:
 

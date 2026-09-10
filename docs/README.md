@@ -23,6 +23,7 @@ This is the source-authored docs tree. The sync workflow mirrors it into `incurs
 - [Maintainer readiness](maintainer-readiness.md): service boundaries, architecture, configuration, validation, release flow, deployment checks, troubleshooting, and known gaps.
 - [Development](development.md): restore, build, test, publish, release-readiness gate, fuzzing, mutation testing, and documentation expectations.
 - [Testing](testing.md): normal gate, fuzz corpus, mutation profiles, and quality notes.
+- [UX assessment](ux-assessment.md): evidence-labeled initial and delivered findings, synthetic examples, and follow-up user stories.
 - [Contributor agreement automation](contributor-agreement-automation.md): CLA workflow setup and maintenance.
 
 ## Root References

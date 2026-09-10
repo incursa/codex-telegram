@@ -8,6 +8,12 @@ This app is a standalone console process. It does not restart itself from Telegr
 
 For normal project/session usage after the process is running, use [usage.md](usage.md).
 
+## Operating Modes And Two Instances
+
+Set `CodexTelegram:Mode` to `GeneralPurpose` for a multi-repository personal launcher, or `Repository` for an instance pinned to `CodexTelegram:RepositoryRoot`. For two instances, give each one a different BotFather token, executable/settings folder, and `CodexTelegram:Workspace:DataRoot`; do not let two processes share a Telegram token or local state files. `CodexTelegram:InstanceId` can distinguish default state locations, but an explicit data root is the auditable choice.
+
+Configuration is layered in this order: `appsettings.json`, executable-local `appsettings.Local.json` (then launch-directory fallback), user secrets, `CODEX_TELEGRAM_` environment variables, and command-line arguments. Later values win. The direct `TELEGRAM_*`, `OPENAI_API_KEY`, and `CODEX_PATH` variables are empty-value fallbacks only.
+
 ## Start
 
 From a published Windows binary:
@@ -70,6 +76,8 @@ For groups and forum topics:
 3. Keep Telegram privacy mode enabled unless ordinary group-root text should route to Codex.
 4. Grant topic-management rights only if `/topic new` is part of the supported workflow.
 
+The app owns runtime commands and `/help`. Guided setup can apply the app-owned command list and menu button through the Bot API, but there is no background profile/command synchronization. Apply [botfather.md](botfather.md) manually for profile text, privacy/group settings, or skipped/failed operations, and retain slash commands as the fallback when Telegram's picker is stale.
+
 Group and forum messages require both an allowed user and a trusted chat.
 
 ## Health Checks
@@ -95,3 +103,7 @@ Use these local commands before a release or demo:
 ```
 
 Use `-SkipPublish` when you only need the build, test, format, and package-vulnerability checks.
+
+Record evidence by type. Automated build/tests prove repository behavior; synthetic Codex tests prove test-double seams; a local live smoke proves the configured process can reach a real bot/Codex account; and group/forum claims require a real Telegram chat with the relevant BotFather settings. Do not report a skipped live step as passed.
+
+Codex authentication is owned by the local Codex installation, not this app. Verify it under the same OS account and environment as the bot. If instances need distinct Codex identities, isolate them with separate OS accounts or a Codex-supported per-process auth location; never back up or publish auth state with app data.

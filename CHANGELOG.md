@@ -3,6 +3,10 @@
 ## Unreleased
 
 - Updated the fallback `Incursa.OpenAI.Codex` package reference to 2.3.0 so published Telegram builds consume the SDK observable turn stream, plan-mode configuration surface, and active-turn attach API.
+- Documented explicit `GeneralPurpose` and `Repository` workspace modes, repository labels, instance boundaries, and two-instance configuration examples.
+- Documented guided setup outcomes and manual fallbacks, configuration precedence, BotFather command/profile ownership, and private/group/forum-topic routing requirements.
+- Clarified that Codex authentication remains owned by the local Codex installation and that automated or synthetic checks do not prove live Telegram or Codex readiness.
+- Added `docs/ux-assessment.md` with evidence-labeled findings, before/after examples, and follow-up user stories with acceptance criteria.
 
 ## 1.0.20 - 2026-05-23
 
