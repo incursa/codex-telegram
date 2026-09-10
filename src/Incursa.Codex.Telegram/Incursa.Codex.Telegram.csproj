@@ -29,6 +29,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <None Include="..\..\docs\assets\codex-telegram-logo.png"
+          Link="Assets\codex-telegram-logo.png"
+          CopyToOutputDirectory="PreserveNewest"
+          CopyToPublishDirectory="PreserveNewest" />
     <PackageReference Include="Microsoft.Extensions.Configuration.UserSecrets" Version="10.0.8" />
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.8" />
     <PackageReference Include="Microsoft.Extensions.Http" Version="10.0.7" />

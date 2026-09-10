@@ -1,4 +1,5 @@
 using Incursa.Codex.Telegram.Configuration;
+using Incursa.Codex.Telegram.Options;
 
 namespace Incursa.Codex.Telegram.Tests;
 
@@ -34,6 +35,10 @@ public sealed class LocalSettingsStoreTests
         store.SetSandbox("workspace-write");
         store.SetApprovalMode("on-request");
         store.SetNetworkAccessEnabled(true);
+        store.SetMode(CodexTelegramMode.Repository);
+        store.SetRepositoryRoot(workspaceRoot);
+        store.SetRepositoryDisplayLabel("Demo repository");
+        store.SetInstanceId("worker-a");
         store.Save();
 
         LocalSettingsSnapshot snapshot = LocalSettingsStore.Load(settingsPath).GetSnapshot();
@@ -58,6 +63,10 @@ public sealed class LocalSettingsStoreTests
         Assert.Equal("workspace-write", snapshot.Sandbox);
         Assert.Equal("on-request", snapshot.ApprovalMode);
         Assert.True(snapshot.NetworkAccessEnabled);
+        Assert.Equal(CodexTelegramMode.Repository, snapshot.Mode);
+        Assert.Equal(workspaceRoot, snapshot.RepositoryRoot);
+        Assert.Equal("Demo repository", snapshot.RepositoryDisplayLabel);
+        Assert.Equal("worker-a", snapshot.InstanceId);
     }
 
     [Fact]

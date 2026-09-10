@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Incursa.Codex.Telegram.Configuration;
 using Incursa.Codex.Telegram.Options;
 using Microsoft.Extensions.Options;
 
@@ -163,7 +164,9 @@ internal sealed class CodexProjectCatalogStore : ICodexProjectCatalogStore
             return Path.GetFullPath(configuredRoot);
         }
 
-        return Path.Combine(AppContext.BaseDirectory, "App_Data", "codex-telegram");
+        return string.IsNullOrWhiteSpace(_options.Value.InstanceId)
+            ? Path.Combine(AppContext.BaseDirectory, "App_Data", "codex-telegram")
+            : CodexTelegramDataRoot.GetDefaultDataRoot(_options.Value.InstanceId);
     }
 
     private static string? NormalizeWorkingDirectory(string? workingDirectory)

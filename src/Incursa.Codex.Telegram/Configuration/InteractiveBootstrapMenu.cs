@@ -1,6 +1,8 @@
 using System.Globalization;
 using System.Text;
 using Incursa.Codex.Telegram.Models;
+using Incursa.Codex.Telegram.Options;
+using Telegram.Bot.Types;
 using Telegram.Bot.Exceptions;
 
 namespace Incursa.Codex.Telegram.Configuration;
@@ -14,6 +16,10 @@ internal enum BootstrapMenuResult
 internal static class InteractiveBootstrapMenu
 {
     private static readonly TimeSpan TelegramUserCaptureTimeout = TimeSpan.FromMinutes(2);
+
+    private readonly record struct BootstrapReadinessCheck(string Name, bool Passed, string Detail);
+
+    private sealed record TelegramTokenPromptResult(string Token, TelegramBotIdentity? Identity);
 
     public static BootstrapMenuResult Run(LocalSettingsStore store)
         => Run(store, CodexModelDiscovery.CreateFallbackCatalog());
@@ -40,16 +46,42 @@ internal static class InteractiveBootstrapMenu
             return null;
         }
 
-        string? telegramToken = await PromptForTelegramTokenAsync(store, telegramSetupClient, cancellationToken).ConfigureAwait(false);
-        if (telegramToken is null)
+        if (!PromptForWorkspaceMode(store))
         {
+            Console.WriteLine("Setup cancelled. Any settings already saved remain in place; run the app again to retry.");
+            Pause();
             return null;
         }
 
+        if (!PromptForDataRoot(store))
+        {
+            Console.WriteLine("Setup cancelled. Any settings already saved remain in place; run the app again to retry.");
+            Pause();
+            return null;
+        }
+        if (store.GetSnapshot().Mode == CodexTelegramMode.GeneralPurpose)
+        {
+            PromptForWorkspaceRoots(store);
+            PromptForDefaultWorkingDirectory(store);
+        }
+
+        TelegramTokenPromptResult? tokenResult = await PromptForTelegramTokenAsync(store, telegramSetupClient, cancellationToken).ConfigureAwait(false);
+        if (tokenResult is null)
+        {
+            Console.WriteLine("Setup cancelled. Any settings already saved remain in place; run the app again to retry.");
+            Pause();
+            return null;
+        }
+
+        string telegramToken = tokenResult.Token;
         await PromptForTelegramAdminAsync(store, telegramToken, telegramSetupClient, cancellationToken).ConfigureAwait(false);
         PromptForOpenAiTranscription(store);
-        PromptForWorkspaceRoots(store);
-        PromptForDefaultWorkingDirectory(store);
+        await PromptForOptionalTelegramProfileSetupAsync(
+            telegramToken,
+            store.GetSnapshot().Mode,
+            store.GetSnapshot().RepositoryDisplayLabel,
+            telegramSetupClient,
+            cancellationToken).ConfigureAwait(false);
         if (!SaveSettings(store))
         {
             Console.WriteLine("Setup cannot continue until the settings file can be written beside the executable.");
@@ -57,6 +89,9 @@ internal static class InteractiveBootstrapMenu
             return null;
         }
 
+        Console.WriteLine();
+        CodexModelCatalog codexCatalog = await CodexModelDiscovery.DiscoverAsync(store.GetSnapshot(), cancellationToken).ConfigureAwait(false);
+        WriteReadinessSummary(store, tokenResult.Identity, codexCatalog);
         Console.WriteLine();
         Console.WriteLine("First-time setup is saved. The normal setup menu will open next so you can review or start the bot.");
         Pause();
@@ -75,7 +110,8 @@ internal static class InteractiveBootstrapMenu
             Console.WriteLine("3. OpenAI transcription");
             Console.WriteLine("4. Codex runtime");
             Console.WriteLine("5. Workspaces");
-            Console.WriteLine("6. Show settings path");
+            Console.WriteLine("6. Workspace mode and repository");
+            Console.WriteLine("7. Show settings path");
             Console.WriteLine("Q. Quit");
             Console.WriteLine();
 
@@ -112,6 +148,12 @@ internal static class InteractiveBootstrapMenu
                     break;
 
                 case "6":
+                case "mode":
+                case "repository":
+                    ConfigureWorkspaceMode(store);
+                    break;
+
+                case "7":
                 case "path":
                     Console.WriteLine(store.FilePath);
                     Pause();
@@ -139,6 +181,287 @@ internal static class InteractiveBootstrapMenu
         Console.WriteLine("The startup screen shows the resolved settings file, local state root, and common model pickers before launch.");
         Console.WriteLine("When Codex is reachable, the menu queries it for live model lists and falls back to curated examples if discovery fails.");
         Console.WriteLine("Environment variables and command-line configuration still override that file.");
+    }
+
+    private static bool PromptForWorkspaceMode(LocalSettingsStore store)
+    {
+        while (true)
+        {
+            LocalSettingsSnapshot snapshot = store.GetSnapshot();
+            Console.WriteLine("Workspace mode");
+            Console.WriteLine();
+            Console.WriteLine("1. General-purpose bot: browse and select projects from several local repositories.");
+            Console.WriteLine("2. Repository-only bot: keep this bot bound to one repository.");
+            Console.WriteLine($"Current: {DescribeWorkspaceMode(snapshot.Mode)}");
+            if (!string.IsNullOrWhiteSpace(snapshot.RepositoryRoot))
+            {
+                Console.WriteLine($"Repository: {snapshot.RepositoryDisplayLabel ?? snapshot.RepositoryRoot} ({snapshot.RepositoryRoot})");
+            }
+
+            string choice = NormalizeChoice(ReadLine("Choose 1 or 2 (!skip keeps the general-purpose default; !quit cancels): "));
+            if (IsQuit(choice))
+            {
+                return false;
+            }
+
+            if (choice is "" or "!skip" or "skip")
+            {
+                if (string.IsNullOrWhiteSpace(choice))
+                {
+                    Console.WriteLine("Choose a mode, or type !skip to use the general-purpose mode.");
+                    continue;
+                }
+
+                ExplainModeChange(snapshot, CodexTelegramMode.GeneralPurpose, null);
+                store.SetMode(CodexTelegramMode.GeneralPurpose);
+                if (!SaveSettings(store))
+                {
+                    Console.WriteLine("The mode could not be saved. Fix the settings-file permission and retry, or type !quit to cancel.");
+                    continue;
+                }
+
+                Console.WriteLine("Skipped repository mode; the bot will use the general-purpose workspace flow.");
+                return true;
+            }
+
+            if (choice is "1" or "general" or "generalpurpose")
+            {
+                ExplainModeChange(snapshot, CodexTelegramMode.GeneralPurpose, null);
+                store.SetMode(CodexTelegramMode.GeneralPurpose);
+                store.SetRepositoryRoot(null);
+                store.SetRepositoryDisplayLabel(null);
+                if (!SaveSettings(store))
+                {
+                    Console.WriteLine("The mode could not be saved. Fix the settings-file permission and retry, or type !quit to cancel.");
+                    continue;
+                }
+
+                Console.WriteLine("General-purpose mode selected. You can add one or more workspace roots later.");
+                return true;
+            }
+
+            if (choice is not ("2" or "repository" or "repo" or "repositoryonly"))
+            {
+                Console.WriteLine("That is not a workspace mode. Enter 1, 2, !skip, or !quit.");
+                continue;
+            }
+
+            if (!TryPromptForRepository(store))
+            {
+                return false;
+            }
+
+            return true;
+        }
+    }
+
+    private static bool TryPromptForRepository(LocalSettingsStore store)
+    {
+        LocalSettingsSnapshot snapshot = store.GetSnapshot();
+        while (true)
+        {
+            string input = ReadLine("Repository root (existing directory; !skip uses general-purpose mode; !quit cancels): ");
+            if (IsQuit(input))
+            {
+                return false;
+            }
+
+            if (input.Equals("!skip", StringComparison.OrdinalIgnoreCase)
+                || input.Equals("skip", StringComparison.OrdinalIgnoreCase))
+            {
+                ExplainModeChange(snapshot, CodexTelegramMode.GeneralPurpose, null);
+                Console.WriteLine("Repository mode skipped; the bot will remain in general-purpose mode.");
+                store.SetMode(CodexTelegramMode.GeneralPurpose);
+                store.SetRepositoryRoot(null);
+                store.SetRepositoryDisplayLabel(null);
+                SaveSettings(store);
+                return true;
+            }
+
+            if (!TryValidateExistingDirectory(input, "Repository root", out string root, out string error))
+            {
+                Console.WriteLine(error);
+                Console.WriteLine("Try another existing repository directory, !skip, or !quit.");
+                continue;
+            }
+
+            ExplainModeChange(snapshot, CodexTelegramMode.Repository, root);
+            store.SetMode(CodexTelegramMode.Repository);
+            store.SetRepositoryRoot(root);
+            string label = ReadLine($"Repository display label [{Path.GetFileName(root.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar))}] (blank keeps the name; !clear clears it): ");
+            if (IsQuit(label))
+            {
+                return false;
+            }
+
+            if (!string.IsNullOrWhiteSpace(label) && !IsClear(label))
+            {
+                if (!TryNormalizeDisplayLabel(label, out string normalizedLabel, out string labelError))
+                {
+                    Console.WriteLine(labelError);
+                    continue;
+                }
+
+                store.SetRepositoryDisplayLabel(normalizedLabel);
+            }
+            else if (IsClear(label))
+            {
+                store.SetRepositoryDisplayLabel(null);
+            }
+            else if (!string.IsNullOrWhiteSpace(snapshot.RepositoryDisplayLabel))
+            {
+                store.SetRepositoryDisplayLabel(snapshot.RepositoryDisplayLabel);
+            }
+
+            // Repository mode is an explicit boundary. Keep the legacy
+            // workspace list and working-directory fallback from widening it.
+            store.SetWorkspaceRoots([root]);
+            store.SetWorkingDirectory(root);
+
+            if (!SaveSettings(store))
+            {
+                Console.WriteLine("Repository mode was not fully saved. Retry after fixing the settings-file permission.");
+                return false;
+            }
+
+            Console.WriteLine($"Repository mode selected: {root}");
+            return true;
+        }
+    }
+
+    private static void ConfigureWorkspaceMode(LocalSettingsStore store)
+    {
+        while (true)
+        {
+            ClearScreen();
+            LocalSettingsSnapshot snapshot = store.GetSnapshot();
+            Console.WriteLine("Workspace Mode And Repository");
+            Console.WriteLine();
+            Console.WriteLine($"Mode: {DescribeWorkspaceMode(snapshot.Mode)}");
+            Console.WriteLine($"Repository root: {FormatValue(snapshot.RepositoryRoot, "not configured")}");
+            Console.WriteLine($"Repository label: {FormatValue(snapshot.RepositoryDisplayLabel, "folder name")}");
+            Console.WriteLine($"Data root: {FormatValue(snapshot.DataRoot, GetDefaultDataRoot())}");
+            Console.WriteLine();
+            Console.WriteLine("1. Choose workspace mode");
+            Console.WriteLine("2. Set repository root (existing directory)");
+            Console.WriteLine("3. Set repository display label");
+            Console.WriteLine("4. Set local data root");
+            Console.WriteLine("B. Back");
+            Console.WriteLine();
+
+            switch (NormalizeChoice(ReadLine("Select: ")))
+            {
+                case "1":
+                    _ = PromptForWorkspaceMode(store);
+                    break;
+
+                case "2":
+                    SetRepositoryRoot(store);
+                    break;
+
+                case "3":
+                    SetString(
+                        "Repository display label",
+                        snapshot.RepositoryDisplayLabel,
+                        store.SetRepositoryDisplayLabel,
+                        store,
+                        "folder name");
+                    break;
+
+                case "4":
+                    SetDataRoot(store);
+                    break;
+
+                case "b":
+                case "back":
+                    return;
+            }
+        }
+    }
+
+    private static void SetRepositoryRoot(LocalSettingsStore store)
+    {
+        LocalSettingsSnapshot snapshot = store.GetSnapshot();
+        string input = ReadLine($"Repository root [{FormatValue(snapshot.RepositoryRoot, "not configured")}] (existing directory; blank keeps; !clear clears): ");
+        if (string.IsNullOrWhiteSpace(input))
+        {
+            return;
+        }
+
+        if (IsClear(input))
+        {
+            ExplainModeChange(snapshot, CodexTelegramMode.GeneralPurpose, null);
+            store.SetRepositoryRoot(null);
+            store.SetMode(CodexTelegramMode.GeneralPurpose);
+            SaveAndPause(store);
+            return;
+        }
+
+        if (!TryValidateExistingDirectory(input, "Repository root", out string root, out string error))
+        {
+            Console.WriteLine(error);
+            Pause();
+            return;
+        }
+
+        ExplainModeChange(snapshot, CodexTelegramMode.Repository, root);
+        store.SetRepositoryRoot(root);
+        store.SetMode(CodexTelegramMode.Repository);
+        store.SetWorkspaceRoots([root]);
+        store.SetWorkingDirectory(root);
+        SaveAndPause(store);
+    }
+
+    private static void ExplainModeChange(
+        LocalSettingsSnapshot snapshot,
+        CodexTelegramMode targetMode,
+        string? repositoryRoot)
+    {
+        if (snapshot.Mode == targetMode
+            && (targetMode != CodexTelegramMode.Repository
+                || string.Equals(snapshot.RepositoryRoot, repositoryRoot, OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal)))
+        {
+            return;
+        }
+
+        Console.WriteLine();
+        Console.WriteLine($"Changing workspace mode to {DescribeWorkspaceMode(targetMode)} is an explicit administrative action.");
+        Console.WriteLine("Existing sessions and queued work keep their recorded repository/session identity; they are not rebound or erased.");
+        if (targetMode == CodexTelegramMode.Repository)
+        {
+            Console.WriteLine($"New sessions will use {repositoryRoot}; sessions recorded for another root remain stored but are not selectable from this bot.");
+        }
+        else
+        {
+            Console.WriteLine("General-purpose mode restores project selection; previously recorded sessions remain available when their projects are configured.");
+        }
+    }
+
+    private static void SetDataRoot(LocalSettingsStore store)
+    {
+        LocalSettingsSnapshot snapshot = store.GetSnapshot();
+        string input = ReadLine($"Local data root [{FormatValue(snapshot.DataRoot, GetDefaultDataRoot())}] (blank keeps; !clear restores default): ");
+        if (string.IsNullOrWhiteSpace(input))
+        {
+            return;
+        }
+
+        if (IsClear(input))
+        {
+            store.SetDataRoot(null);
+            SaveAndPause(store);
+            return;
+        }
+
+        if (!TryValidateDataRoot(input, out string dataRoot, out string error))
+        {
+            Console.WriteLine(error);
+            Pause();
+            return;
+        }
+
+        store.SetDataRoot(dataRoot);
+        SaveAndPause(store);
     }
 
     private static LocalSettingsStore? PromptForSettingsStore(LocalSettingsStore initialStore)
@@ -171,7 +494,7 @@ internal static class InteractiveBootstrapMenu
         }
     }
 
-    private static async Task<string?> PromptForTelegramTokenAsync(
+    private static async Task<TelegramTokenPromptResult?> PromptForTelegramTokenAsync(
         LocalSettingsStore store,
         ITelegramSetupClient telegramSetupClient,
         CancellationToken cancellationToken)
@@ -209,7 +532,7 @@ internal static class InteractiveBootstrapMenu
                 SaveSettings(store);
                 Console.WriteLine($"Validated @{bot.Username ?? bot.Id.ToString(CultureInfo.InvariantCulture)} ({bot.DisplayName}).");
                 WriteBotFatherHint(bot);
-                return token;
+                return new TelegramTokenPromptResult(token, bot);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -217,14 +540,17 @@ internal static class InteractiveBootstrapMenu
             }
             catch (Exception exception) when (exception is RequestException or HttpRequestException or ArgumentException or InvalidOperationException)
             {
-                Console.WriteLine($"Telegram could not validate that token: {exception.Message}");
+                Console.WriteLine($"Telegram could not validate that token: {SanitizeTelegramError(exception.Message, token)}");
                 if (Confirm("Save this token anyway?"))
                 {
                     store.SetTelegramToken(token);
                     store.SetTelegramEnabled(true);
                     SaveSettings(store);
-                    return token;
+                    Console.WriteLine("Token saved without validation. Retry validation from the menu before treating Telegram as ready.");
+                    return new TelegramTokenPromptResult(token, null);
                 }
+
+                Console.WriteLine("Token was not saved. Try again, or type !quit to cancel setup.");
             }
         }
     }
@@ -274,7 +600,7 @@ internal static class InteractiveBootstrapMenu
             }
             catch (Exception exception) when (exception is RequestException or HttpRequestException or ArgumentException or InvalidOperationException)
             {
-                Console.WriteLine($"Could not capture the user ID automatically: {exception.Message}");
+                Console.WriteLine($"Could not capture the user ID automatically: {SanitizeTelegramError(exception.Message, telegramToken)}");
             }
         }
 
@@ -321,11 +647,13 @@ internal static class InteractiveBootstrapMenu
             string input = ReadLine("Workspace roots (semicolon-separated; !skip configures later): ");
             if (IsQuit(input))
             {
+                Console.WriteLine("Workspace roots skipped; configure them later from Workspaces.");
                 return;
             }
 
             if (input.Equals("!skip", StringComparison.OrdinalIgnoreCase) || input.Equals("skip", StringComparison.OrdinalIgnoreCase))
             {
+                Console.WriteLine("Workspace roots skipped; configure them later from Workspaces.");
                 return;
             }
 
@@ -337,7 +665,39 @@ internal static class InteractiveBootstrapMenu
 
             try
             {
-                store.SetWorkspaceRoots(SplitPathList(input).Select(NormalizePath).ToArray());
+                string[] candidates = SplitPathList(input).ToArray();
+                List<string> roots = [];
+                List<string> errors = [];
+                foreach (string candidate in candidates)
+                {
+                    if (TryValidateExistingDirectory(candidate, "Workspace root", out string normalizedRoot, out string validationError))
+                    {
+                        roots.Add(normalizedRoot);
+                    }
+                    else
+                    {
+                        errors.Add(validationError);
+                    }
+                }
+
+                if (roots.Count == 0)
+                {
+                    Console.WriteLine("Enter at least one existing workspace root, or type !skip to configure it later.");
+                    continue;
+                }
+
+                if (errors.Count > 0)
+                {
+                    foreach (string validationError in errors)
+                    {
+                        Console.WriteLine(validationError);
+                    }
+
+                    Console.WriteLine("Fix the workspace roots, or type !skip to configure them later.");
+                    continue;
+                }
+
+                store.SetWorkspaceRoots(roots);
                 SaveSettings(store);
                 return;
             }
@@ -345,6 +705,47 @@ internal static class InteractiveBootstrapMenu
             {
                 Console.WriteLine($"Invalid path: {exception.Message}");
             }
+        }
+    }
+
+    private static bool PromptForDataRoot(LocalSettingsStore store)
+    {
+        LocalSettingsSnapshot snapshot = store.GetSnapshot();
+        string defaultRoot = GetDefaultDataRoot();
+        Console.WriteLine();
+        Console.WriteLine("Local instance storage");
+        Console.WriteLine("This folder stores conversation bindings, sessions, queued work, attachments, and diagnostics for this bot instance.");
+        Console.WriteLine("Use a different folder (or InstanceId) for every independently running bot process.");
+        while (true)
+        {
+            string input = ReadLine($"Local data root [{FormatValue(snapshot.DataRoot, defaultRoot)}] (!skip keeps the default): ");
+            if (IsQuit(input))
+            {
+                return false;
+            }
+
+            if (input.Equals("!skip", StringComparison.OrdinalIgnoreCase) || input.Equals("skip", StringComparison.OrdinalIgnoreCase))
+            {
+                Console.WriteLine("Local data root skipped; the default AppData location will be used.");
+                return true;
+            }
+
+            if (string.IsNullOrWhiteSpace(input))
+            {
+                store.SetDataRoot(null);
+                SaveSettings(store);
+                return true;
+            }
+
+            if (!TryValidateDataRoot(input, out string normalized, out string error))
+            {
+                Console.WriteLine(error);
+                continue;
+            }
+
+            store.SetDataRoot(normalized);
+            SaveSettings(store);
+            return true;
         }
     }
 
@@ -358,6 +759,7 @@ internal static class InteractiveBootstrapMenu
         string input = ReadLine($"Default working directory [{fallback}] (!skip configures later): ");
         if (IsQuit(input) || input.Equals("!skip", StringComparison.OrdinalIgnoreCase) || input.Equals("skip", StringComparison.OrdinalIgnoreCase))
         {
+            Console.WriteLine("Default working directory skipped; configure it later from Workspaces.");
             return;
         }
 
@@ -370,6 +772,233 @@ internal static class InteractiveBootstrapMenu
         {
             Console.WriteLine($"Invalid path: {exception.Message}");
         }
+    }
+
+    private static async Task PromptForOptionalTelegramProfileSetupAsync(
+        string telegramToken,
+        CodexTelegramMode mode,
+        string? repositoryDisplayLabel,
+        ITelegramSetupClient telegramSetupClient,
+        CancellationToken cancellationToken)
+    {
+        Console.WriteLine();
+        Console.WriteLine("Telegram command menu and profile");
+        Console.WriteLine("The app can optionally synchronize its built-in command menu and Telegram menu button.");
+        Console.WriteLine("This is a remote Telegram change and is independent of the local settings file.");
+
+        if (telegramSetupClient is not ITelegramProfileSetupClient profileSetupClient)
+        {
+            Console.WriteLine("Optional command/profile setup is unavailable on this setup client; use BotFather manually if needed.");
+            return;
+        }
+
+        if (!Confirm("Apply the app-owned command menu and menu button now?"))
+        {
+            Console.WriteLine("Skipped command/profile setup. You can configure Telegram commands manually later.");
+            return;
+        }
+
+        string label = string.IsNullOrWhiteSpace(repositoryDisplayLabel) ? "your workspace" : repositoryDisplayLabel.Trim();
+        string suggestedName = mode == CodexTelegramMode.Repository
+            ? LimitTelegramProfileText($"Codex Telegram · {label}", 64)
+            : "Codex Telegram";
+        string suggestedDescription = LimitTelegramProfileText(
+            mode == CodexTelegramMode.Repository
+                ? $"A private Codex workspace assistant for {label}."
+                : "A private Codex workspace assistant for your configured projects.",
+            512);
+        string suggestedShortDescription = LimitTelegramProfileText(
+            mode == CodexTelegramMode.Repository ? $"Codex assistant for {label}" : "Codex workspace assistant",
+            120);
+        Console.WriteLine("Optional public profile text (nothing is changed unless you approve each suggestion):");
+        string? name = PromptProfileText("Display name", suggestedName, 64);
+        string? description = PromptProfileText("Description", suggestedDescription, 512);
+        string? shortDescription = PromptProfileText("Short description", suggestedShortDescription, 120);
+        string? profilePhotoPath = PromptProfilePhotoPath();
+
+        TelegramProfileSetupResult result = await new TelegramProfileSetup(profileSetupClient)
+            .ApplyAsync(
+                telegramToken,
+                new TelegramProfileSetupOptions
+                {
+                    // The mode was saved before the Telegram step, so the
+                    // picker never advertises project switching for a
+                    // repository-only bot.
+                    Commands = TelegramCommandCatalog.CreateDefaultCommands(mode),
+                    Name = name,
+                    Description = description,
+                    ShortDescription = shortDescription,
+                    ProfilePhotoPath = profilePhotoPath,
+                },
+                cancellationToken)
+            .ConfigureAwait(false);
+        foreach (TelegramSetupOperationResult operation in result.Operations)
+        {
+            Console.WriteLine(operation.Status switch
+            {
+                TelegramSetupOperationStatus.Succeeded => $"{operation.Operation}: applied.",
+                TelegramSetupOperationStatus.Skipped => $"{operation.Operation}: skipped ({operation.FailureReason}).",
+                _ => $"{operation.Operation}: failed ({operation.FailureReason}).",
+            });
+            if (!string.IsNullOrWhiteSpace(operation.BotFatherFallback))
+            {
+                Console.WriteLine(operation.BotFatherFallback);
+            }
+        }
+    }
+
+    private static string? PromptProfileText(string label, string suggestion, int maxLength)
+    {
+        string input = ReadLine($"{label} [{suggestion}] (!skip leaves it unchanged): ");
+        if (IsQuit(input) || input.Equals("!skip", StringComparison.OrdinalIgnoreCase) || input.Equals("skip", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        string value = string.IsNullOrWhiteSpace(input) ? suggestion : input.Trim();
+        if (value.Length > maxLength)
+        {
+            Console.WriteLine($"{label} is limited to {maxLength} characters; it was skipped. You can set it manually in BotFather.");
+            return null;
+        }
+
+        return value;
+    }
+
+    private static string? PromptProfilePhotoPath()
+    {
+        string packagedAvatar = Path.Combine(AppContext.BaseDirectory, "Assets", "codex-telegram-logo.png");
+        if (File.Exists(packagedAvatar)
+            && Confirm($"Use the packaged Incursa Codex Telegram avatar ({packagedAvatar})?"))
+        {
+            return packagedAvatar;
+        }
+
+        string input = ReadLine("Optional custom avatar path (.jpg/.png; !skip leaves the current avatar unchanged): ");
+        if (IsQuit(input) || input.Equals("!skip", StringComparison.OrdinalIgnoreCase) || input.Equals("skip", StringComparison.OrdinalIgnoreCase) || string.IsNullOrWhiteSpace(input))
+        {
+            return null;
+        }
+
+        string path;
+        try
+        {
+            path = NormalizePath(input);
+        }
+        catch (Exception exception) when (exception is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            Console.WriteLine($"Avatar path is invalid ({exception.Message}); the avatar step was skipped.");
+            return null;
+        }
+        if (!File.Exists(path))
+        {
+            Console.WriteLine("Avatar path does not exist; the avatar step was skipped. Upload a suitable image with /setuserpic in @BotFather later.");
+            return null;
+        }
+
+        return path;
+    }
+
+    private static string LimitTelegramProfileText(string value, int maxLength)
+        => value.Length <= maxLength ? value : value[..maxLength].TrimEnd();
+
+    private static bool TryNormalizeDisplayLabel(string input, out string normalized, out string error)
+    {
+        normalized = input.Trim();
+        if (normalized.Length == 0)
+        {
+            error = "The repository display label cannot be empty when supplied.";
+            return false;
+        }
+
+        if (normalized.Length > 80 || normalized.Any(char.IsControl))
+        {
+            error = "The repository display label must be at most 80 characters and cannot contain control characters.";
+            return false;
+        }
+
+        error = string.Empty;
+        return true;
+    }
+
+    private static string SanitizeTelegramError(string? message, string token)
+        => string.IsNullOrWhiteSpace(message)
+            ? "Telegram rejected the request."
+            : message.Replace(token, "[redacted]", StringComparison.Ordinal);
+
+    private static bool TryValidateExistingDirectory(
+        string input,
+        string label,
+        out string normalized,
+        out string error)
+    {
+        normalized = string.Empty;
+        if (string.IsNullOrWhiteSpace(input))
+        {
+            error = $"{label} is required.";
+            return false;
+        }
+
+        try
+        {
+            normalized = NormalizePath(input);
+        }
+        catch (Exception exception) when (exception is ArgumentException or NotSupportedException or PathTooLongException or IOException)
+        {
+            error = $"{label} is not a valid path: {exception.Message}";
+            return false;
+        }
+
+        if (!Directory.Exists(normalized))
+        {
+            error = $"{label} '{normalized}' does not name an existing directory.";
+            return false;
+        }
+
+        try
+        {
+            using IEnumerator<FileSystemInfo> entries = new DirectoryInfo(normalized).EnumerateFileSystemInfos().GetEnumerator();
+            _ = entries.MoveNext();
+        }
+        catch (Exception exception) when (exception is UnauthorizedAccessException or IOException or NotSupportedException)
+        {
+            error = $"{label} '{normalized}' cannot be accessed: {exception.Message}";
+            return false;
+        }
+
+        error = string.Empty;
+        return true;
+    }
+
+    private static bool TryValidateDataRoot(string input, out string normalized, out string error)
+    {
+        normalized = string.Empty;
+        try
+        {
+            normalized = NormalizePath(input);
+        }
+        catch (Exception exception) when (exception is ArgumentException or NotSupportedException or PathTooLongException or IOException)
+        {
+            error = $"Local data root is not a valid path: {exception.Message}";
+            return false;
+        }
+
+        if (Directory.Exists(normalized))
+        {
+            return TryValidateExistingDirectory(normalized, "Local data root", out normalized, out error);
+        }
+
+        if (File.Exists(normalized))
+        {
+            error = $"Local data root '{normalized}' is a file; choose a directory path.";
+            return false;
+        }
+
+        // The runtime creates a missing data-root directory on first use. Do
+        // not create it from the menu; a syntactically valid, non-file path is
+        // enough for configuration and keeps first-run setup side-effect free.
+        error = string.Empty;
+        return true;
     }
 
     private static void ConfigureTelegram(LocalSettingsStore store)
@@ -389,6 +1018,7 @@ internal static class InteractiveBootstrapMenu
             Console.WriteLine("2. Set bot token");
             Console.WriteLine("3. Set admin user IDs");
             Console.WriteLine("4. Set allowed chat IDs");
+            Console.WriteLine("5. Reapply command menu and optional profile setup");
             Console.WriteLine("B. Back");
             Console.WriteLine();
 
@@ -423,11 +1053,42 @@ internal static class InteractiveBootstrapMenu
                         store);
                     break;
 
+                case "5":
+                    ReapplyTelegramProfileSetup(store);
+                    break;
+
                 case "b":
                 case "back":
                     return;
             }
         }
+    }
+
+    private static void ReapplyTelegramProfileSetup(LocalSettingsStore store)
+    {
+        string? token = store.GetTelegramTokenForSetup();
+        if (string.IsNullOrWhiteSpace(token))
+        {
+            Console.WriteLine("A Telegram bot token must be saved before command/profile setup can be reapplied.");
+            Pause();
+            return;
+        }
+
+        try
+        {
+            PromptForOptionalTelegramProfileSetupAsync(
+                token,
+                store.GetSnapshot().Mode,
+                store.GetSnapshot().RepositoryDisplayLabel,
+                new TelegramSetupClient(),
+                CancellationToken.None).GetAwaiter().GetResult();
+        }
+        catch (Exception exception) when (exception is RequestException or HttpRequestException or ArgumentException or InvalidOperationException)
+        {
+            Console.WriteLine($"Telegram command/profile repair failed: {SanitizeTelegramError(exception.Message, token)}");
+        }
+
+        Pause();
     }
 
     private static void ConfigureOpenAi(LocalSettingsStore store)
@@ -629,12 +1290,7 @@ internal static class InteractiveBootstrapMenu
                     break;
 
                 case "3":
-                    SetPath(
-                        "Local data root",
-                        snapshot.DataRoot,
-                        store.SetDataRoot,
-                        store,
-                        "User application data");
+                    SetDataRoot(store);
                     break;
 
                 case "b":
@@ -665,10 +1321,19 @@ internal static class InteractiveBootstrapMenu
         Console.WriteLine($"Local state: {FormatValue(snapshot.DataRoot, GetDefaultDataRoot())}");
         Console.WriteLine($"Workspace roots: {FormatStringList(snapshot.WorkspaceRoots, Environment.CurrentDirectory)}");
         Console.WriteLine($"Default working directory: {FormatValue(snapshot.WorkingDirectory, Environment.CurrentDirectory)}");
+        Console.WriteLine($"Bot identity: {FormatBotIdentity(null, snapshot.TelegramTokenConfigured)}");
+        Console.WriteLine($"Workspace mode: {DescribeWorkspaceMode(snapshot.Mode)}");
+        Console.WriteLine($"Repository: {FormatValue(snapshot.RepositoryDisplayLabel, snapshot.RepositoryRoot ?? "not configured")}" +
+            (string.IsNullOrWhiteSpace(snapshot.RepositoryRoot) ? string.Empty : $" ({snapshot.RepositoryRoot})"));
         Console.WriteLine($"Telegram polling: {FormatEnabled(snapshot.TelegramEnabled)}, token {FormatConfigured(snapshot.TelegramTokenConfigured)}, admins {snapshot.AllowedUserIds.Count}, chats {snapshot.AllowedChatIds.Count}");
         Console.WriteLine($"OpenAI: key {FormatConfigured(snapshot.OpenAiApiKeyConfigured)}, model {FormatValue(snapshot.OpenAiModel, "whisper-1")}");
         Console.WriteLine($"Codex: executable {FormatValue(ResolveCodexExecutablePath(snapshot), "PATH")}, model {FormatModelValue(snapshot.CodexModel, modelCatalog.Models, "Codex default")}, thinking {FormatValue(snapshot.ReasoningEffort, "Codex default")}, plan thinking {FormatValue(snapshot.PlanModeReasoningEffort, "Codex default")}");
         Console.WriteLine($"Codex model catalog: {DescribeModelCatalog(modelCatalog)}");
+        Console.WriteLine("Readiness checks:");
+        foreach (BootstrapReadinessCheck check in BuildReadinessChecks(snapshot, null, modelCatalog))
+        {
+            Console.WriteLine($"- {(check.Passed ? "PASS" : "CHECK")}: {check.Name} - {check.Detail}");
+        }
         Console.WriteLine();
 
         List<string> warnings = BuildStartWarnings(snapshot).ToList();
@@ -1029,6 +1694,20 @@ internal static class InteractiveBootstrapMenu
         {
             yield return $"No workspace roots are configured; the app will use {Environment.CurrentDirectory}.";
         }
+
+        if (snapshot.Mode == CodexTelegramMode.Repository)
+        {
+            if (!TryValidateExistingDirectory(snapshot.RepositoryRoot ?? string.Empty, "Repository root", out _, out string repositoryError))
+            {
+                yield return repositoryError;
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(snapshot.DataRoot)
+            && !TryValidateDataRoot(snapshot.DataRoot, out _, out string dataRootError))
+        {
+            yield return dataRootError;
+        }
     }
 
     private static void WriteStatus(LocalSettingsStore store, CodexModelCatalog modelCatalog)
@@ -1042,8 +1721,96 @@ internal static class InteractiveBootstrapMenu
         Console.WriteLine($"Codex: executable {FormatValue(ResolveCodexExecutablePath(snapshot), "PATH")}, model {FormatModelValue(snapshot.CodexModel, modelCatalog.Models, "Codex default")}, sandbox {FormatValue(snapshot.Sandbox, "workspace-write")}, approval {FormatValue(snapshot.ApprovalMode, "on-request")}");
         Console.WriteLine($"Codex catalog: {DescribeModelCatalog(modelCatalog)}");
         Console.WriteLine($"Local state: {FormatValue(snapshot.DataRoot, GetDefaultDataRoot())}");
+        Console.WriteLine($"Workspace mode: {DescribeWorkspaceMode(snapshot.Mode)}");
+        Console.WriteLine($"Repository: {FormatValue(snapshot.RepositoryDisplayLabel, snapshot.RepositoryRoot ?? "not configured")}" +
+            (string.IsNullOrWhiteSpace(snapshot.RepositoryRoot) ? string.Empty : $" ({snapshot.RepositoryRoot})"));
         Console.WriteLine($"Workspace: {FormatStringList(snapshot.WorkspaceRoots, Environment.CurrentDirectory)}");
     }
+
+    private static void WriteReadinessSummary(
+        LocalSettingsStore store,
+        TelegramBotIdentity? botIdentity,
+        CodexModelCatalog? codexCatalog = null)
+    {
+        LocalSettingsSnapshot snapshot = store.GetSnapshot();
+        Console.WriteLine("Readiness summary:");
+        Console.WriteLine($"Settings file: {store.FilePath}");
+        Console.WriteLine($"Bot identity: {FormatBotIdentity(botIdentity, snapshot.TelegramTokenConfigured)}");
+        Console.WriteLine($"Mode: {DescribeWorkspaceMode(snapshot.Mode)}");
+        Console.WriteLine($"Repository root: {FormatValue(snapshot.RepositoryRoot, "not configured")}");
+        Console.WriteLine($"Repository label: {FormatValue(snapshot.RepositoryDisplayLabel, "folder name")}");
+        Console.WriteLine($"Workspace roots: {FormatStringList(snapshot.WorkspaceRoots, Environment.CurrentDirectory)}");
+        Console.WriteLine($"Default working directory: {FormatValue(snapshot.WorkingDirectory, Environment.CurrentDirectory)}");
+        Console.WriteLine($"Data root: {FormatValue(snapshot.DataRoot, GetDefaultDataRoot())}");
+        Console.WriteLine("Checks:");
+        foreach (BootstrapReadinessCheck check in BuildReadinessChecks(snapshot, botIdentity, codexCatalog))
+        {
+            Console.WriteLine($"- {(check.Passed ? "PASS" : "CHECK")}: {check.Name} - {check.Detail}");
+        }
+        Console.WriteLine("Smoke test (not run automatically): after starting, open the private chat and send /home, then /status. Send a harmless Codex prompt only when you explicitly want to start an agent turn.");
+    }
+
+    internal static IReadOnlyList<string> BuildReadinessCheckMessages(
+        LocalSettingsSnapshot snapshot,
+        TelegramBotIdentity? botIdentity = null)
+        => BuildReadinessChecks(snapshot, botIdentity, null)
+            .Select(check => $"{(check.Passed ? "PASS" : "CHECK")}: {check.Name} - {check.Detail}")
+            .ToArray();
+
+    private static IReadOnlyList<BootstrapReadinessCheck> BuildReadinessChecks(
+        LocalSettingsSnapshot snapshot,
+        TelegramBotIdentity? botIdentity,
+        CodexModelCatalog? codexCatalog)
+    {
+        string dataRoot = snapshot.DataRoot ?? GetDefaultDataRoot();
+        bool validDataRoot = TryValidateDataRoot(dataRoot, out _, out string dataRootError);
+        List<BootstrapReadinessCheck> checks =
+        [
+            new("Telegram bot identity", botIdentity is not null, botIdentity is null
+                ? snapshot.TelegramTokenConfigured ? "token is saved but was not validated in this run" : "bot token is missing"
+                : $"@{botIdentity.Username ?? botIdentity.Id.ToString(CultureInfo.InvariantCulture)} ({botIdentity.DisplayName})"),
+            new("Telegram admin allowlist", snapshot.AllowedUserIds.Count > 0, snapshot.AllowedUserIds.Count > 0
+                ? $"{snapshot.AllowedUserIds.Count} admin user ID(s) configured"
+                : "no admin user IDs configured; use /whoami only for initial discovery"),
+            new("Workspace mode", snapshot.Mode is CodexTelegramMode.GeneralPurpose or CodexTelegramMode.Repository, DescribeWorkspaceMode(snapshot.Mode)),
+            new("Local data root", validDataRoot, validDataRoot ? FormatValue(snapshot.DataRoot, "default AppData root") : dataRootError),
+            new("Codex runtime", codexCatalog?.IsLive == true, codexCatalog is null
+                ? "not checked in this menu view"
+                : codexCatalog.Message ?? (codexCatalog.IsLive ? "Codex responded to model discovery" : "Codex was not verified")),
+        ];
+
+        if (snapshot.Mode == CodexTelegramMode.Repository)
+        {
+            bool validRepository = TryValidateExistingDirectory(snapshot.RepositoryRoot ?? string.Empty, "Repository root", out _, out string repositoryError);
+            checks.Add(new("Repository root", validRepository, validRepository ? snapshot.RepositoryRoot! : repositoryError));
+        }
+        else
+        {
+            string[] invalidRoots = snapshot.WorkspaceRoots
+                .Where(root => !TryValidateExistingDirectory(root, "Workspace root", out _, out _))
+                .ToArray();
+            checks.Add(new("Workspace roots", snapshot.WorkspaceRoots.Count > 0 && invalidRoots.Length == 0,
+                snapshot.WorkspaceRoots.Count == 0
+                    ? "none configured; process directory fallback is active"
+                    : invalidRoots.Length == 0
+                        ? $"{snapshot.WorkspaceRoots.Count} root(s) configured and accessible"
+                        : $"{invalidRoots.Length} configured root(s) are missing or inaccessible"));
+        }
+
+        return checks;
+    }
+
+    private static string FormatBotIdentity(TelegramBotIdentity? identity, bool tokenConfigured)
+        => identity is not null
+            ? $"@{identity.Username ?? identity.Id.ToString(CultureInfo.InvariantCulture)} ({identity.DisplayName})"
+            : tokenConfigured ? "token saved; validation not performed in this run" : "not configured";
+
+    private static string DescribeWorkspaceMode(CodexTelegramMode mode)
+        => mode switch
+        {
+            CodexTelegramMode.Repository => "Repository-only (bound to one repository)",
+            _ => "General-purpose (browse and select local repositories)",
+        };
 
     private static string DescribeModelCatalog(CodexModelCatalog modelCatalog)
         => modelCatalog.IsLive

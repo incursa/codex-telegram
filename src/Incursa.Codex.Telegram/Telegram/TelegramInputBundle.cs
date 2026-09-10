@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Incursa.Codex.Telegram.Configuration;
 using Incursa.Codex.Telegram.Options;
 using Microsoft.Extensions.Options;
 
@@ -119,6 +120,12 @@ internal interface ITelegramInputBundleStore
         long? ownerUserId,
         CancellationToken cancellationToken);
 
+    Task<TelegramInputBundle?> TryGetBundleAsync(
+        string bundleId,
+        long? ownerUserId,
+        TelegramConversationScope conversation,
+        CancellationToken cancellationToken);
+
     Task<TelegramInputBundle> AppendAsync(
         TelegramInputBundleAppendRequest request,
         CancellationToken cancellationToken);
@@ -135,6 +142,15 @@ internal interface ITelegramInputBundleStore
         IReadOnlyList<int>? sourceMessageIds,
         CancellationToken cancellationToken);
 
+    Task<TelegramInputBundle?> TryAppendAsync(
+        string bundleId,
+        long ownerUserId,
+        TelegramConversationScope conversation,
+        string? text,
+        IReadOnlyList<TelegramAttachmentDescriptor>? attachments,
+        IReadOnlyList<int>? sourceMessageIds,
+        CancellationToken cancellationToken);
+
     Task<TelegramInputBundle?> TryUpdateBundleAsync(
         string bundleId,
         long ownerUserId,
@@ -144,12 +160,33 @@ internal interface ITelegramInputBundleStore
     Task<TelegramInputBundle?> TryUpdateBundleAsync(
         string bundleId,
         long ownerUserId,
+        TelegramConversationScope conversation,
+        Func<TelegramInputBundle, TelegramInputBundle> updater,
+        CancellationToken cancellationToken);
+
+    Task<TelegramInputBundle?> TryUpdateBundleAsync(
+        string bundleId,
+        long ownerUserId,
+        TelegramInputBundleUpdate update,
+        CancellationToken cancellationToken);
+
+    Task<TelegramInputBundle?> TryUpdateBundleAsync(
+        string bundleId,
+        long ownerUserId,
+        TelegramConversationScope conversation,
         TelegramInputBundleUpdate update,
         CancellationToken cancellationToken);
 
     Task<TelegramInputBundle?> TryUpdateSubmittedBundleAsync(
         string bundleId,
         long ownerUserId,
+        Func<TelegramInputBundle, TelegramInputBundle> updater,
+        CancellationToken cancellationToken);
+
+    Task<TelegramInputBundle?> TryUpdateSubmittedBundleAsync(
+        string bundleId,
+        long ownerUserId,
+        TelegramConversationScope conversation,
         Func<TelegramInputBundle, TelegramInputBundle> updater,
         CancellationToken cancellationToken);
 
@@ -163,6 +200,23 @@ internal interface ITelegramInputBundleStore
     Task<TelegramInputBundle?> TryCompleteBundleAsync(
         string bundleId,
         long ownerUserId,
+        TelegramConversationScope conversation,
+        TelegramInputBundleStatus status,
+        bool deleteAttachments,
+        CancellationToken cancellationToken);
+
+    Task<TelegramInputBundle?> TryCompleteBundleAsync(
+        string bundleId,
+        long ownerUserId,
+        TelegramInputBundleIntent intent,
+        TelegramInputBundleStatus status,
+        bool deleteAttachments,
+        CancellationToken cancellationToken);
+
+    Task<TelegramInputBundle?> TryCompleteBundleAsync(
+        string bundleId,
+        long ownerUserId,
+        TelegramConversationScope conversation,
         TelegramInputBundleIntent intent,
         TelegramInputBundleStatus status,
         bool deleteAttachments,
@@ -174,14 +228,34 @@ internal interface ITelegramInputBundleStore
         TelegramInputBundleIntent intent,
         CancellationToken cancellationToken);
 
+    Task<TelegramInputBundle?> TrySubmitBundleAsync(
+        string bundleId,
+        long ownerUserId,
+        TelegramConversationScope conversation,
+        TelegramInputBundleIntent intent,
+        CancellationToken cancellationToken);
+
     Task<TelegramInputBundle?> TryReopenSubmittedBundleAsync(
         string bundleId,
         long ownerUserId,
         CancellationToken cancellationToken);
 
+    Task<TelegramInputBundle?> TryReopenSubmittedBundleAsync(
+        string bundleId,
+        long ownerUserId,
+        TelegramConversationScope conversation,
+        CancellationToken cancellationToken);
+
     Task<TelegramInputBundle?> TrySetIntentAsync(
         string bundleId,
         long ownerUserId,
+        TelegramInputBundleIntent intent,
+        CancellationToken cancellationToken);
+
+    Task<TelegramInputBundle?> TrySetIntentAsync(
+        string bundleId,
+        long ownerUserId,
+        TelegramConversationScope conversation,
         TelegramInputBundleIntent intent,
         CancellationToken cancellationToken);
 
@@ -191,7 +265,25 @@ internal interface ITelegramInputBundleStore
         int? messageId,
         CancellationToken cancellationToken);
 
+    Task<TelegramInputBundle?> TrySetStatusCardMessageIdAsync(
+        string bundleId,
+        long ownerUserId,
+        TelegramConversationScope conversation,
+        int? messageId,
+        CancellationToken cancellationToken);
+
     Task<TelegramInputBundle?> TryClearAsync(
+        string bundleId,
+        long ownerUserId,
+        CancellationToken cancellationToken);
+
+    Task<TelegramInputBundle?> TryClearAsync(
+        string bundleId,
+        long ownerUserId,
+        TelegramConversationScope conversation,
+        CancellationToken cancellationToken);
+
+    Task<TelegramInputBundle?> TryCancelAsync(
         string bundleId,
         long ownerUserId,
         CancellationToken cancellationToken);
@@ -199,6 +291,7 @@ internal interface ITelegramInputBundleStore
     Task<TelegramInputBundle?> TryCancelAsync(
         string bundleId,
         long ownerUserId,
+        TelegramConversationScope conversation,
         CancellationToken cancellationToken);
 
     Task<IReadOnlyList<TelegramInputBundle>> ExpireAsync(CancellationToken cancellationToken);
@@ -335,6 +428,20 @@ internal sealed class TelegramInputBundleStore : ITelegramInputBundleStore
             && (!ownerUserId.HasValue || bundle.UserId == ownerUserId.Value));
     }
 
+    public async Task<TelegramInputBundle?> TryGetBundleAsync(
+        string bundleId,
+        long? ownerUserId,
+        TelegramConversationScope conversation,
+        CancellationToken cancellationToken)
+    {
+        TelegramInputBundleState state = await LoadStateAsync(cancellationToken).ConfigureAwait(false);
+        return state.Bundles.FirstOrDefault(bundle =>
+            IsBundleIdMatch(bundle, bundleId)
+            && (!ownerUserId.HasValue || bundle.UserId == ownerUserId.Value)
+            && bundle.Conversation == conversation
+            && IsCurrent(bundle, _timeProvider.GetUtcNow()));
+    }
+
     public async Task<IReadOnlyList<TelegramInputBundle>> ListAsync(
         TelegramConversationScope? conversation,
         CancellationToken cancellationToken)
@@ -347,9 +454,29 @@ internal sealed class TelegramInputBundleStore : ITelegramInputBundleStore
             .ToArray();
     }
 
-    public async Task<TelegramInputBundle?> TryAppendAsync(
+    public Task<TelegramInputBundle?> TryAppendAsync(
         string bundleId,
         long ownerUserId,
+        string? text,
+        IReadOnlyList<TelegramAttachmentDescriptor>? attachments,
+        IReadOnlyList<int>? sourceMessageIds,
+        CancellationToken cancellationToken)
+        => TryAppendOwnedAsync(bundleId, ownerUserId, null, text, attachments, sourceMessageIds, cancellationToken);
+
+    public Task<TelegramInputBundle?> TryAppendAsync(
+        string bundleId,
+        long ownerUserId,
+        TelegramConversationScope conversation,
+        string? text,
+        IReadOnlyList<TelegramAttachmentDescriptor>? attachments,
+        IReadOnlyList<int>? sourceMessageIds,
+        CancellationToken cancellationToken)
+        => TryAppendOwnedAsync(bundleId, ownerUserId, conversation, text, attachments, sourceMessageIds, cancellationToken);
+
+    private async Task<TelegramInputBundle?> TryAppendOwnedAsync(
+        string bundleId,
+        long ownerUserId,
+        TelegramConversationScope? conversation,
         string? text,
         IReadOnlyList<TelegramAttachmentDescriptor>? attachments,
         IReadOnlyList<int>? sourceMessageIds,
@@ -362,7 +489,7 @@ internal sealed class TelegramInputBundleStore : ITelegramInputBundleStore
             DateTimeOffset now = _timeProvider.GetUtcNow();
             ExpireDueBundles(state, now);
 
-            int index = FindOwnedBundleIndex(state, bundleId, ownerUserId);
+            int index = FindOwnedBundleIndex(state, bundleId, ownerUserId, conversation);
             if (index < 0 || !IsActive(state.Bundles[index].Status))
             {
                 await SaveStateCoreAsync(state, cancellationToken).ConfigureAwait(false);
@@ -482,9 +609,35 @@ internal sealed class TelegramInputBundleStore : ITelegramInputBundleStore
     public Task<TelegramInputBundle?> TryUpdateBundleAsync(
         string bundleId,
         long ownerUserId,
+        TelegramConversationScope conversation,
+        Func<TelegramInputBundle, TelegramInputBundle> updater,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(updater);
+        return UpdateOwnedAsync(bundleId, ownerUserId, conversation, updater, cancellationToken);
+    }
+
+    public Task<TelegramInputBundle?> TryUpdateBundleAsync(
+        string bundleId,
+        long ownerUserId,
         TelegramInputBundleUpdate update,
         CancellationToken cancellationToken)
         => UpdateOwnedAsync(bundleId, ownerUserId, bundle => bundle with
+        {
+            SessionId = string.IsNullOrWhiteSpace(update.SessionId) ? bundle.SessionId : update.SessionId,
+            SessionName = string.IsNullOrWhiteSpace(update.SessionName) ? bundle.SessionName : update.SessionName,
+            Intent = update.Intent ?? bundle.Intent,
+            StatusMessageId = update.StatusMessageId ?? bundle.StatusMessageId,
+            UpdatedAt = _timeProvider.GetUtcNow(),
+        }, cancellationToken);
+
+    public Task<TelegramInputBundle?> TryUpdateBundleAsync(
+        string bundleId,
+        long ownerUserId,
+        TelegramConversationScope conversation,
+        TelegramInputBundleUpdate update,
+        CancellationToken cancellationToken)
+        => UpdateOwnedAsync(bundleId, ownerUserId, conversation, bundle => bundle with
         {
             SessionId = string.IsNullOrWhiteSpace(update.SessionId) ? bundle.SessionId : update.SessionId,
             SessionName = string.IsNullOrWhiteSpace(update.SessionName) ? bundle.SessionName : update.SessionName,
@@ -508,6 +661,23 @@ internal sealed class TelegramInputBundleStore : ITelegramInputBundleStore
             static status => status is TelegramInputBundleStatus.Submitted);
     }
 
+    public Task<TelegramInputBundle?> TryUpdateSubmittedBundleAsync(
+        string bundleId,
+        long ownerUserId,
+        TelegramConversationScope conversation,
+        Func<TelegramInputBundle, TelegramInputBundle> updater,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(updater);
+        return UpdateOwnedAsync(
+            bundleId,
+            ownerUserId,
+            conversation,
+            updater,
+            cancellationToken,
+            static status => status is TelegramInputBundleStatus.Submitted);
+    }
+
     public Task<TelegramInputBundle?> TryCompleteBundleAsync(
         string bundleId,
         long ownerUserId,
@@ -519,11 +689,30 @@ internal sealed class TelegramInputBundleStore : ITelegramInputBundleStore
     public Task<TelegramInputBundle?> TryCompleteBundleAsync(
         string bundleId,
         long ownerUserId,
+        TelegramConversationScope conversation,
+        TelegramInputBundleStatus status,
+        bool deleteAttachments,
+        CancellationToken cancellationToken)
+        => CompleteOwnedAsync(bundleId, ownerUserId, conversation, bundle => CompleteBundle(bundle, bundle.Intent, status, deleteAttachments), cancellationToken);
+
+    public Task<TelegramInputBundle?> TryCompleteBundleAsync(
+        string bundleId,
+        long ownerUserId,
         TelegramInputBundleIntent intent,
         TelegramInputBundleStatus status,
         bool deleteAttachments,
         CancellationToken cancellationToken)
         => CompleteOwnedAsync(bundleId, ownerUserId, bundle => CompleteBundle(bundle, intent, status, deleteAttachments), cancellationToken);
+
+    public Task<TelegramInputBundle?> TryCompleteBundleAsync(
+        string bundleId,
+        long ownerUserId,
+        TelegramConversationScope conversation,
+        TelegramInputBundleIntent intent,
+        TelegramInputBundleStatus status,
+        bool deleteAttachments,
+        CancellationToken cancellationToken)
+        => CompleteOwnedAsync(bundleId, ownerUserId, conversation, bundle => CompleteBundle(bundle, intent, status, deleteAttachments), cancellationToken);
 
     public Task<TelegramInputBundle?> TrySubmitBundleAsync(
         string bundleId,
@@ -531,6 +720,19 @@ internal sealed class TelegramInputBundleStore : ITelegramInputBundleStore
         TelegramInputBundleIntent intent,
         CancellationToken cancellationToken)
         => UpdateOwnedAsync(bundleId, ownerUserId, bundle => bundle with
+        {
+            Intent = intent,
+            Status = TelegramInputBundleStatus.Submitted,
+            UpdatedAt = _timeProvider.GetUtcNow(),
+        }, cancellationToken);
+
+    public Task<TelegramInputBundle?> TrySubmitBundleAsync(
+        string bundleId,
+        long ownerUserId,
+        TelegramConversationScope conversation,
+        TelegramInputBundleIntent intent,
+        CancellationToken cancellationToken)
+        => UpdateOwnedAsync(bundleId, ownerUserId, conversation, bundle => bundle with
         {
             Intent = intent,
             Status = TelegramInputBundleStatus.Submitted,
@@ -552,6 +754,23 @@ internal sealed class TelegramInputBundleStore : ITelegramInputBundleStore
             cancellationToken,
             static status => status is TelegramInputBundleStatus.Submitted);
 
+    public Task<TelegramInputBundle?> TryReopenSubmittedBundleAsync(
+        string bundleId,
+        long ownerUserId,
+        TelegramConversationScope conversation,
+        CancellationToken cancellationToken)
+        => UpdateOwnedAsync(
+            bundleId,
+            ownerUserId,
+            conversation,
+            bundle => bundle with
+            {
+                Status = TelegramInputBundleStatus.Capturing,
+                UpdatedAt = _timeProvider.GetUtcNow(),
+            },
+            cancellationToken,
+            static status => status is TelegramInputBundleStatus.Submitted);
+
     public Task<TelegramInputBundle?> TrySetIntentAsync(
         string bundleId,
         long ownerUserId,
@@ -563,12 +782,35 @@ internal sealed class TelegramInputBundleStore : ITelegramInputBundleStore
             UpdatedAt = _timeProvider.GetUtcNow(),
         }, cancellationToken);
 
+    public Task<TelegramInputBundle?> TrySetIntentAsync(
+        string bundleId,
+        long ownerUserId,
+        TelegramConversationScope conversation,
+        TelegramInputBundleIntent intent,
+        CancellationToken cancellationToken)
+        => UpdateOwnedAsync(bundleId, ownerUserId, conversation, bundle => bundle with
+        {
+            Intent = intent,
+            UpdatedAt = _timeProvider.GetUtcNow(),
+        }, cancellationToken);
+
     public Task<TelegramInputBundle?> TrySetStatusCardMessageIdAsync(
         string bundleId,
         long ownerUserId,
         int? messageId,
         CancellationToken cancellationToken)
         => UpdateOwnedAsync(bundleId, ownerUserId, bundle => bundle with
+        {
+            StatusMessageId = messageId,
+        }, cancellationToken);
+
+    public Task<TelegramInputBundle?> TrySetStatusCardMessageIdAsync(
+        string bundleId,
+        long ownerUserId,
+        TelegramConversationScope conversation,
+        int? messageId,
+        CancellationToken cancellationToken)
+        => UpdateOwnedAsync(bundleId, ownerUserId, conversation, bundle => bundle with
         {
             StatusMessageId = messageId,
         }, cancellationToken);
@@ -589,11 +831,44 @@ internal sealed class TelegramInputBundleStore : ITelegramInputBundleStore
             };
         }, cancellationToken);
 
+    public Task<TelegramInputBundle?> TryClearAsync(
+        string bundleId,
+        long ownerUserId,
+        TelegramConversationScope conversation,
+        CancellationToken cancellationToken)
+        => UpdateOwnedAsync(bundleId, ownerUserId, conversation, bundle =>
+        {
+            DeleteAttachments(bundle.Attachments);
+            return bundle with
+            {
+                TextParts = [],
+                Attachments = [],
+                SourceMessageIds = [],
+                UpdatedAt = _timeProvider.GetUtcNow(),
+            };
+        }, cancellationToken);
+
     public Task<TelegramInputBundle?> TryCancelAsync(
         string bundleId,
         long ownerUserId,
         CancellationToken cancellationToken)
         => UpdateOwnedAsync(bundleId, ownerUserId, bundle =>
+        {
+            DeleteAttachments(bundle.Attachments);
+            return bundle with
+            {
+                Status = TelegramInputBundleStatus.Cancelled,
+                Attachments = [],
+                UpdatedAt = _timeProvider.GetUtcNow(),
+            };
+        }, cancellationToken);
+
+    public Task<TelegramInputBundle?> TryCancelAsync(
+        string bundleId,
+        long ownerUserId,
+        TelegramConversationScope conversation,
+        CancellationToken cancellationToken)
+        => UpdateOwnedAsync(bundleId, ownerUserId, conversation, bundle =>
         {
             DeleteAttachments(bundle.Attachments);
             return bundle with
@@ -624,9 +899,18 @@ internal sealed class TelegramInputBundleStore : ITelegramInputBundleStore
         }
     }
 
+    private Task<TelegramInputBundle?> UpdateOwnedAsync(
+        string bundleId,
+        long ownerUserId,
+        Func<TelegramInputBundle, TelegramInputBundle> updater,
+        CancellationToken cancellationToken,
+        Func<TelegramInputBundleStatus, bool>? canUpdate = null)
+        => UpdateOwnedAsync(bundleId, ownerUserId, null, updater, cancellationToken, canUpdate);
+
     private async Task<TelegramInputBundle?> UpdateOwnedAsync(
         string bundleId,
         long ownerUserId,
+        TelegramConversationScope? conversation,
         Func<TelegramInputBundle, TelegramInputBundle> updater,
         CancellationToken cancellationToken,
         Func<TelegramInputBundleStatus, bool>? canUpdate = null)
@@ -638,7 +922,7 @@ internal sealed class TelegramInputBundleStore : ITelegramInputBundleStore
             DateTimeOffset now = _timeProvider.GetUtcNow();
             bool expired = ExpireDueBundles(state, now).Count > 0;
 
-            int index = FindOwnedBundleIndex(state, bundleId, ownerUserId);
+            int index = FindOwnedBundleIndex(state, bundleId, ownerUserId, conversation);
             if (index < 0)
             {
                 if (expired)
@@ -680,6 +964,20 @@ internal sealed class TelegramInputBundleStore : ITelegramInputBundleStore
         => UpdateOwnedAsync(
             bundleId,
             ownerUserId,
+            updater,
+            cancellationToken,
+            static status => status is TelegramInputBundleStatus.Capturing or TelegramInputBundleStatus.Submitted);
+
+    private Task<TelegramInputBundle?> CompleteOwnedAsync(
+        string bundleId,
+        long ownerUserId,
+        TelegramConversationScope conversation,
+        Func<TelegramInputBundle, TelegramInputBundle> updater,
+        CancellationToken cancellationToken)
+        => UpdateOwnedAsync(
+            bundleId,
+            ownerUserId,
+            conversation,
             updater,
             cancellationToken,
             static status => status is TelegramInputBundleStatus.Capturing or TelegramInputBundleStatus.Submitted);
@@ -739,7 +1037,9 @@ internal sealed class TelegramInputBundleStore : ITelegramInputBundleStore
             return Path.GetFullPath(configuredRoot);
         }
 
-        return Path.Combine(AppContext.BaseDirectory, "App_Data", "codex-telegram");
+        return string.IsNullOrWhiteSpace(_options.Value.InstanceId)
+            ? Path.Combine(AppContext.BaseDirectory, "App_Data", "codex-telegram")
+            : CodexTelegramDataRoot.GetDefaultDataRoot(_options.Value.InstanceId);
     }
 
     private TelegramInputBundle CreateBundle(
@@ -793,8 +1093,20 @@ internal sealed class TelegramInputBundleStore : ITelegramInputBundleStore
         return expired;
     }
 
-    private static int FindOwnedBundleIndex(TelegramInputBundleState state, string bundleId, long ownerUserId)
-        => state.Bundles.FindIndex(bundle => IsBundleIdMatch(bundle, bundleId) && bundle.UserId == ownerUserId);
+    private static int FindOwnedBundleIndex(
+        TelegramInputBundleState state,
+        string bundleId,
+        long ownerUserId,
+        TelegramConversationScope? conversation = null)
+        => state.Bundles.FindIndex(bundle =>
+            IsBundleIdMatch(bundle, bundleId)
+            && bundle.UserId == ownerUserId
+            && (!conversation.HasValue || bundle.Conversation == conversation.Value));
+
+    private static bool IsCurrent(TelegramInputBundle bundle, DateTimeOffset now)
+        => !IsActive(bundle.Status)
+            || bundle.ExpiresAt is null
+            || bundle.ExpiresAt > now;
 
     private static bool IsBundleIdMatch(TelegramInputBundle bundle, string bundleId)
         => bundle.Id.Equals(bundleId, StringComparison.OrdinalIgnoreCase);

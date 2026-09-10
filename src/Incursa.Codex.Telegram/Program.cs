@@ -13,14 +13,26 @@ using Microsoft.Extensions.Options;
 // Top-level statements synthesize a Program type, but there is no source declaration to XML-document.
 #pragma warning disable CS1591
 
-ApplicationCommandLine commandLine = ApplicationCommandLine.Parse(args);
+ApplicationCommandLine commandLine;
+try
+{
+    commandLine = ApplicationCommandLine.Parse(args);
+}
+catch (ArgumentException exception)
+{
+    Console.Error.WriteLine($"Invalid command-line configuration: {exception.Message}");
+    Environment.ExitCode = 2;
+    return;
+}
 if (commandLine.ShowHelp)
 {
     InteractiveBootstrapMenu.WriteHelp();
     return;
 }
 
-string localSettingsPath = LocalSettingsStore.ResolveDefaultPath();
+string localSettingsPath = commandLine.ConfigPath is null
+    ? LocalSettingsStore.ResolveDefaultPath()
+    : Path.GetFullPath(commandLine.ConfigPath);
 if (ShouldRunInteractiveMenu(commandLine))
 {
     LocalSettingsStore store;
@@ -70,7 +82,9 @@ builder.Services.Configure<HostOptions>(options =>
 builder.Services.AddOptions<CodexClientOptions>()
     .Bind(builder.Configuration.GetSection("Codex"));
 builder.Services.AddOptions<CodexTelegramOptions>()
-    .Bind(builder.Configuration.GetSection("CodexTelegram"));
+    .Bind(builder.Configuration.GetSection("CodexTelegram"))
+    .ValidateOnStart();
+builder.Services.AddSingleton<IValidateOptions<CodexTelegramOptions>, CodexTelegramOptionsValidator>();
 builder.Services.AddOptions<TelegramBotOptions>()
     .Bind(builder.Configuration.GetSection("TelegramBot"));
 builder.Services.AddOptions<TelegramInputOptions>()
@@ -107,15 +121,30 @@ builder.Services.PostConfigure<CodexTelegramOptions>(options =>
 {
     if (string.IsNullOrWhiteSpace(options.Workspace.DataRoot))
     {
-        options.Workspace.DataRoot = GetDefaultDataRoot();
+        options.Workspace.DataRoot = CodexTelegramDataRoot.GetDefaultDataRoot(options.InstanceId);
     }
 
-    if (options.Workspace.WorkspaceRoots.Count == 0)
+    if (options.Mode == CodexTelegramMode.Repository
+        && !string.IsNullOrWhiteSpace(options.RepositoryRoot)
+        && TryGetFullPath(options.RepositoryRoot, out string repositoryRoot))
+    {
+        options.RepositoryRoot = repositoryRoot;
+        // Repository mode is deliberately single-root: configured general-purpose
+        // workspace roots must not widen the repository boundary.
+        options.Workspace.WorkspaceRoots = [repositoryRoot];
+        // A separately configured default directory must not override the
+        // explicit repository binding. Existing manifests retain their
+        // recorded directory; this only controls new/resumed option defaults.
+        options.Context.WorkingDirectory = repositoryRoot;
+    }
+    else if (options.Mode == CodexTelegramMode.GeneralPurpose
+        && options.Workspace.WorkspaceRoots.Count == 0)
     {
         options.Workspace.WorkspaceRoots.Add(Environment.CurrentDirectory);
     }
 
-    if (string.IsNullOrWhiteSpace(options.Context.WorkingDirectory))
+    if (options.Mode == CodexTelegramMode.GeneralPurpose
+        && string.IsNullOrWhiteSpace(options.Context.WorkingDirectory))
     {
         options.Context.WorkingDirectory = Environment.CurrentDirectory;
     }
@@ -334,24 +363,33 @@ builder.Services.AddHostedService<TelegramTypingHeartbeatHostedService>();
 builder.Services.AddHostedService<OutboundTelegramDeliveryHostedService>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<CodexSessionRuntimeRegistry>());
 
-IHost host = builder.Build();
+IHost host;
+try
+{
+    host = builder.Build();
+    _ = host.Services.GetRequiredService<IOptions<CodexTelegramOptions>>().Value;
+}
+catch (OptionsValidationException exception)
+{
+    Console.Error.WriteLine($"Codex Telegram configuration validation failed: {string.Join(" ", exception.Failures)}");
+    Environment.ExitCode = 2;
+    return;
+}
+catch (InvalidOperationException exception)
+{
+    // Configuration binding (for example, an invalid enum value) reports an
+    // InvalidOperationException before the options validator can run. Keep
+    // unattended service/container startup actionable and non-interactive.
+    Console.Error.WriteLine($"Codex Telegram configuration could not be loaded: {exception.Message}");
+    Environment.ExitCode = 2;
+    return;
+}
 await RehydrateTelegramThreadFollowsAsync(host.Services, CancellationToken.None);
 await ReattachPersistedCodexTurnsAsync(host.Services, CancellationToken.None);
 await host.RunAsync();
 
 static string? DefaultIfWhiteSpace(string? value, string? fallback)
     => string.IsNullOrWhiteSpace(value) ? fallback : value;
-
-static string GetDefaultDataRoot()
-{
-    string baseDirectory = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
-    if (string.IsNullOrWhiteSpace(baseDirectory))
-    {
-        baseDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".incursa");
-    }
-
-    return Path.Combine(baseDirectory, "Incursa", "CodexTelegram");
-}
 
 static IReadOnlyList<string> NormalizeDistinctPaths(IEnumerable<string> paths)
     => paths
@@ -419,21 +457,47 @@ static bool ShouldRunInteractiveMenu(ApplicationCommandLine commandLine)
         && !Console.IsOutputRedirected;
 }
 
+static bool TryGetFullPath(string? value, out string path)
+{
+    if (string.IsNullOrWhiteSpace(value))
+    {
+        path = string.Empty;
+        return false;
+    }
+
+    try
+    {
+        path = Path.GetFullPath(value.Trim());
+        return true;
+    }
+    catch (Exception exception) when (exception is ArgumentException or NotSupportedException or IOException)
+    {
+        path = string.Empty;
+        return false;
+    }
+}
+
 internal sealed record ApplicationCommandLine(
     bool RunDirectly,
     bool ShowMenu,
     bool ShowHelp,
     string[] ConfigurationArgs)
 {
+    public string? ConfigPath { get; init; }
+
+    public string? ConfigurationPath => ConfigPath;
+
     public static ApplicationCommandLine Parse(string[] args)
     {
         bool runDirectly = false;
         bool showMenu = false;
         bool showHelp = false;
+        string? configPath = null;
         List<string> configurationArgs = new(args.Length);
 
-        foreach (string arg in args)
+        for (int index = 0; index < args.Length; index++)
         {
+            string arg = args[index];
             if (Is(arg, "--run"))
             {
                 runDirectly = true;
@@ -452,10 +516,36 @@ internal sealed record ApplicationCommandLine(
                 continue;
             }
 
+            if (Is(arg, "--config"))
+            {
+                if (index + 1 >= args.Length || string.IsNullOrWhiteSpace(args[index + 1]))
+                {
+                    throw new ArgumentException("The --config option requires a non-empty path.", nameof(args));
+                }
+
+                configPath = args[++index];
+                continue;
+            }
+
+            if (arg.StartsWith("--config=", StringComparison.OrdinalIgnoreCase))
+            {
+                string value = arg["--config=".Length..];
+                if (string.IsNullOrWhiteSpace(value))
+                {
+                    throw new ArgumentException("The --config option requires a non-empty path.", nameof(args));
+                }
+
+                configPath = value;
+                continue;
+            }
+
             configurationArgs.Add(arg);
         }
 
-        return new ApplicationCommandLine(runDirectly, showMenu, showHelp, configurationArgs.ToArray());
+        return new ApplicationCommandLine(runDirectly, showMenu, showHelp, configurationArgs.ToArray())
+        {
+            ConfigPath = configPath,
+        };
     }
 
     private static bool Is(string arg, string expected)

@@ -24,6 +24,17 @@ This is an initial, evidence-labeled assessment of the operator experience. It r
 | Codex authentication belongs to the local Codex installation, not this app. | `automated` source/config boundary inspection. | Two instances must not accidentally share credentials or state. |
 | Build, test, fuzz, and mutation results are not equivalent to live Telegram proof. | `automated` test and release-script inspection. | Release notes must name the evidence type and any skipped live checks. |
 
+## Finding Register
+
+| Journey and reproducible friction | Evidence | Proposed improvement | Priority | Compatibility impact | Success condition | State |
+| --- | --- | --- | --- | --- | --- | --- |
+| First launch: operators had to assemble mode, paths, token, allowlist, and Telegram profile steps from separate guidance. Reproduce with no local settings file and an interactive terminal. | `automated` source review and bootstrap tests; no `Telegram-live` walkthrough. | Extend the existing wizard with explicit mode/storage validation, token identity, expiring pairing, readiness checks, and optional profile/menu setup. | P0 | Additive settings and existing `--run`/`--menu` behavior remain intact. | A new operator can save a verified token, admin ID, mode, and data root and see which checks remain unverified. | Implemented; live walkthrough follow-up. |
+| Dedicated bot: project controls were still visible and a no-session prompt could depend on project selection. Reproduce in repository mode by opening `/home`, `/projects`, and sending ordinary text. | `automated` handler tests and source review. | Bind new/resumed sessions to the validated root, hide project controls, and auto-create a session for ordinary private text. | P0 | General-purpose project registration and selection are unchanged. | Repository mode creates at the configured root and rejects a session/callback from another root. | Implemented. |
+| Input while work runs: queue edits, bundle cards, and callbacks could identify a user but not the originating conversation/topic. Reproduce with two topics for one user and reuse an old button. | `automated` state/input/plan tests. | Require conversation scope and expiry/replacement checks for queue and bundle mutations. | P0 | Existing persisted records retain their recorded conversation identity. | An old or cross-topic action is rejected without changing the other topic’s queue/bundle. | Implemented. |
+| Telegram setup: command/profile changes had no per-operation ownership or repeatable repair path. Reproduce with a fake client that fails one Bot API operation. | `synthetic` profile-setup tests and source review; no remote API call. | Use one app-owned catalog, explicit opt-in synchronization, independent results, redaction, and BotFather fallbacks. | P1 | Custom settings are untouched unless the operator approves an app-managed operation. | Reapplying reports success/skip/failure per operation and never claims a failed change succeeded. | Implemented; live Bot API check follow-up. |
+| Multiple instances: mutable state and polling conflicts were easy to create by copying the same build. Reproduce with two local processes and the same data root/token. | `automated` configuration/state tests and source review; no two-bot live run. | Add explicit `InstanceId`/data-root guidance and a local token receiver lock with actionable diagnostics. | P1 | Legacy defaults remain when no instance selector is supplied. | Distinct roots do not share state; a duplicate local poller fails clearly. | Implemented; two-process live check follow-up. |
+| Daily mobile use: users could not easily tell whether a message was bundled, queued, active, or complete without verbose command output. Reproduce by sending text/voice/attachments and inspecting cards/status. | `automated` existing queue/bundle/output tests and source review; no phone walkthrough. | Keep compact presentation, add mode-aware home/repository summary, and preserve contextual controls with stale-action rejection. | P1 | Existing output modes and voice/attachment behavior remain supported. | A phone walkthrough can distinguish capture, queue, active turn, result, failure, approval, and recovery states. | Partly implemented; phone walkthrough and presentation polish remain follow-up. |
+
 ## Delivered Improvements
 
 The current documentation slice delivers:
@@ -33,9 +44,10 @@ The current documentation slice delivers:
 3. Two-instance examples with separate BotFather tokens, executable folders, and local `DataRoot` values.
 4. Configuration precedence and direct environment-variable fallback rules.
 5. Clear ownership boundaries between app commands/`/help`, one-time Bot API command/menu setup, BotFather profile/privacy/group settings, and manual slash-command fallbacks.
-6. Private-chat, trusted-group-root, and forum-topic requirements with `/send` and topic commands as operational fallbacks.
-7. Codex authentication isolation guidance that keeps credentials out of app state and repositories.
-8. Honest verification language distinguishing automated, synthetic, local-live, and Telegram-live evidence.
+6. An explicit Telegram repair action in the normal menu for reapplying mode-aware commands after an administrative mode change.
+7. Private-chat, trusted-group-root, and forum-topic requirements with `/send` and topic commands as operational fallbacks.
+8. Codex authentication isolation guidance that keeps credentials out of app state and repositories.
+9. Honest verification language distinguishing automated, synthetic, local-live, and Telegram-live evidence.
 
 ## Synthetic Before/After Examples
 
@@ -55,6 +67,10 @@ Next: review the workspace mode and repository boundary, then run /doctor in the
 ```
 
 The after text reports what the wizard observed. It does not imply that a normal Codex turn or a group workflow has been tested.
+
+## Verification in this pass
+
+Observed locally (`automated`): `dotnet build CodexTelegram.slnx -c Release -m:1 --no-restore` succeeded with zero warnings/errors; `dotnet test ... -c Release --no-build --no-restore -m:1` passed 504 tests; the repository fuzz corpus passed 5 tests; `dotnet format --verify-no-changes` passed; the package vulnerability query found no vulnerable packages; and the tracked-file secret scan passed. A win-x64 publish was inspected and contained `Assets/codex-telegram-logo.png`. `Telegram-live`, phone, BotFather, and real Codex authentication checks were not run.
 
 ### Example: group troubleshooting
 

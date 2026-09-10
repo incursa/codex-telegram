@@ -1,5 +1,8 @@
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Incursa.Codex.Telegram.Configuration;
 using Incursa.Codex.Telegram.Options;
 using Microsoft.Extensions.Options;
 
@@ -74,9 +77,27 @@ internal interface ITelegramBotStateStore
 
     Task<TelegramQueuedPrompt?> TryGetQueuedPromptAsync(string promptId, CancellationToken cancellationToken);
 
+    Task<TelegramQueuedPrompt?> TryGetQueuedPromptAsync(
+        string promptId,
+        TelegramConversationScope conversation,
+        CancellationToken cancellationToken);
+
     Task<TelegramQueuedPrompt?> TryRemoveQueuedPromptAsync(string promptId, long? ownerUserId, CancellationToken cancellationToken);
 
+    Task<TelegramQueuedPrompt?> TryRemoveQueuedPromptAsync(
+        string promptId,
+        long? ownerUserId,
+        TelegramConversationScope conversation,
+        CancellationToken cancellationToken);
+
     Task<TelegramQueuedPrompt?> TryUpdateQueuedPromptTextAsync(string promptId, long? ownerUserId, string text, CancellationToken cancellationToken);
+
+    Task<TelegramQueuedPrompt?> TryUpdateQueuedPromptTextAsync(
+        string promptId,
+        long? ownerUserId,
+        string text,
+        TelegramConversationScope conversation,
+        CancellationToken cancellationToken);
 
     Task<TelegramQueuedPrompt?> DequeueQueuedPromptAsync(CancellationToken cancellationToken);
 
@@ -97,7 +118,7 @@ internal sealed record TelegramConversationState(
     int QueuedPromptCount,
     DateTimeOffset? OldestQueuedPromptAt);
 
-internal sealed class TelegramBotStateStore : ITelegramBotStateStore
+internal sealed class TelegramBotStateStore : ITelegramBotStateStore, IDisposable
 {
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly JsonSerializerOptions _jsonOptions = new(JsonSerializerDefaults.Web)
@@ -105,10 +126,72 @@ internal sealed class TelegramBotStateStore : ITelegramBotStateStore
         WriteIndented = true,
     };
     private readonly IOptions<CodexTelegramOptions> _options;
+    private readonly string _dataRoot;
+    private readonly Mutex? _instanceLock;
 
     public TelegramBotStateStore(IOptions<CodexTelegramOptions> options)
     {
         _options = options;
+        _dataRoot = GetDataRoot();
+        _instanceLock = null;
+        if (OperatingSystem.IsWindows())
+        {
+            try
+            {
+                Directory.CreateDirectory(_dataRoot);
+                Mutex instanceLock = new(false, BuildInstanceMutexName(_dataRoot));
+                bool acquired = false;
+                try
+                {
+                    try
+                    {
+                        acquired = instanceLock.WaitOne(0);
+                    }
+                    catch (AbandonedMutexException)
+                    {
+                        acquired = true;
+                    }
+
+                    if (!acquired)
+                    {
+                        throw new IOException("The data root instance mutex is already owned by another process.");
+                    }
+
+                    _instanceLock = instanceLock;
+                }
+                catch
+                {
+                    if (acquired)
+                    {
+                        instanceLock.ReleaseMutex();
+                    }
+
+                    instanceLock.Dispose();
+                    throw;
+                }
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or NotSupportedException or PlatformNotSupportedException)
+            {
+                throw new InvalidOperationException(
+                    $"The Codex Telegram data root '{_dataRoot}' is already in use by another process. Configure a distinct CodexTelegram:Workspace:DataRoot or CodexTelegram:InstanceId for each process.",
+                    exception);
+            }
+        }
+    }
+
+    internal string DataRoot => _dataRoot;
+
+    public void Dispose()
+    {
+        _instanceLock?.Dispose();
+        _gate.Dispose();
+    }
+
+    private static string BuildInstanceMutexName(string dataRoot)
+    {
+        string normalized = OperatingSystem.IsWindows() ? dataRoot.ToUpperInvariant() : dataRoot;
+        byte[] hash = SHA256.HashData(Encoding.UTF8.GetBytes(normalized));
+        return $"Incursa.Codex.Telegram.{Convert.ToHexString(hash)}";
     }
 
     public async Task<string?> GetActiveSessionIdAsync(TelegramConversationScope conversation, CancellationToken cancellationToken)
@@ -291,6 +374,17 @@ internal sealed class TelegramBotStateStore : ITelegramBotStateStore
         return state.QueuedPrompts.FirstOrDefault(prompt => IsPromptIdMatch(prompt, promptId));
     }
 
+    public async Task<TelegramQueuedPrompt?> TryGetQueuedPromptAsync(
+        string promptId,
+        TelegramConversationScope conversation,
+        CancellationToken cancellationToken)
+    {
+        TelegramBotState state = await LoadStateAsync(cancellationToken).ConfigureAwait(false);
+        return state.QueuedPrompts.FirstOrDefault(prompt =>
+            IsPromptIdMatch(prompt, promptId)
+            && prompt.ConversationScope == conversation);
+    }
+
     public async Task<TelegramQueuedPrompt?> TryRemoveQueuedPromptAsync(string promptId, long? ownerUserId, CancellationToken cancellationToken)
     {
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -313,6 +407,36 @@ internal sealed class TelegramBotStateStore : ITelegramBotStateStore
         }
     }
 
+    public async Task<TelegramQueuedPrompt?> TryRemoveQueuedPromptAsync(
+        string promptId,
+        long? ownerUserId,
+        TelegramConversationScope conversation,
+        CancellationToken cancellationToken)
+    {
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            TelegramBotState state = await LoadStateCoreAsync(cancellationToken).ConfigureAwait(false);
+            TelegramQueuedPrompt? prompt = state.QueuedPrompts.FirstOrDefault(item =>
+                IsOwnedPromptIdMatch(item, promptId, ownerUserId)
+                && item.ConversationScope == conversation);
+            if (prompt is null)
+            {
+                return null;
+            }
+
+            state.QueuedPrompts.RemoveAll(item =>
+                IsPromptIdMatch(item, promptId)
+                && item.ConversationScope == conversation);
+            await SaveStateCoreAsync(state, cancellationToken).ConfigureAwait(false);
+            return prompt;
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
     public async Task<TelegramQueuedPrompt?> TryUpdateQueuedPromptTextAsync(
         string promptId,
         long? ownerUserId,
@@ -324,6 +448,36 @@ internal sealed class TelegramBotStateStore : ITelegramBotStateStore
         {
             TelegramBotState state = await LoadStateCoreAsync(cancellationToken).ConfigureAwait(false);
             int index = state.QueuedPrompts.FindIndex(prompt => IsOwnedPromptIdMatch(prompt, promptId, ownerUserId));
+            if (index < 0)
+            {
+                return null;
+            }
+
+            TelegramQueuedPrompt updated = state.QueuedPrompts[index] with { Text = text };
+            state.QueuedPrompts[index] = updated;
+            await SaveStateCoreAsync(state, cancellationToken).ConfigureAwait(false);
+            return updated;
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    public async Task<TelegramQueuedPrompt?> TryUpdateQueuedPromptTextAsync(
+        string promptId,
+        long? ownerUserId,
+        string text,
+        TelegramConversationScope conversation,
+        CancellationToken cancellationToken)
+    {
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            TelegramBotState state = await LoadStateCoreAsync(cancellationToken).ConfigureAwait(false);
+            int index = state.QueuedPrompts.FindIndex(prompt =>
+                IsOwnedPromptIdMatch(prompt, promptId, ownerUserId)
+                && prompt.ConversationScope == conversation);
             if (index < 0)
             {
                 return null;
@@ -509,7 +663,9 @@ internal sealed class TelegramBotStateStore : ITelegramBotStateStore
             return Path.GetFullPath(configuredRoot);
         }
 
-        return Path.Combine(AppContext.BaseDirectory, "App_Data", "codex-telegram");
+        return string.IsNullOrWhiteSpace(_options.Value.InstanceId)
+            ? Path.Combine(AppContext.BaseDirectory, "App_Data", "codex-telegram")
+            : CodexTelegramDataRoot.GetDefaultDataRoot(_options.Value.InstanceId);
     }
 
     private static void AddTrackedSession(TelegramBotState state, string sessionId)

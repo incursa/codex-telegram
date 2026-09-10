@@ -24,6 +24,8 @@ This keeps the first setup path narrow: one allowed Telegram user talking to one
 
 The app owns command parsing, callback behavior, and the built-in `/help` response. Guided setup can apply the app-owned command list and Telegram menu button through the Bot API, one time; it does not run a background sync. BotFather is the manual owner for description, about text, group-join setting, privacy mode, and any command/profile operation that setup skips or cannot apply. Changes in `docs/` remain recommendations that an operator must review and apply where needed.
 
+After an explicit workspace-mode change, open the interactive menu's **Telegram and admins** section and choose **Reapply command menu and optional profile setup**. This reuses the same explicit confirmation and reports each Bot API operation separately; it does not run during ordinary startup.
+
 After changing the command list, verify it in Telegram. If the picker has not refreshed, use `/help` and the exact forms in [command-reference.md](command-reference.md); a stale picker is a discoverability issue, not evidence that a command is unsupported.
 
 ## Create The Bot
@@ -96,31 +98,33 @@ Choose your bot, then paste:
 
 ```text
 help - Show supported commands
+home - Show the bot home and active session
 whoami - Show Telegram user, chat, and topic IDs
-version - Show the running app version
 trust - Trust the current group or forum chat
 doctor - Diagnose authorization, routing, project, session, and queue state
 projects - List known local projects
 project - Select, add, or show the current project
 new - Create and select a Codex session
+resume - Resume a Codex session
 sessions - List active and managed sessions
 use - Select an existing session
 send - Send text to the active session
 steer - Steer the active turn
 queue - View, edit, send, or delete queued prompts
-model - Show or change model settings
-thinking - Show or change thinking effort
-goal - Show or change the session goal
-tail - Show recent session output
 status - Show session status and compact usage
-usage - Show five-hour and weekly Codex usage
-debug - Toggle diagnostic message preambles
-outbound - Show outbound Telegram queue status
 stop - Stop the active or selected session
 topic - Manage forum-topic sessions
-topics - List topic/session bindings
-restart - Show restart guidance
 ```
+
+For a repository-mode bot, replace `projects` and `project` with:
+
+```text
+repo - Show repository status and guidance
+```
+
+Advanced commands such as `/model`, `/thinking`, `/goal`, `/tail`, `/usage`,
+`/debug`, `/outbound`, `/topics`, and `/restart` remain supported as slash
+commands even when they are omitted from the compact picker.
 
 Command behavior:
 
@@ -158,6 +162,8 @@ If you want ordinary group text to route to Codex, privacy mode may need to be d
 When privacy mode is enabled, test the intended group workflow with a command, mention, or reply before concluding that the bot is offline. `/send <text>` is the explicit manual dispatch fallback.
 
 ## Optional Profile Media
+
+The guided setup can optionally apply an operator-approved profile photo through `setMyProfilePhoto`. Published builds include the project-owned `Assets/codex-telegram-logo.png`; the wizard offers it when present. You can instead provide a custom image or skip the step. If the installed Telegram client cannot apply the photo, use `/setuserpic` below and upload that file manually.
 
 Use a neutral avatar if you are recording or sharing setup:
 

@@ -160,7 +160,7 @@ Use this when:
 2. You want a guided setup path.
 3. You do not want to memorize every config key immediately.
 
-When no local settings file exists yet, the first-run wizard asks for the Telegram token, validates it with Telegram, captures your admin user ID from a private bot message, optionally stores an OpenAI key for voice notes, and asks for explicit workspace roots.
+When no local settings file exists yet, the first-run wizard asks you to choose `GeneralPurpose` or `Repository`, validates the repository/workspace and local data root, then validates the Telegram token, captures your admin user ID from a private bot message, optionally stores an OpenAI key for voice notes, and offers the app-owned command/profile setup.
 
 The menu has sections for:
 
@@ -168,6 +168,7 @@ The menu has sections for:
 2. OpenAI transcription.
 3. Codex runtime, including separate plan-mode thinking defaults.
 4. Workspaces.
+5. Workspace mode and repository binding.
 
 The Workspaces section is where you tell the bot which local folders are safe for project selection. Use a parent source directory such as `C:\src`, `~/src`, or `/Users/you/src` when most repositories live together; use specific repository paths when you want tighter scope. The local data root is separate and stores the persisted project catalog, conversation bindings, queued prompts, and thread manifests.
 The model prompts are picker-based for the common cases, so you can choose a known transcription model, a default Codex model, or a thinking-effort preset without typing blind. When Codex is reachable, the picker uses the live model list and the model's reported effort choices; otherwise it falls back to curated examples. Custom values are still allowed when you need them.
@@ -186,7 +187,7 @@ Treat the wizard's ending message as an outcome, not as proof that every integra
 | Automatic user capture timed out or was skipped | No qualifying private setup message was observed. | Enter the numeric ID manually, or run `/whoami` as the documented fallback while the allowlist is empty. |
 | Cancelled or unable to write settings | No usable setup file was produced. | Correct the path/permissions and rerun the wizard. |
 
-The wizard can optionally apply the app-owned command list and Telegram menu button through the Bot API. This is a one-time setup action, not background synchronization. Description/about text, group-join setting, privacy mode, and any skipped or failed operation remain manual BotFather work; use [botfather.md](botfather.md).
+The wizard can optionally apply the app-owned command list, menu button, and operator-approved profile text through the Bot API. This is a one-time setup action, not background synchronization. Group-join setting, privacy mode, and any skipped or failed operation remain manual BotFather work; use [botfather.md](botfather.md).
 
 ### 3. User secrets
 

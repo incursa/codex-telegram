@@ -1,4 +1,6 @@
 using Incursa.Codex.Telegram.Configuration;
+using Incursa.Codex.Telegram.Telegram;
+using Telegram.Bot.Types;
 
 namespace Incursa.Codex.Telegram.Tests;
 
@@ -27,5 +29,17 @@ public sealed class TelegramSetupClientTests
         bool actual = TelegramSetupClient.TextContainsSetupChallenge(messageText, expectedChallenge);
 
         Assert.Equal(expected, actual);
+    }
+
+    [Fact]
+    public void SetupUpdateBufferKeepsUnrelatedUpdatesForTheHostedReceiver()
+    {
+        Update update = new() { Id = Random.Shared.Next(1, int.MaxValue) };
+        string token = $"123456:{Guid.NewGuid():N}";
+
+        TelegramSetupUpdateBuffer.Enqueue(token, update);
+
+        Assert.Same(update, Assert.Single(TelegramSetupUpdateBuffer.Drain(token)));
+        Assert.Empty(TelegramSetupUpdateBuffer.Drain(token));
     }
 }

@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Globalization;
 using System.Text;
+using Incursa.Codex.Telegram.Configuration;
 using Incursa.Codex.Telegram.Models;
 using Incursa.Codex.Telegram.Options;
 using Incursa.Codex.Telegram.Services;
@@ -81,6 +82,7 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
     private readonly ITelegramDebugTraceStore _traceStore;
     private readonly ITelegramBotStateStore? _stateStore;
     private readonly ILogger<TelegramTurnOutputRelay> _logger;
+    private readonly string _tempRoot;
     private readonly ConcurrentDictionary<TelegramLiveTurnCardKey, TelegramLiveTurnCardState> _liveCards = new();
     private readonly ConcurrentDictionary<TelegramLiveTurnCardKey, TelegramCompactPulseState> _compactPulses = new();
 
@@ -98,6 +100,7 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
     /// <param name="eventLog">Session event projection updated when assistant text is actually queued to Telegram.</param>
     /// <param name="traceStore">Optional trace store for turn and delivery diagnostics.</param>
     /// <param name="stateStore">Optional persisted Telegram state used to recover output followers after restart or race windows.</param>
+    /// <param name="codexOptions">Optional workspace options used to isolate temporary outbound artifacts per instance.</param>
     public TelegramTurnOutputRelay(
         IOutboundTelegramQueue outboundQueue,
         ITelegramThreadFollowRegistry followRegistry,
@@ -109,7 +112,8 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
         ILogger<TelegramTurnOutputRelay> logger,
         ICodexSessionEventLog? eventLog = null,
         ITelegramDebugTraceStore? traceStore = null,
-        ITelegramBotStateStore? stateStore = null)
+        ITelegramBotStateStore? stateStore = null,
+        IOptions<CodexTelegramOptions>? codexOptions = null)
     {
         _outboundQueue = outboundQueue;
         _followRegistry = followRegistry;
@@ -122,6 +126,9 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
         _traceStore = traceStore ?? NullTelegramDebugTraceStore.Instance;
         _stateStore = stateStore;
         _logger = logger;
+        _tempRoot = codexOptions is null
+            ? Path.Combine(Path.GetTempPath(), "codex-telegram")
+            : CodexTelegramDataRoot.GetTempRoot(codexOptions.Value);
     }
 
     /// <inheritdoc />
@@ -1416,7 +1423,7 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
     private static string? GetMetadata(CodexTimelineEntryVm entry, string key)
         => entry.Metadata.TryGetValue(key, out string? value) && !string.IsNullOrWhiteSpace(value) ? value : null;
 
-    private static bool TryResolveExplicitMediaFile(CodexTimelineEntryVm entry, out string path, out string? contentType)
+    private bool TryResolveExplicitMediaFile(CodexTimelineEntryVm entry, out string path, out string? contentType)
     {
         if (TryResolveExplicitMediaPath(entry, out path, out contentType))
         {
@@ -1474,7 +1481,7 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
         return true;
     }
 
-    private static bool TryMaterializeExplicitMediaData(CodexTimelineEntryVm entry, out string path, out string? contentType)
+    private bool TryMaterializeExplicitMediaData(CodexTimelineEntryVm entry, out string path, out string? contentType)
     {
         path = string.Empty;
         contentType = null;
@@ -1524,7 +1531,7 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
 
         string extension = ExtensionForContentType(contentType);
         string fileName = ResolveMaterializedFileName(entry, extension);
-        string directory = Path.Combine(Path.GetTempPath(), "codex-telegram", "outbound-artifacts");
+        string directory = Path.Combine(_tempRoot, "outbound-artifacts");
         Directory.CreateDirectory(directory);
         path = Path.Combine(directory, fileName);
         File.WriteAllBytes(path, bytes);

@@ -4,6 +4,7 @@ using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Incursa.Codex.Telegram.Configuration;
 using Incursa.Codex.Telegram.Options;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -38,15 +39,20 @@ internal sealed class OpenAiSpeechToTextService : IAudioTranscriptionService
     private readonly HttpClient _httpClient;
     private readonly OpenAiSpeechToTextOptions _options;
     private readonly ILogger<OpenAiSpeechToTextService> _logger;
+    private readonly string _tempRoot;
 
     public OpenAiSpeechToTextService(
         HttpClient httpClient,
         IOptions<OpenAiSpeechToTextOptions> options,
-        ILogger<OpenAiSpeechToTextService> logger)
+        ILogger<OpenAiSpeechToTextService> logger,
+        IOptions<CodexTelegramOptions>? codexOptions = null)
     {
         _httpClient = httpClient;
         _options = options.Value;
         _logger = logger;
+        _tempRoot = codexOptions is null
+            ? Path.Combine(Path.GetTempPath(), "codex-telegram")
+            : CodexTelegramDataRoot.GetTempRoot(codexOptions.Value);
     }
 
     public async Task<string> TranscribeAsync(string audioFilePath, CancellationToken cancellationToken)
@@ -159,7 +165,7 @@ internal sealed class OpenAiSpeechToTextService : IAudioTranscriptionService
 
     private async Task<string> TranscodeToSupportedFormatAsync(string inputFilePath, CancellationToken cancellationToken)
     {
-        string tempDirectory = Path.Combine(Path.GetTempPath(), "codex-telegram", "telegram-audio");
+        string tempDirectory = Path.Combine(_tempRoot, "telegram-audio");
         Directory.CreateDirectory(tempDirectory);
         string outputFilePath = Path.Combine(tempDirectory, $"{Guid.NewGuid():n}.m4a");
 

@@ -132,6 +132,35 @@ public sealed class TelegramInputBundleStoreTests
     }
 
     [Fact]
+    public async Task ScopedBundleMutationsRequireOriginatingConversation()
+    {
+        using TemporaryDirectory temp = TemporaryDirectory.Create();
+        ManualTimeProvider clock = new(DateTimeOffset.Parse("2026-05-23T10:00:00Z"));
+        TelegramInputBundleStore store = CreateStore(temp.Path, clock);
+        TelegramConversationScope origin = new(1234, 55);
+        TelegramConversationScope other = new(1234, 56);
+        TelegramInputBundle bundle = await store.CreateAsync(origin, 42, CancellationToken.None);
+
+        Assert.Null(await store.TryGetBundleAsync(bundle.Id, 42, other, CancellationToken.None));
+        Assert.Null(await store.TrySetIntentAsync(bundle.Id, 42, other, TelegramInputBundleIntent.QueueNext, CancellationToken.None));
+        Assert.NotNull(await store.TrySetIntentAsync(bundle.Id, 42, origin, TelegramInputBundleIntent.QueueNext, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task ScopedBundleLookupRejectsExpiredCapturingBundle()
+    {
+        using TemporaryDirectory temp = TemporaryDirectory.Create();
+        ManualTimeProvider clock = new(DateTimeOffset.Parse("2026-05-23T10:00:00Z"));
+        TelegramInputBundleStore store = CreateStore(temp.Path, clock, expirationMinutes: 1);
+        TelegramConversationScope conversation = new(1234, 55);
+        TelegramInputBundle bundle = await store.CreateAsync(conversation, 42, CancellationToken.None);
+
+        clock.Advance(TimeSpan.FromMinutes(2));
+
+        Assert.Null(await store.TryGetBundleAsync(bundle.Id, 42, conversation, CancellationToken.None));
+    }
+
+    [Fact]
     public async Task TrySubmitBundleAsync_LocksBundleUntilCompletionOrReopen()
     {
         using TemporaryDirectory temp = TemporaryDirectory.Create();

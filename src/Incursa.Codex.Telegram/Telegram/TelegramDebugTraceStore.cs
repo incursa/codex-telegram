@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
+using Incursa.Codex.Telegram.Configuration;
 using Incursa.Codex.Telegram.Options;
 using Microsoft.Extensions.Options;
 
@@ -599,7 +600,11 @@ internal sealed class TelegramDebugTraceStore : ITelegramDebugTraceStore
 
         string? configuredDataRoot = _codexOptions.Value.Workspace.DataRoot;
         return string.IsNullOrWhiteSpace(configuredDataRoot)
-            ? Path.Combine(AppContext.BaseDirectory, "App_Data", "codex-telegram", "telegram-traces")
+            ? Path.Combine(
+                string.IsNullOrWhiteSpace(_codexOptions.Value.InstanceId)
+                    ? Path.Combine(AppContext.BaseDirectory, "App_Data", "codex-telegram")
+                    : CodexTelegramDataRoot.GetDefaultDataRoot(_codexOptions.Value.InstanceId),
+                "telegram-traces")
             : Path.Combine(configuredDataRoot, "telegram-traces");
     }
 

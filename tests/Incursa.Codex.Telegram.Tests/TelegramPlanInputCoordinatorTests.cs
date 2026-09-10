@@ -64,6 +64,84 @@ public sealed class TelegramPlanInputCoordinatorTests
         Assert.Equal("Yes", values[0]!.GetValue<string>());
     }
 
+    [Fact]
+    public async Task TryAnswerCallbackAsync_RejectsCallbackFromAnotherConversation()
+    {
+        TelegramThreadFollowRegistry followRegistry = new();
+        TelegramConversationScope origin = new(1234, 56);
+        followRegistry.FollowThread(origin, "thread-plan");
+        TestTelegramBotMessageSender sender = new();
+        TelegramPlanInputCoordinator coordinator = new(
+            followRegistry,
+            sender,
+            new TestApplicationLifetime(),
+            NullLogger<TelegramPlanInputCoordinator>.Instance);
+
+        Task<JsonObject?> responseTask = Task.Run(() => coordinator.HandleApprovalRequest(
+            "item/tool/requestUserInput",
+            CreateRequest()));
+        await WaitUntilAsync(() => sender.Sent.Count == 1);
+        string token = sender.Sent[0].Buttons!.SelectMany(row => row).First().CallbackData[5..];
+
+        Assert.True(await coordinator.TryAnswerCallbackAsync(
+            token,
+            new TelegramConversationScope(1234, 57),
+            "callback-other-scope",
+            CancellationToken.None));
+        Assert.Contains(sender.CallbackAnswers, answer => answer.Text == "That plan answer is not for this conversation.");
+        Assert.False(responseTask.IsCompleted);
+
+        Assert.True(await coordinator.TryAnswerPendingAsync(origin, "Yes", CancellationToken.None));
+        Assert.NotNull(await responseTask.WaitAsync(TimeSpan.FromSeconds(5)));
+    }
+
+    [Fact]
+    public async Task TryAnswerCallbackAsync_RejectsExpiredPlanQuestion()
+    {
+        TelegramThreadFollowRegistry followRegistry = new();
+        TelegramConversationScope conversation = new(1234, 56);
+        followRegistry.FollowThread(conversation, "thread-plan");
+        TestTelegramBotMessageSender sender = new();
+        ManualTimeProvider clock = new(DateTimeOffset.Parse("2026-05-23T10:00:00Z"));
+        TelegramPlanInputCoordinator coordinator = new(
+            followRegistry,
+            sender,
+            new TestApplicationLifetime(),
+            NullLogger<TelegramPlanInputCoordinator>.Instance,
+            clock);
+
+        Task<JsonObject?> responseTask = Task.Run(() => coordinator.HandleApprovalRequest(
+            "item/tool/requestUserInput",
+            CreateRequest()));
+        await WaitUntilAsync(() => sender.Sent.Count == 1);
+        string token = sender.Sent[0].Buttons!.SelectMany(row => row).First().CallbackData[5..];
+        clock.Advance(TimeSpan.FromMinutes(31));
+
+        Assert.True(await coordinator.TryAnswerCallbackAsync(token, conversation, "callback-expired", CancellationToken.None));
+        Assert.Contains(sender.CallbackAnswers, answer => answer.Text == "That plan answer is no longer pending.");
+        Assert.NotNull(await responseTask.WaitAsync(TimeSpan.FromSeconds(5)));
+    }
+
+    private static JsonObject CreateRequest()
+        => new()
+        {
+            ["threadId"] = "thread-plan",
+            ["turnId"] = "turn-plan",
+            ["questions"] = new JsonArray
+            {
+                new JsonObject
+                {
+                    ["id"] = "confirm_scope",
+                    ["question"] = "Should I include tests?",
+                    ["options"] = new JsonArray
+                    {
+                        new JsonObject { ["label"] = "Yes" },
+                        new JsonObject { ["label"] = "No" },
+                    },
+                },
+            },
+        };
+
     private static async Task WaitUntilAsync(Func<bool> predicate)
     {
         using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(5));
@@ -90,6 +168,8 @@ public sealed class TelegramPlanInputCoordinatorTests
     {
         public List<SentTelegramMessage> Sent { get; } = [];
 
+        public List<CallbackAnswer> CallbackAnswers { get; } = [];
+
         public Task SendTextMessageAsync(
             TelegramConversationScope conversation,
             string text,
@@ -111,7 +191,10 @@ public sealed class TelegramPlanInputCoordinatorTests
             => Task.CompletedTask;
 
         public Task AnswerCallbackQueryAsync(string callbackQueryId, string? text, CancellationToken cancellationToken)
-            => Task.CompletedTask;
+        {
+            CallbackAnswers.Add(new CallbackAnswer(callbackQueryId, text));
+            return Task.CompletedTask;
+        }
 
         public Task AcknowledgeMessageAsync(TelegramMessageAcknowledgement acknowledgement, CancellationToken cancellationToken)
             => Task.CompletedTask;
@@ -127,4 +210,17 @@ public sealed class TelegramPlanInputCoordinatorTests
         TelegramConversationScope Conversation,
         string Text,
         IReadOnlyList<IReadOnlyList<TelegramReplyButton>>? Buttons);
+
+    private sealed record CallbackAnswer(string CallbackQueryId, string? Text);
+
+    private sealed class ManualTimeProvider(DateTimeOffset utcNow) : TimeProvider
+    {
+        private DateTimeOffset _utcNow = utcNow;
+
+        public override DateTimeOffset GetUtcNow()
+            => _utcNow;
+
+        public void Advance(TimeSpan delta)
+            => _utcNow = _utcNow.Add(delta);
+    }
 }

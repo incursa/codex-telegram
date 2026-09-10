@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using Incursa.OpenAI.Codex;
+using Incursa.Codex.Telegram.Configuration;
 using Incursa.Codex.Telegram.Models;
 using Incursa.Codex.Telegram.Options;
 using Incursa.Codex.Telegram.Services;
@@ -194,6 +195,10 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
     private readonly TelegramBotOptions _options;
     private readonly TelegramInputOptions _inputOptions;
     private readonly ILogger<TelegramCodexBotCommandHandler> _logger;
+    private readonly RepositorySummaryService _repositorySummaryService;
+    private readonly string? _configuredRepositoryPath;
+    private readonly string? _repositoryDisplayLabel;
+    private readonly CodexTelegramMode _workspaceMode;
     private readonly TimeSpan _steerStartTimeout;
     private readonly SemaphoreSlim _usageSummaryLock = new(1, 1);
     private bool _hasCachedUsageSummary;
@@ -227,7 +232,9 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         IOptions<TelegramBotOptions> options,
         IOptions<TelegramInputOptions> inputOptions,
         ILogger<TelegramCodexBotCommandHandler> logger,
-        TimeSpan? steerStartTimeout = null)
+        TimeSpan? steerStartTimeout = null,
+        RepositorySummaryService? repositorySummaryService = null,
+        IOptions<CodexTelegramOptions>? codexOptions = null)
     {
         _parser = parser;
         _chunker = chunker;
@@ -255,6 +262,14 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         _options = options.Value;
         _inputOptions = inputOptions.Value;
         _logger = logger;
+        _workspaceMode = codexOptions?.Value.Mode ?? CodexTelegramMode.GeneralPurpose;
+        _configuredRepositoryPath = _workspaceMode == CodexTelegramMode.Repository
+            ? NormalizeConfiguredRepositoryPath(codexOptions?.Value.RepositoryRoot)
+            : null;
+        _repositoryDisplayLabel = string.IsNullOrWhiteSpace(codexOptions?.Value.RepositoryDisplayLabel)
+            ? null
+            : codexOptions.Value.RepositoryDisplayLabel.Trim();
+        _repositorySummaryService = repositorySummaryService ?? new RepositorySummaryService();
         _steerStartTimeout = steerStartTimeout ?? TelegramSteerStartTimeout;
     }
 
@@ -344,6 +359,14 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
                 case "help":
                     await ReplyAsync(sender, message, BuildHelpText(), null, cancellationToken).ConfigureAwait(false);
                     break;
+                case "start":
+                case "home":
+                    await HandleHomeAsync(message, sender, cancellationToken).ConfigureAwait(false);
+                    break;
+                case "repo":
+                case "repository":
+                    await HandleRepositorySummaryAsync(message, sender, cancellationToken).ConfigureAwait(false);
+                    break;
                 case "whoami":
                     await ReplyAsync(
                         sender,
@@ -378,6 +401,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
                     await HandleNewAsync(message, command.Arguments, sender, cancellationToken).ConfigureAwait(false);
                     break;
                 case "use":
+                case "resume":
                     await HandleUseAsync(message, command.Arguments, sender, cancellationToken).ConfigureAwait(false);
                     break;
                 case "send":
@@ -624,8 +648,77 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         }
     }
 
+    private bool IsRepositoryMode
+        => _workspaceMode == CodexTelegramMode.Repository
+            && !string.IsNullOrWhiteSpace(_configuredRepositoryPath);
+
+    private async Task HandleHomeAsync(
+        TelegramInboundMessage message,
+        ITelegramBotMessageSender sender,
+        CancellationToken cancellationToken)
+    {
+        ResolvedSession active = await ResolveActiveSessionAsync(message.ConversationScope, cancellationToken).ConfigureAwait(false);
+        string? repositoryName = IsRepositoryMode
+            ? (_repositoryDisplayLabel ?? CodexTextFormatting.ResolveProjectName(_configuredRepositoryPath))
+            : null;
+        StringBuilder builder = new();
+        builder.AppendLine(IsRepositoryMode ? "Codex Telegram · repository mode" : "Codex Telegram · general mode");
+        if (IsRepositoryMode)
+        {
+            builder.AppendLine($"Repository: {repositoryName}");
+            builder.AppendLine("This bot is bound to this repository; project switching and other repository sessions are disabled.");
+        }
+
+        builder.AppendLine(active.Session is null
+            ? "No session is selected. Send a prompt to create one automatically."
+            : $"Active session: {active.Session.Name} ({GetShortSessionId(active.Session.Id)})");
+        builder.AppendLine("Use /status for the active session, /repo for repository status, or /help for commands.");
+        await ReplyAsync(
+            sender,
+            message,
+            builder.ToString().TrimEnd(),
+            active.Session is null ? BuildNoSessionButtons(IsRepositoryMode) : BuildSessionButtons([active.Session], includeUse: false),
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task HandleRepositorySummaryAsync(
+        TelegramInboundMessage message,
+        ITelegramBotMessageSender sender,
+        CancellationToken cancellationToken)
+    {
+        RepositorySummary summary = await _repositorySummaryService.ReadAsync(_configuredRepositoryPath, cancellationToken).ConfigureAwait(false);
+        StringBuilder builder = new();
+        builder.AppendLine("Repository");
+        if (string.IsNullOrWhiteSpace(summary.RootPath))
+        {
+            builder.AppendLine("Mode: general (no repository is configured).");
+            builder.AppendLine("Set CodexTelegram:Mode=Repository and CodexTelegram:RepositoryRoot to use repository mode.");
+        }
+        else
+        {
+            builder.AppendLine("Mode: repository");
+            builder.AppendLine($"Name: {(_repositoryDisplayLabel ?? summary.Name)}");
+            builder.AppendLine($"Branch: {summary.Branch}");
+            builder.AppendLine($"Status: {summary.Status}");
+            builder.AppendLine(summary.GuidanceFiles.Count == 0
+                ? "Guidance: no README, AGENTS, or development guidance files found at the repository root."
+                : $"Guidance: {string.Join(", ", summary.GuidanceFiles)}");
+        }
+
+        await ReplyAsync(sender, message, builder.ToString().TrimEnd(), null, cancellationToken).ConfigureAwait(false);
+    }
+
+    private string BuildRepositoryModeProjectMessage()
+        => $"This bot is in repository mode and is bound to {_repositoryDisplayLabel ?? CodexTextFormatting.ResolveProjectName(_configuredRepositoryPath)}. Project switching is disabled. Use /repo to inspect the repository or /home to return to the repository home.";
+
     private async Task HandleProjectsAsync(TelegramInboundMessage message, ITelegramBotMessageSender sender, CancellationToken cancellationToken)
     {
+        if (IsRepositoryMode)
+        {
+            await ReplyAsync(sender, message, BuildRepositoryModeProjectMessage(), null, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
         IReadOnlyList<ProjectChoice> projects = await ListProjectChoicesAsync(cancellationToken).ConfigureAwait(false);
         string? activeProject = await _stateStore.GetActiveProjectWorkingDirectoryAsync(message.ConversationScope, cancellationToken).ConfigureAwait(false);
         await ReplyAsync(sender, message, FormatProjects(projects, activeProject), BuildProjectButtons(projects), cancellationToken).ConfigureAwait(false);
@@ -643,10 +736,18 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         switch (target)
         {
             case "projects":
+                if (IsRepositoryMode)
+                {
+                    await ReplyAsync(sender, message, BuildRepositoryModeProjectMessage(), null, cancellationToken).ConfigureAwait(false);
+                    return;
+                }
                 await HandleProjectsAsync(message, sender, cancellationToken).ConfigureAwait(false);
                 return;
             case "sessions":
                 await HandleSessionsAsync(message, sender, cancellationToken).ConfigureAwait(false);
+                return;
+            case "repository":
+                await HandleRepositorySummaryAsync(message, sender, cancellationToken).ConfigureAwait(false);
                 return;
             case "topics":
                 await HandleTopicListAsync(message, sender, cancellationToken).ConfigureAwait(false);
@@ -724,6 +825,12 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         ITelegramBotMessageSender sender,
         CancellationToken cancellationToken)
     {
+        if (IsRepositoryMode)
+        {
+            await ReplyAsync(sender, message, BuildRepositoryModeProjectMessage(), null, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
         string[] parts = SplitArguments(arguments, 2);
         if (parts.Length == 0)
         {
@@ -777,6 +884,12 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         ITelegramBotMessageSender sender,
         CancellationToken cancellationToken)
     {
+        if (IsRepositoryMode)
+        {
+            await ReplyAsync(sender, message, BuildRepositoryModeProjectMessage(), null, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
         IReadOnlyList<ProjectChoice> projects = await ListProjectChoicesAsync(cancellationToken).ConfigureAwait(false);
         ResolvedProject resolved = ResolveProject(projects, arguments);
         if (resolved.Project is null)
@@ -863,6 +976,10 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
 
             workingDirectory = validation.NormalizedPath;
         }
+        else if (IsRepositoryMode)
+        {
+            workingDirectory = _configuredRepositoryPath;
+        }
         else
         {
             ResolvedProject resolvedProject = await ResolveActiveProjectAsync(message.ConversationScope, cancellationToken).ConfigureAwait(false);
@@ -873,6 +990,12 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             }
 
             workingDirectory = resolvedProject.Project.WorkingDirectory;
+        }
+
+        if (IsRepositoryMode && !PathsEqual(workingDirectory, _configuredRepositoryPath))
+        {
+            await ReplyAsync(sender, message, BuildRepositoryModeProjectMessage(), null, cancellationToken).ConfigureAwait(false);
+            return;
         }
 
         await CreateTopicAndSessionAsync(
@@ -945,6 +1068,10 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
     {
         IReadOnlyCollection<TelegramConversationState> states = await _stateStore.ListConversationStatesForChatAsync(message.ChatId, cancellationToken).ConfigureAwait(false);
         IReadOnlyCollection<CodexSessionSummary> sessions = await _sessionManager.ListSessionsAsync(cancellationToken).ConfigureAwait(false);
+        if (IsRepositoryMode)
+        {
+            sessions = sessions.Where(IsSessionInConfiguredRepository).ToArray();
+        }
         Dictionary<string, CodexSessionSummary> sessionsById = sessions.ToDictionary(session => session.Id, StringComparer.OrdinalIgnoreCase);
         IReadOnlyList<CodexSessionSummary> buttonSessions = states
             .Select(state => state.ActiveSessionId is not null && sessionsById.TryGetValue(state.ActiveSessionId, out CodexSessionSummary? session) ? session : null)
@@ -965,6 +1092,13 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         string? activeSessionId = await _stateStore.GetActiveSessionIdAsync(message.ConversationScope, cancellationToken).ConfigureAwait(false);
         IReadOnlyCollection<string> trackedSessionIds = await _stateStore.GetTrackedSessionIdsAsync(cancellationToken).ConfigureAwait(false);
         IReadOnlyCollection<CodexSessionSummary> sessions = await _sessionManager.ListSessionsAsync(cancellationToken).ConfigureAwait(false);
+        if (IsRepositoryMode)
+        {
+            sessions = sessions.Where(IsSessionInConfiguredRepository).ToArray();
+            trackedSessionIds = trackedSessionIds
+                .Where(id => sessions.Any(session => string.Equals(session.Id, id, StringComparison.OrdinalIgnoreCase)))
+                .ToArray();
+        }
         SessionListRequest request = ParseSessionListRequest(_parser.Parse(message.Text).Arguments);
         SessionListView view = BuildSessionListView(sessions, activeSessionId, trackedSessionIds, request);
         await ReplyAsync(sender, message, FormatSessions(view), BuildSessionButtons(view.Sessions), cancellationToken).ConfigureAwait(false);
@@ -972,6 +1106,12 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
 
     private async Task HandleTopicNewFromMenuAsync(TelegramInboundMessage message, ITelegramBotMessageSender sender, CancellationToken cancellationToken)
     {
+        if (IsRepositoryMode)
+        {
+            await ReplyAsync(sender, message, "Use /topic new <name> to create a topic for the configured repository.", null, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
         ResolvedProject resolvedProject = await ResolveActiveProjectAsync(message.ConversationScope, cancellationToken).ConfigureAwait(false);
         if (resolvedProject.Project is null)
         {
@@ -985,20 +1125,28 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
 
     private async Task HandleNewAsync(TelegramInboundMessage message, string arguments, ITelegramBotMessageSender sender, CancellationToken cancellationToken)
     {
-        ResolvedProject resolvedProject = await ResolveActiveProjectAsync(message.ConversationScope, cancellationToken).ConfigureAwait(false);
-        if (resolvedProject.Project is null)
+        ProjectChoice? project = null;
+        if (!IsRepositoryMode)
         {
-            await ReplyAsync(sender, message, resolvedProject.Message, null, cancellationToken).ConfigureAwait(false);
-            return;
+            ResolvedProject resolvedProject = await ResolveActiveProjectAsync(message.ConversationScope, cancellationToken).ConfigureAwait(false);
+            if (resolvedProject.Project is null)
+            {
+                await ReplyAsync(sender, message, resolvedProject.Message, null, cancellationToken).ConfigureAwait(false);
+                return;
+            }
+
+            project = resolvedProject.Project;
         }
 
         string sessionName = string.IsNullOrWhiteSpace(arguments)
-            ? BuildDefaultSessionName(resolvedProject.Project)
+            ? IsRepositoryMode
+                ? BuildDefaultSessionNameForWorkingDirectory(_configuredRepositoryPath)
+                : BuildDefaultSessionName(project!)
             : arguments.Trim();
         CodexSessionSummary session = await CreateAndSelectSessionAsync(
             message.ConversationScope,
             sessionName,
-            resolvedProject.Project.WorkingDirectory,
+            IsRepositoryMode ? _configuredRepositoryPath : project!.WorkingDirectory,
             cancellationToken).ConfigureAwait(false);
         CodexSessionModelSettings settings = await _sessionManager.GetModelSettingsAsync(session.Id, cancellationToken).ConfigureAwait(false);
         string? usageSummary = await TryBuildAccountUsageSummaryAsync(cancellationToken).ConfigureAwait(false);
@@ -1354,7 +1502,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             return false;
         }
 
-        TelegramInputBundle? latest = await _inputBundleStore.TryGetBundleAsync(bundle.Id, bundle.UserId, cancellationToken).ConfigureAwait(false);
+        TelegramInputBundle? latest = await _inputBundleStore.TryGetBundleAsync(bundle.Id, bundle.UserId, bundle.ConversationScope, cancellationToken).ConfigureAwait(false);
         if (latest is null
             || latest.Status != TelegramInputBundleStatus.Capturing
             || !latest.HasContent
@@ -1455,6 +1603,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         TelegramInputBundle? completed = await _inputBundleStore.TryCompleteBundleAsync(
             prepared.Id,
             prepared.UserId,
+            prepared.ConversationScope,
             intent,
             completedStatus,
             deleteAttachments: false,
@@ -1503,6 +1652,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
                 await _inputBundleStore.TrySetStatusCardMessageIdAsync(
                     bundle.Id,
                     bundle.UserId,
+                    bundle.ConversationScope,
                     currentMessageId.Value,
                     cancellationToken).ConfigureAwait(false);
                 await _traceStore.RecordAsync(
@@ -1539,6 +1689,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             await _inputBundleStore.TrySetStatusCardMessageIdAsync(
                 bundle.Id,
                 bundle.UserId,
+                bundle.ConversationScope,
                 statusMessageId.Value,
                 cancellationToken).ConfigureAwait(false);
         }
@@ -1760,7 +1911,9 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             message.MessageThreadId);
 
         await _stateStore.ClearActiveSessionAsync(message.ConversationScope, cancellationToken).ConfigureAwait(false);
-        string? workingDirectory = await ResolvePreferredWorkingDirectoryAsync(message.ConversationScope, cancellationToken).ConfigureAwait(false);
+        string? workingDirectory = IsRepositoryMode
+            ? _configuredRepositoryPath
+            : await ResolvePreferredWorkingDirectoryAsync(message.ConversationScope, cancellationToken).ConfigureAwait(false);
         CodexSessionSummary replacement = await _sessionManager.CreateSessionAsync(
             new CreateCodexSessionRequest(BuildDefaultSessionNameForWorkingDirectory(workingDirectory), workingDirectory),
             cancellationToken).ConfigureAwait(false);
@@ -2459,7 +2612,10 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             : await ResolveSessionAsync(message.ConversationScope, arguments, cancellationToken).ConfigureAwait(false);
         if (resolved.Session is null)
         {
-            await ReplyAsync(sender, message, resolved.Message, BuildNoSessionButtons(), cancellationToken, includeNavigationButtons: false).ConfigureAwait(false);
+            string statusMessage = IsRepositoryMode
+                ? $"Repository: {_repositoryDisplayLabel ?? CodexTextFormatting.ResolveProjectName(_configuredRepositoryPath)}{Environment.NewLine}{Environment.NewLine}{resolved.Message}"
+                : resolved.Message;
+            await ReplyAsync(sender, message, statusMessage, BuildNoSessionButtons(IsRepositoryMode), cancellationToken, includeNavigationButtons: false).ConfigureAwait(false);
             return;
         }
 
@@ -2487,7 +2643,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         if (resolved.Session is null)
         {
             await sender.AnswerCallbackQueryAsync(callbackQueryId, "Session unavailable.", cancellationToken).ConfigureAwait(false);
-            await ReplyAsync(sender, message, resolved.Message, BuildNoSessionButtons(), cancellationToken, includeNavigationButtons: false).ConfigureAwait(false);
+            await ReplyAsync(sender, message, resolved.Message, BuildNoSessionButtons(IsRepositoryMode), cancellationToken, includeNavigationButtons: false).ConfigureAwait(false);
             return;
         }
 
@@ -2515,6 +2671,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         bundle = await _inputBundleStore.TrySetIntentAsync(
             bundle.Id,
             message.UserId,
+            message.ConversationScope,
             intent,
             cancellationToken).ConfigureAwait(false) ?? bundle;
         await _traceStore.RecordAsync(
@@ -2649,6 +2806,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             resolved.Prompt.Id,
             message.UserId,
             parts[2].Trim(),
+            message.ConversationScope,
             cancellationToken).ConfigureAwait(false);
         if (updated is null)
         {
@@ -2768,6 +2926,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         await _inputBundleStore.TryCompleteBundleAsync(
             bundle.Id,
             message.UserId,
+            message.ConversationScope,
             TelegramInputBundleIntent.SendNow,
             TelegramInputBundleStatus.Sent,
             deleteAttachments: false,
@@ -2819,6 +2978,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         await _inputBundleStore.TryCompleteBundleAsync(
             bundle.Id,
             message.UserId,
+            message.ConversationScope,
             TelegramInputBundleIntent.QueueNext,
             TelegramInputBundleStatus.Queued,
             deleteAttachments: false,
@@ -2850,6 +3010,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             TelegramInputBundle? updated = await _inputBundleStore.TrySetIntentAsync(
                 bundle.Id,
                 message.UserId,
+                message.ConversationScope,
                 TelegramInputBundleIntent.SendNow,
                 cancellationToken).ConfigureAwait(false);
             bundle = updated ?? bundle;
@@ -3014,6 +3175,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             TelegramInputBundle displayBundle = await _inputBundleStore.TryReopenSubmittedBundleAsync(
                 bundle.Id,
                 bundle.UserId,
+                bundle.ConversationScope,
                 cancellationToken).ConfigureAwait(false) ?? bundle;
             await ReplyAsync(sender, message, "Steered the text. The bundle is still open so the attachments can be queued or cancelled.", null, cancellationToken).ConfigureAwait(false);
             await PublishInputBundleCardAsync(
@@ -3027,6 +3189,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         await _inputBundleStore.TryCompleteBundleAsync(
             bundle.Id,
             message.UserId,
+            message.ConversationScope,
             TelegramInputBundleIntent.SteerCurrentTurn,
             TelegramInputBundleStatus.Steered,
             deleteAttachments: false,
@@ -3043,7 +3206,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         CancellationToken cancellationToken)
     {
         TelegramInputBundleCallback callback = TelegramInputBundleCardBehavior.ParseCallback(bundleReference);
-        TelegramInputBundle? bundle = await _inputBundleStore.TryGetBundleAsync(callback.BundleId, message.UserId, cancellationToken).ConfigureAwait(false);
+        TelegramInputBundle? bundle = await _inputBundleStore.TryGetBundleAsync(callback.BundleId, message.UserId, message.ConversationScope, cancellationToken).ConfigureAwait(false);
         if (bundle is null || bundle.Status != TelegramInputBundleStatus.Capturing)
         {
             await sender.AnswerCallbackQueryAsync(callbackQueryId, "Bundle is no longer active.", cancellationToken).ConfigureAwait(false);
@@ -3100,6 +3263,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         await _inputBundleStore.TryCompleteBundleAsync(
             bundle.Id,
             message.UserId,
+            message.ConversationScope,
             TelegramInputBundleIntent.SendNow,
             TelegramInputBundleStatus.Cancelled,
             deleteAttachments: true,
@@ -3115,7 +3279,12 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         ITelegramBotMessageSender sender,
         CancellationToken cancellationToken)
     {
-        TelegramInputBundle? updated = await _inputBundleStore.TrySubmitBundleAsync(bundle.Id, message.UserId, intent, cancellationToken).ConfigureAwait(false);
+        TelegramInputBundle? updated = await _inputBundleStore.TrySubmitBundleAsync(
+            bundle.Id,
+            message.UserId,
+            message.ConversationScope,
+            intent,
+            cancellationToken).ConfigureAwait(false);
         if (updated is null)
         {
             await ReplyAsync(sender, message, "That input bundle is already being sent, was already sent, or is no longer active.", null, cancellationToken).ConfigureAwait(false);
@@ -3158,6 +3327,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         TelegramInputBundle? updated = await _inputBundleStore.TryUpdateSubmittedBundleAsync(
             bundle.Id,
             bundle.UserId,
+            bundle.ConversationScope,
             current => current with
             {
                 Attachments = durableAttachments.ToList(),
@@ -3198,6 +3368,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         TelegramInputBundle displayBundle = await _inputBundleStore.TryReopenSubmittedBundleAsync(
             bundle.Id,
             bundle.UserId,
+            bundle.ConversationScope,
             cancellationToken).ConfigureAwait(false) ?? bundle;
         await _traceStore.RecordAsync(
             new TelegramDebugTraceEvent(
@@ -3255,6 +3426,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         TelegramInputBundle? bundle = await _inputBundleStore.TryCompleteBundleAsync(
             active.Id,
             message.UserId,
+            message.ConversationScope,
             TelegramInputBundleIntent.SendNow,
             TelegramInputBundleStatus.Cancelled,
             deleteAttachments: true,
@@ -3298,6 +3470,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         TelegramInputBundle? bundle = await _inputBundleStore.TryClearAsync(
             active.Id,
             message.UserId,
+            message.ConversationScope,
             cancellationToken).ConfigureAwait(false);
         if (bundle is null)
         {
@@ -3334,7 +3507,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         ITelegramBotMessageSender sender,
         CancellationToken cancellationToken)
     {
-        TelegramInputBundle? bundle = await _inputBundleStore.TryGetBundleAsync(bundleId, message.UserId, cancellationToken).ConfigureAwait(false);
+        TelegramInputBundle? bundle = await _inputBundleStore.TryGetBundleAsync(bundleId, message.UserId, message.ConversationScope, cancellationToken).ConfigureAwait(false);
         if (bundle is null)
         {
             await ReplyAsync(sender, message, "That input bundle is no longer active. Use /trace latest for recent diagnostics.", null, cancellationToken).ConfigureAwait(false);
@@ -3367,7 +3540,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         ITelegramBotMessageSender sender,
         CancellationToken cancellationToken)
     {
-        TelegramQueuedPrompt? prompt = await _stateStore.TryGetQueuedPromptAsync(promptId, cancellationToken).ConfigureAwait(false);
+        TelegramQueuedPrompt? prompt = await _stateStore.TryGetQueuedPromptAsync(promptId, message.ConversationScope, cancellationToken).ConfigureAwait(false);
         if (prompt is null || prompt.UserId != message.UserId)
         {
             await ReplyAsync(sender, message, "That queued item was already sent or removed. Use /queue to refresh.", null, cancellationToken).ConfigureAwait(false);
@@ -3391,7 +3564,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         ITelegramBotMessageSender sender,
         CancellationToken cancellationToken)
     {
-        TelegramQueuedPrompt? removed = await _stateStore.TryRemoveQueuedPromptAsync(promptId, message.UserId, cancellationToken).ConfigureAwait(false);
+        TelegramQueuedPrompt? removed = await _stateStore.TryRemoveQueuedPromptAsync(promptId, message.UserId, message.ConversationScope, cancellationToken).ConfigureAwait(false);
         if (removed is null)
         {
             await ReplyAsync(sender, message, "That queued item was already sent or removed. Use /queue to refresh.", null, cancellationToken).ConfigureAwait(false);
@@ -3413,7 +3586,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         ITelegramBotMessageSender sender,
         CancellationToken cancellationToken)
     {
-        TelegramQueuedPrompt? removed = await _stateStore.TryRemoveQueuedPromptAsync(promptId, message.UserId, cancellationToken).ConfigureAwait(false);
+        TelegramQueuedPrompt? removed = await _stateStore.TryRemoveQueuedPromptAsync(promptId, message.UserId, message.ConversationScope, cancellationToken).ConfigureAwait(false);
         if (removed is null)
         {
             await ReplyAsync(sender, message, "That queued item was already sent or removed. Use /queue to refresh.", null, cancellationToken).ConfigureAwait(false);
@@ -3538,7 +3711,12 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             message.UserId,
             includeAll ? null : message.ConversationScope,
             cancellationToken).ConfigureAwait(false);
-        string text = FormatQueuedPrompts(prompts, includeAll, message.ConversationScope, prefix);
+        string? queuePrefix = IsRepositoryMode
+            ? string.IsNullOrWhiteSpace(prefix)
+                ? $"Repository: {_repositoryDisplayLabel ?? CodexTextFormatting.ResolveProjectName(_configuredRepositoryPath)}"
+                : $"Repository: {_repositoryDisplayLabel ?? CodexTextFormatting.ResolveProjectName(_configuredRepositoryPath)}{Environment.NewLine}{prefix}"
+            : prefix;
+        string text = FormatQueuedPrompts(prompts, includeAll, message.ConversationScope, queuePrefix);
         await ReplyAsync(sender, message, text, BuildQueuedPromptButtons(prompts), cancellationToken).ConfigureAwait(false);
     }
 
@@ -3885,6 +4063,11 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             return new ResolvedSession(null, "The selected session is no longer known. Use /sessions, /new [name], /use <sessionId>, or send a message to start a new session.");
         }
 
+        if (!IsSessionInConfiguredRepository(session))
+        {
+            return new ResolvedSession(null, BuildRepositorySessionRejectedMessage());
+        }
+
         return new ResolvedSession(session, string.Empty);
     }
 
@@ -3902,9 +4085,19 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
                 || session.Id.StartsWith(sessionId, StringComparison.OrdinalIgnoreCase))
             .ToList();
 
+        if (IsRepositoryMode)
+        {
+            if (matches.Count == 1 && !IsSessionInConfiguredRepository(matches[0]))
+            {
+                return new ResolvedSession(null, BuildRepositorySessionRejectedMessage());
+            }
+
+            matches = matches.Where(IsSessionInConfiguredRepository).ToList();
+        }
+
         return matches.Count switch
         {
-            0 => new ResolvedSession(null, $"Session '{sessionId}' was not found. Use /sessions to list known sessions."),
+            0 => new ResolvedSession(null, IsRepositoryMode ? BuildRepositorySessionRejectedMessage() : $"Session '{sessionId}' was not found. Use /sessions to list known sessions."),
             1 => new ResolvedSession(matches[0], string.Empty),
             _ => new ResolvedSession(null, $"Session id '{sessionId}' is ambiguous. Use a longer id from /sessions."),
         };
@@ -3961,6 +4154,17 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
 
     private async Task<ResolvedProject> ResolveActiveProjectAsync(TelegramConversationScope conversation, CancellationToken cancellationToken)
     {
+        if (IsRepositoryMode)
+        {
+            return new ResolvedProject(
+                new ProjectChoice(
+                    GetProjectKey(_configuredRepositoryPath!),
+                    CodexTextFormatting.ResolveProjectName(_configuredRepositoryPath),
+                    _configuredRepositoryPath!,
+                    DateTimeOffset.MinValue),
+                string.Empty);
+        }
+
         string? activeProject = await _stateStore.GetActiveProjectWorkingDirectoryAsync(conversation, cancellationToken).ConfigureAwait(false);
         if (string.IsNullOrWhiteSpace(activeProject))
         {
@@ -3984,6 +4188,11 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
 
     private async Task<string?> ResolvePreferredWorkingDirectoryAsync(TelegramConversationScope conversation, CancellationToken cancellationToken)
     {
+        if (IsRepositoryMode)
+        {
+            return _configuredRepositoryPath;
+        }
+
         string? activeProject = await _stateStore.GetActiveProjectWorkingDirectoryAsync(conversation, cancellationToken).ConfigureAwait(false);
         if (string.IsNullOrWhiteSpace(activeProject))
         {
@@ -4006,6 +4215,43 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         IReadOnlyList<CodexProjectCatalogRecord> projects = await _projectCatalogStore.ListAsync(cancellationToken).ConfigureAwait(false);
         return projects.Select(ToProjectChoice).ToArray();
     }
+
+    private bool IsSessionInConfiguredRepository(CodexSessionSummary session)
+        => !IsRepositoryMode || PathsEqual(session.WorkingDirectory, _configuredRepositoryPath);
+
+    private string BuildRepositorySessionRejectedMessage()
+        => IsRepositoryMode
+            ? $"That session belongs to another repository (or has no repository path). This bot is bound to {_repositoryDisplayLabel ?? CodexTextFormatting.ResolveProjectName(_configuredRepositoryPath)}; use /new or send a prompt to create a session here."
+            : "The requested session is not available.";
+
+    private static string? NormalizeConfiguredRepositoryPath(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return null;
+        }
+
+        try
+        {
+            string normalized = Path.GetFullPath(path.Trim());
+            string? pathRoot = Path.GetPathRoot(normalized);
+            return !string.IsNullOrWhiteSpace(pathRoot)
+                && string.Equals(normalized, pathRoot, PathComparison)
+                ? normalized
+                : normalized.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        }
+        catch (Exception exception) when (exception is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return path.Trim();
+        }
+    }
+
+    private static bool PathsEqual(string? left, string? right)
+        => !string.IsNullOrWhiteSpace(left)
+            && !string.IsNullOrWhiteSpace(right)
+            && PathComparer.Equals(
+                NormalizeConfiguredRepositoryPath(left),
+                NormalizeConfiguredRepositoryPath(right));
 
     private async Task ReplyAsync(
         ITelegramBotMessageSender sender,
@@ -4042,7 +4288,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         {
             bool isLastChunk = index == chunks.Count - 1;
             IReadOnlyList<IReadOnlyList<TelegramReplyButton>>? chunkButtons = isLastChunk
-                ? MergeButtons(buttons, includeNavigationButtons ? BuildNavigationButtons() : null)
+                ? MergeButtons(buttons, includeNavigationButtons ? BuildNavigationButtons(IsRepositoryMode) : null)
                 : null;
 
             if (index == 0 && editMessageId.HasValue && chunks.Count == 1)
@@ -4257,17 +4503,32 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         }
     }
 
-    private static string BuildHelpText()
-        => string.Join(Environment.NewLine, [
+    private string BuildHelpText()
+    {
+        List<string> lines =
+        [
             "Commands:",
-            "Use the buttons below for quick navigation between sessions, projects, and help.",
-            "/help - show this help",
-            "/whoami - show Telegram user, chat, and topic thread IDs",
-            "/version - show the running Codex Telegram app version",
-            "/trust - trust the current group or forum chat for allowlisted users",
-            "/projects - list known project directories",
-            "/project add <path> - add and select a project",
-            "/project <number|name|path> - select a project",
+            IsRepositoryMode
+                ? "Use the buttons below for quick navigation between sessions, the configured repository, and help."
+                : "Use the buttons below for quick navigation between sessions, projects, and help.",
+            $"/help - {TelegramCommandCatalog.GetDescription("help")}",
+            $"/whoami - {TelegramCommandCatalog.GetDescription("whoami")}",
+            $"/version - {TelegramCommandCatalog.GetDescription("version")}",
+            $"/trust - {TelegramCommandCatalog.GetDescription("trust")}",
+        ];
+
+        if (IsRepositoryMode)
+        {
+            lines.Add($"/repo - {TelegramCommandCatalog.GetDescription("repo")}");
+        }
+        else
+        {
+            lines.Add($"/projects - {TelegramCommandCatalog.GetDescription("projects")}");
+            lines.Add($"/project add <path> - {TelegramCommandCatalog.GetDescription("project")}");
+            lines.Add($"/project <number|name|path> - {TelegramCommandCatalog.GetDescription("project")}");
+        }
+
+        lines.AddRange([
             "/topics - list Telegram topics/sessions in this chat",
             "/topic list - list Telegram topics/sessions in this chat",
             "/topic new <name> [| <absolute directory path>] - create a new Telegram forum topic and session in a forum-enabled supergroup",
@@ -4275,8 +4536,9 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             "/topic current - show the active topic/session in this conversation",
             "/sessions - show active and Telegram-managed sessions",
             "/sessions all [count] - show recent Codex history",
-            "/new [name] - create and select a Codex session in the active project for this conversation",
+            "/new [name] - create and select a Codex session in this conversation",
             "/use <sessionId> - select the active session for this conversation",
+            "/resume <sessionId> - resume a session in this conversation",
             "/send <text> - send text to the active session",
             "/plan <request> - ask Codex to plan and clarify before implementation",
             "/answer <answer> - answer a pending Plan mode question",
@@ -4303,9 +4565,11 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             "Plain text and audio in a private chat, trusted group, or topic stay on that conversation's session; if the conversation has none yet, the first message starts one and live output follows automatically.",
             "In forum topics, if plain text gets no response, Telegram bot privacy is likely hiding non-command messages; use /send <text> or disable privacy for this bot.",
             "Images, documents, and other attachments are forwarded to Codex; voice notes are transcribed with the configured OpenAI transcription model first.",
-            "Replying to a Telegram message adds that message and nearby recent bot output as context for plain text, /send, /steer, and transcribed audio.",
             "Voice/text control phrase: Codex settings model gpt-5.4-mini thinking high: <prompt>"
         ]);
+
+        return string.Join(Environment.NewLine, lines);
+    }
 
     private static string BuildVersionText()
         => string.Join(Environment.NewLine, [
@@ -4611,9 +4875,14 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         return $"{session.Name} · {FormatStatusValue(session.Status)} · {FormatRelativeAge(session.LastActivityUtc)}";
     }
 
-    private static string FormatStatus(CodexSessionSummary session, CodexSessionModelSettings? settings = null, string? usageSummary = null)
+    private string FormatStatus(CodexSessionSummary session, CodexSessionModelSettings? settings = null, string? usageSummary = null)
     {
         StringBuilder builder = new();
+        if (IsRepositoryMode)
+        {
+            builder.AppendLine($"Repository: {_repositoryDisplayLabel ?? CodexTextFormatting.ResolveProjectName(_configuredRepositoryPath)}");
+        }
+
         builder.AppendLine($"Session: {session.Name}");
         builder.AppendLine($"Status: {FormatStatusValue(session.Status)}");
         builder.AppendLine($"Working directory: {session.WorkingDirectory ?? "<default>"}");
@@ -4659,6 +4928,11 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
     {
         StringBuilder builder = new();
         builder.AppendLine("Status");
+        if (IsRepositoryMode)
+        {
+            builder.AppendLine($"Repository: {_repositoryDisplayLabel ?? CodexTextFormatting.ResolveProjectName(_configuredRepositoryPath)}");
+        }
+
         builder.AppendLine($"Session: {session.Name} ({GetShortSessionId(session.Id)})");
         string? activeTurnId = _turnCoordinator.GetActiveTurnId(session.Id);
         string? diagnosticTurnId = activeTurnId ?? session.LastTurnCloseout?.TurnId;
@@ -5665,7 +5939,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
     private static string FormatNullableAge(DateTimeOffset? value)
         => value is null ? "<none>" : FormatRelativeAge(value.Value);
 
-    private static string BuildSelectedSessionReply(
+    private string BuildSelectedSessionReply(
         string action,
         CodexSessionSummary session,
         CodexSessionModelSettings settings,
@@ -5675,7 +5949,9 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         List<string> lines =
         [
             $"{action} {session.Name}.",
-            $"Project: {projectName ?? CodexTextFormatting.ResolveProjectName(session.WorkingDirectory)}",
+            IsRepositoryMode
+                ? $"Repository: {_repositoryDisplayLabel ?? projectName ?? CodexTextFormatting.ResolveProjectName(session.WorkingDirectory)}"
+                : $"Project: {projectName ?? CodexTextFormatting.ResolveProjectName(session.WorkingDirectory)}",
             $"Model: {FormatModelDisplay(settings)}",
             $"Thinking: {FormatValue(settings.ReasoningEffort)}",
         ];
@@ -5712,26 +5988,41 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         return rows;
     }
 
-    internal static IReadOnlyList<IReadOnlyList<TelegramReplyButton>> BuildNavigationButtons()
-        => [
-            [
+    internal static IReadOnlyList<IReadOnlyList<TelegramReplyButton>> BuildNavigationButtons(bool repositoryMode = false)
+        => repositoryMode
+            ? [[
+                new TelegramReplyButton("Sessions", "nav:sessions"),
+                new TelegramReplyButton("Repository", "nav:repository"),
+                new TelegramReplyButton("Help", "nav:help")
+            ]]
+            : [[
                 new TelegramReplyButton("Sessions", "nav:sessions"),
                 new TelegramReplyButton("Projects", "nav:projects"),
                 new TelegramReplyButton("Help", "nav:help")
-            ]
-        ];
+            ]];
 
-    private static IReadOnlyList<IReadOnlyList<TelegramReplyButton>> BuildNoSessionButtons()
-        => [
-            [
-                new TelegramReplyButton("Create session", "new:_"),
-                new TelegramReplyButton("Sessions", "nav:sessions"),
-            ],
-            [
-                new TelegramReplyButton("Projects", "nav:projects"),
-                new TelegramReplyButton("Help", "nav:help"),
-            ],
-        ];
+    private static IReadOnlyList<IReadOnlyList<TelegramReplyButton>> BuildNoSessionButtons(bool repositoryMode = false)
+        => repositoryMode
+            ? [
+                [
+                    new TelegramReplyButton("Create session", "new:_"),
+                    new TelegramReplyButton("Sessions", "nav:sessions"),
+                ],
+                [
+                    new TelegramReplyButton("Repository", "nav:repository"),
+                    new TelegramReplyButton("Help", "nav:help"),
+                ],
+            ]
+            : [
+                [
+                    new TelegramReplyButton("Create session", "new:_"),
+                    new TelegramReplyButton("Sessions", "nav:sessions"),
+                ],
+                [
+                    new TelegramReplyButton("Projects", "nav:projects"),
+                    new TelegramReplyButton("Help", "nav:help"),
+                ],
+            ];
 
     private static string BuildDefaultTopicName(ProjectChoice project)
     {

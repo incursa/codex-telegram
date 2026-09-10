@@ -14,6 +14,8 @@ Set `CodexTelegram:Mode` to `GeneralPurpose` for a multi-repository personal lau
 
 Configuration is layered in this order: `appsettings.json`, executable-local `appsettings.Local.json` (then launch-directory fallback), user secrets, `CODEX_TELEGRAM_` environment variables, and command-line arguments. Later values win. The direct `TELEGRAM_*`, `OPENAI_API_KEY`, and `CODEX_PATH` variables are empty-value fallbacks only.
 
+Only one process may poll a given Telegram bot token. The application takes a local receiver lock (the lock name is a token hash, never the token itself) before hosted polling or setup pairing begins. If startup reports that another local receiver already owns the token, stop the duplicate process or configure a different BotFather token; do not run two pollers against one bot.
+
 ## Start
 
 From a published Windows binary:
@@ -55,6 +57,8 @@ The important local files are under `CodexTelegram:Workspace:DataRoot`:
 3. Per-thread manifest files
 
 Back up that folder before moving machines or changing the data root.
+
+Transient Telegram audio, downloaded attachments, and outbound media use an instance-specific temporary directory when `DataRoot` or `InstanceId` is configured. The legacy shared temporary location is retained only when neither selector is supplied.
 
 ## Token Rotation
 

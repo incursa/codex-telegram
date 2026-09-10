@@ -145,6 +145,23 @@ public sealed class TelegramBotStateStoreTests
         Assert.Empty(await store.ListQueuedPromptsAsync(1234, conversation, CancellationToken.None));
     }
 
+    [Fact]
+    public async Task ScopedQueuedPromptMutationsRequireOriginatingConversation()
+    {
+        using TemporaryDirectory temp = TemporaryDirectory.Create();
+        TelegramConversationScope origin = new(55, 9);
+        TelegramConversationScope other = new(55, 10);
+        TelegramBotStateStore store = CreateStore(temp.Path);
+        TelegramQueuedPrompt prompt = CreatePrompt("prompt-1", userId: 1234, origin, "original", DateTimeOffset.UtcNow);
+
+        await store.EnqueueQueuedPromptAsync(prompt, CancellationToken.None);
+
+        Assert.Null(await store.TryGetQueuedPromptAsync(prompt.Id, other, CancellationToken.None));
+        Assert.Null(await store.TryUpdateQueuedPromptTextAsync(prompt.Id, 1234, "blocked", other, CancellationToken.None));
+        Assert.Null(await store.TryRemoveQueuedPromptAsync(prompt.Id, 1234, other, CancellationToken.None));
+        Assert.Equal("original", (await store.TryGetQueuedPromptAsync(prompt.Id, origin, CancellationToken.None))?.Text);
+    }
+
     private static TelegramQueuedPrompt CreatePrompt(
         string id,
         long userId,

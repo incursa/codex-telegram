@@ -1,3 +1,5 @@
+using Incursa.Codex.Telegram.Options;
+
 namespace Incursa.Codex.Telegram.Configuration;
 
 /// <summary>
@@ -24,6 +26,10 @@ namespace Incursa.Codex.Telegram.Configuration;
 /// <param name="Sandbox">Default Codex sandbox mode.</param>
 /// <param name="ApprovalMode">Default Codex approval mode.</param>
 /// <param name="NetworkAccessEnabled">Default Codex network-access setting.</param>
+/// <param name="Mode">Configured host workspace mode.</param>
+/// <param name="RepositoryRoot">Configured repository root.</param>
+/// <param name="RepositoryDisplayLabel">Configured repository display label.</param>
+/// <param name="InstanceId">Optional local state instance identifier.</param>
 internal sealed record LocalSettingsSnapshot(
     bool TelegramEnabled,
     bool TelegramTokenConfigured,
@@ -45,4 +51,8 @@ internal sealed record LocalSettingsSnapshot(
     string? PlanModeReasoningEffort,
     string? Sandbox,
     string? ApprovalMode,
-    bool? NetworkAccessEnabled);
+    bool? NetworkAccessEnabled,
+    CodexTelegramMode Mode,
+    string? RepositoryRoot,
+    string? RepositoryDisplayLabel,
+    string? InstanceId);

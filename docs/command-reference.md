@@ -20,6 +20,12 @@ Use [README.md](../README.md) for first setup and [usage.md](usage.md) for day-t
 8. Voice notes are transcribed first, then either captured into an input bundle or sent to the active session according to `TelegramInput:DefaultCaptureMode`.
 9. Groups and forum topics require an allowed user plus either `AllowedChatIds` or `/trust` from an allowed user in that chat.
 
+## Workspace modes
+
+`CodexTelegram:Mode=GeneralPurpose` keeps the project catalog and `/projects`/`/project` selectors. `CodexTelegram:Mode=Repository` binds new sessions to `CodexTelegram:RepositoryRoot`, identifies the bot with `RepositoryDisplayLabel`, and removes project switching from the common menu. In repository mode use `/home` to see the bound repository and `/repo` for a concise branch, working-tree, and guidance-file summary.
+
+The compact Telegram picker intentionally omits advanced controls; all supported slash commands remain available through `/help`. After changing mode, use the interactive menu's Telegram repair action to reapply the mode-aware picker explicitly.
+
 ## Quick Workflow
 
 ```text
@@ -51,7 +57,19 @@ Syntax:
 Expected behavior:
 
 1. Replies with the supported command list.
-2. Adds navigation buttons for `Sessions`, `Projects`, and `Help`.
+2. Adds navigation buttons for `Sessions`, `Projects`, and `Help` in general-purpose mode, or `Sessions`, `Repository`, and `Help` in repository mode.
+
+### `/home`
+
+Shows the mode, safe repository/project label, active conversation/session, and the next useful action. Sending ordinary text from a private chat with no selected session creates the appropriate session automatically.
+
+### `/repo`
+
+Reads repository status without installing dependencies, changing branches, running repository scripts, or modifying files. In general-purpose mode it explains how to configure a dedicated repository instance.
+
+### `/resume <sessionId>`
+
+Alias for `/use <sessionId>`. It selects an existing session for this conversation; repository mode rejects sessions bound to another repository.
 
 ### `/whoami`
 

@@ -1041,6 +1041,37 @@ public sealed class TelegramCommandHandlerTests
     }
 
     [Fact]
+    public async Task RepositoryModeCreatesPlainTextSessionsAtConfiguredRootAndRejectsOtherRoots()
+    {
+        using TemporaryDirectory repository = TemporaryDirectory.Create();
+        using TemporaryDirectory state = TemporaryDirectory.Create();
+        using CommandHandlerHarness harness = CommandHandlerHarness.Create(
+            codexOptionsOverride: new CodexTelegramOptions
+            {
+                Mode = CodexTelegramMode.Repository,
+                RepositoryRoot = repository.Path,
+                RepositoryDisplayLabel = "Docs repository",
+                Workspace = new CodexWorkspaceOptions { DataRoot = state.Path, WorkspaceRoots = [repository.Path] },
+            });
+
+        await harness.Handler.HandleMessageAsync(
+            new TelegramInboundMessage(1234, 5555, "private", "show me the README"),
+            harness.Sender,
+            CancellationToken.None);
+
+        CreateCodexSessionRequest created = Assert.Single(harness.SessionManager.CreateRequests);
+        Assert.Equal(repository.Path, created.WorkingDirectory);
+
+        harness.SessionManager.Sessions.Add(CreateSession("other", "Other", Path.Combine(harness.Temp.Path, "other-repo")));
+        await harness.Handler.HandleMessageAsync(
+            new TelegramInboundMessage(1234, 5555, "private", "/use other"),
+            harness.Sender,
+            CancellationToken.None);
+
+        Assert.Contains("another repository", harness.Sender.Sent[^1].Text, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public async Task HandleMessageAsync_VersionShowsRunningBinaryVersion()
     {
         using CommandHandlerHarness harness = CommandHandlerHarness.Create();
@@ -2892,7 +2923,8 @@ public sealed class TelegramCommandHandlerTests
         public static CommandHandlerHarness Create(
             TelegramBotOptions? botOptions = null,
             TelegramInputOptions? inputOptionsOverride = null,
-            TimeSpan? steerStartTimeout = null)
+            TimeSpan? steerStartTimeout = null,
+            CodexTelegramOptions? codexOptionsOverride = null)
         {
             TemporaryDirectory temp = TemporaryDirectory.Create();
             IOptions<CodexTelegramOptions> codexOptions = Microsoft.Extensions.Options.Options.Create(new CodexTelegramOptions
@@ -2903,6 +2935,10 @@ public sealed class TelegramCommandHandlerTests
                     WorkspaceRoots = [temp.Path],
                 },
             });
+            if (codexOptionsOverride is not null)
+            {
+                codexOptions = Microsoft.Extensions.Options.Options.Create(codexOptionsOverride);
+            }
 
             FakeCodexSessionManager sessionManager = new();
             FakeCodexAccountUsageService accountUsage = new();
@@ -2959,10 +2995,12 @@ public sealed class TelegramCommandHandlerTests
                 }),
                 inputOptions,
                 NullLogger<TelegramCodexBotCommandHandler>.Instance,
-                steerStartTimeout);
+                steerStartTimeout,
+                codexOptions: codexOptions);
 
             return new CommandHandlerHarness(temp, sessionManager, accountUsage, projectCatalog, stateStore, outboundQueue, turnCoordinator, turnOutputRelay, inputBundleStore, typingIndicatorRegistry, turnReactionRegistry, debugPreambleMode, outputModeState, traceStore, eventLog, topicService, audioTranscription, sender, handler);
         }
+
 
         public void Dispose()
             => Temp.Dispose();

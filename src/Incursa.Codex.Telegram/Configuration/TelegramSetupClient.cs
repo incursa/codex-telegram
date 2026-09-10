@@ -1,4 +1,6 @@
+using System.Collections.Concurrent;
 using System.Security.Cryptography;
+using Incursa.Codex.Telegram.Telegram;
 using Telegram.Bot;
 using Telegram.Bot.Types;
 using Telegram.Bot.Types.Enums;
@@ -27,6 +29,26 @@ internal interface ITelegramSetupClient
     /// <param name="cancellationToken">Cancellation token for the polling operation.</param>
     /// <returns>The captured Telegram user when a matching private message arrives; otherwise <see langword="null"/>.</returns>
     Task<TelegramSetupUser?> WaitForPrivateUserMessageAsync(string token, string expectedChallenge, TimeSpan timeout, CancellationToken cancellationToken);
+}
+
+/// <summary>
+/// The Bot API operations used by the repeatable setup/profile pass. Keeping this
+/// seam separate from the first-run wizard interface makes the pass fakeable
+/// without requiring a live bot or a token in tests.
+/// </summary>
+internal interface ITelegramProfileSetupClient
+{
+    Task SetMyCommandsAsync(string token, IEnumerable<BotCommand> commands, string? languageCode, CancellationToken cancellationToken);
+
+    Task SetChatMenuButtonAsync(string token, long? chatId, MenuButton menuButton, CancellationToken cancellationToken);
+
+    Task SetMyNameAsync(string token, string name, string? languageCode, CancellationToken cancellationToken);
+
+    Task SetMyDescriptionAsync(string token, string description, string? languageCode, CancellationToken cancellationToken);
+
+    Task SetMyShortDescriptionAsync(string token, string shortDescription, string? languageCode, CancellationToken cancellationToken);
+
+    Task SetMyProfilePhotoAsync(string token, string profilePhotoPath, CancellationToken cancellationToken);
 }
 
 /// <summary>
@@ -60,14 +82,43 @@ internal sealed record TelegramSetupUser(
 /// <summary>
 /// Telegram Bot API implementation of the first-run setup operations.
 /// </summary>
-internal sealed class TelegramSetupClient : ITelegramSetupClient
+internal sealed class TelegramSetupClient : ITelegramSetupClient, ITelegramProfileSetupClient
 {
     private static readonly UpdateType[] SetupUpdates = [UpdateType.Message];
+    private static readonly ConcurrentDictionary<string, ChallengeLease> ActiveChallenges = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly object ChallengeGate = new();
+    private static readonly TimeSpan DefaultChallengeLifetime = TimeSpan.FromMinutes(2);
+    private readonly Func<string, ITelegramBotClient> _clientFactory;
+
+    internal TelegramSetupClient()
+        : this(static token => new TelegramBotClient(token))
+    {
+    }
+
+    internal TelegramSetupClient(ITelegramBotClient client)
+        : this(_ => client ?? throw new ArgumentNullException(nameof(client)))
+    {
+    }
+
+    internal TelegramSetupClient(Func<string, ITelegramBotClient> clientFactory)
+    {
+        _clientFactory = clientFactory ?? throw new ArgumentNullException(nameof(clientFactory));
+    }
+
+    /// <summary>
+    /// Applies the app-owned command/menu defaults and explicitly opted-in
+    /// profile fields. The operation result never contains the bot token.
+    /// </summary>
+    internal Task<TelegramProfileSetupResult> ApplyProfileSetupAsync(
+        string token,
+        TelegramProfileSetupOptions? options = null,
+        CancellationToken cancellationToken = default)
+        => new TelegramProfileSetup(this).ApplyAsync(token, options, cancellationToken);
 
     /// <inheritdoc />
     public async Task<TelegramBotIdentity> ValidateBotTokenAsync(string token, CancellationToken cancellationToken)
     {
-        TelegramBotClient client = CreateClient(token);
+        ITelegramBotClient client = CreateClient(token);
         User bot = await client.GetMe(cancellationToken).ConfigureAwait(false);
         return new TelegramBotIdentity(
             bot.Id,
@@ -86,90 +137,188 @@ internal sealed class TelegramSetupClient : ITelegramSetupClient
         }
 
         string normalizedChallenge = expectedChallenge.Trim();
-
-        TelegramBotClient client = CreateClient(token);
-        int? offset = await CreateFreshOffsetAsync(client, cancellationToken).ConfigureAwait(false);
-
-        using CancellationTokenSource timeoutSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeoutSource.CancelAfter(timeout);
-
-        while (!timeoutSource.IsCancellationRequested)
+        if (!TryClaimChallenge(normalizedChallenge, timeout))
         {
-            Update[] updates;
-            try
-            {
-                updates = await client.GetUpdates(
-                    offset: offset,
-                    limit: 20,
-                    timeout: 5,
-                    allowedUpdates: SetupUpdates,
-                    cancellationToken: timeoutSource.Token).ConfigureAwait(false);
-            }
-            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
-            {
-                return null;
-            }
-
-            foreach (Update update in updates)
-            {
-                offset = update.Id + 1;
-                Message? message = update.Message;
-                User? sender = message?.From;
-                if (message is null || sender is null || message.Chat.Type is not ChatType.Private || !TextContainsSetupChallenge(message.Text, normalizedChallenge))
-                {
-                    continue;
-                }
-
-                TelegramSetupUser setupUser = new(
-                    sender.Id,
-                    sender.Username,
-                    BuildDisplayName(sender),
-                    message.Chat.Id);
-
-                await TryAcknowledgeCaptureAsync(client, setupUser, timeoutSource.Token).ConfigureAwait(false);
-                return setupUser;
-            }
+            return null;
         }
 
-        return null;
+        try
+        {
+            ITelegramBotClient client = CreateClient(token);
+            using IDisposable receiverLease = TelegramUpdateReceiverLock.Acquire(token);
+            // Coordinate with the hosted receiver before reading the polling
+            // stream. A null offset starts at Telegram's earliest unconfirmed
+            // update and, unlike the old negative offset, does not flush the
+            // queue before setup begins.
+            int? offset = null;
+
+            using CancellationTokenSource timeoutSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeoutSource.CancelAfter(timeout);
+
+            while (!timeoutSource.IsCancellationRequested)
+            {
+                Update[] updates;
+                try
+                {
+                    updates = await client.GetUpdates(
+                        offset: offset,
+                        limit: 20,
+                        timeout: 5,
+                        allowedUpdates: SetupUpdates,
+                        cancellationToken: timeoutSource.Token).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+                {
+                    return null;
+                }
+
+                foreach (Update update in updates)
+                {
+                    offset = update.Id + 1;
+                    Message? message = update.Message;
+                    User? sender = message?.From;
+                    if (message is null || sender is null || message.Chat.Type is not ChatType.Private || !TextContainsSetupChallenge(message.Text, normalizedChallenge))
+                    {
+                        TelegramSetupUpdateBuffer.Enqueue(token, update);
+                        continue;
+                    }
+
+                    TelegramSetupUser setupUser = new(
+                        sender.Id,
+                        sender.Username,
+                        BuildDisplayName(sender),
+                        message.Chat.Id);
+
+                    await TryAcknowledgeCaptureAsync(client, setupUser, timeoutSource.Token).ConfigureAwait(false);
+                    return setupUser;
+                }
+            }
+
+            return null;
+        }
+        finally
+        {
+            // A challenge can be claimed only once. Removing it here also
+            // bounds the in-memory state when polling times out or is canceled.
+            ActiveChallenges.TryRemove(normalizedChallenge, out _);
+        }
     }
 
     internal static string CreateSetupChallenge()
     {
+        DateTimeOffset now = DateTimeOffset.UtcNow;
+        foreach ((string key, ChallengeLease lease) in ActiveChallenges)
+        {
+            if (lease.ExpiresAtUtc <= now)
+            {
+                ActiveChallenges.TryRemove(key, out _);
+            }
+        }
+
         Span<byte> bytes = stackalloc byte[4];
         RandomNumberGenerator.Fill(bytes);
-        return $"CT-{Convert.ToHexString(bytes)}";
+        string challenge = $"CT-{Convert.ToHexString(bytes)}";
+        ActiveChallenges[challenge] = new(now.Add(DefaultChallengeLifetime), Claimed: false);
+        return challenge;
     }
+
+    private static bool TryClaimChallenge(string challenge, TimeSpan timeout)
+    {
+        DateTimeOffset now = DateTimeOffset.UtcNow;
+        DateTimeOffset expiry = now.Add(timeout < DefaultChallengeLifetime ? timeout : DefaultChallengeLifetime);
+
+        lock (ChallengeGate)
+        {
+            if (ActiveChallenges.TryGetValue(challenge, out ChallengeLease? existing))
+            {
+                if (existing.ExpiresAtUtc <= now)
+                {
+                    ActiveChallenges.TryRemove(challenge, out _);
+                }
+                else if (existing.Claimed)
+                {
+                    return false;
+                }
+            }
+
+            // Keep compatibility with callers that supplied a challenge string
+            // directly before challenge registration was introduced.
+            ActiveChallenges[challenge] = new(expiry, Claimed: true);
+            return true;
+        }
+    }
+
+    private sealed record ChallengeLease(DateTimeOffset ExpiresAtUtc, bool Claimed);
 
     internal static bool TextContainsSetupChallenge(string? messageText, string expectedChallenge)
         => !string.IsNullOrWhiteSpace(expectedChallenge)
             && !string.IsNullOrWhiteSpace(messageText)
             && messageText.Contains(expectedChallenge.Trim(), StringComparison.OrdinalIgnoreCase);
 
-    private static TelegramBotClient CreateClient(string token)
+    private ITelegramBotClient CreateClient(string token)
     {
         if (!TelegramBotToken.TryNormalize(token, out string normalizedToken, out string error))
         {
             throw new ArgumentException(error, nameof(token));
         }
 
-        return new TelegramBotClient(normalizedToken);
+        return _clientFactory(normalizedToken);
     }
 
-    private static async Task<int?> CreateFreshOffsetAsync(TelegramBotClient client, CancellationToken cancellationToken)
-    {
-        Update[] updates = await client.GetUpdates(
-            offset: -1,
-            limit: 1,
-            timeout: 0,
-            allowedUpdates: SetupUpdates,
-            cancellationToken: cancellationToken).ConfigureAwait(false);
+    async Task ITelegramProfileSetupClient.SetMyCommandsAsync(
+        string token,
+        IEnumerable<BotCommand> commands,
+        string? languageCode,
+        CancellationToken cancellationToken)
+        => await CreateClient(token).SetMyCommands(
+            commands,
+            BotCommandScope.Default(),
+            languageCode ?? string.Empty,
+            cancellationToken).ConfigureAwait(false);
 
-        return updates.Length == 0 ? null : updates[^1].Id + 1;
+    async Task ITelegramProfileSetupClient.SetChatMenuButtonAsync(
+        string token,
+        long? chatId,
+        MenuButton menuButton,
+        CancellationToken cancellationToken)
+        => await CreateClient(token).SetChatMenuButton(chatId, menuButton, cancellationToken).ConfigureAwait(false);
+
+    async Task ITelegramProfileSetupClient.SetMyNameAsync(
+        string token,
+        string name,
+        string? languageCode,
+        CancellationToken cancellationToken)
+        => await CreateClient(token).SetMyName(name, languageCode ?? string.Empty, cancellationToken).ConfigureAwait(false);
+
+    async Task ITelegramProfileSetupClient.SetMyDescriptionAsync(
+        string token,
+        string description,
+        string? languageCode,
+        CancellationToken cancellationToken)
+        => await CreateClient(token).SetMyDescription(description, languageCode ?? string.Empty, cancellationToken).ConfigureAwait(false);
+
+    async Task ITelegramProfileSetupClient.SetMyShortDescriptionAsync(
+        string token,
+        string shortDescription,
+        string? languageCode,
+        CancellationToken cancellationToken)
+        => await CreateClient(token).SetMyShortDescription(shortDescription, languageCode ?? string.Empty, cancellationToken).ConfigureAwait(false);
+
+    async Task ITelegramProfileSetupClient.SetMyProfilePhotoAsync(
+        string token,
+        string profilePhotoPath,
+        CancellationToken cancellationToken)
+    {
+        await using FileStream stream = File.OpenRead(profilePhotoPath);
+        InputProfilePhotoStatic photo = new()
+        {
+            Photo = InputFile.FromStream(stream, Path.GetFileName(profilePhotoPath)),
+        };
+        await CreateClient(token).SetMyProfilePhoto(photo, cancellationToken).ConfigureAwait(false);
     }
 
     private static async Task TryAcknowledgeCaptureAsync(
-        TelegramBotClient client,
+        ITelegramBotClient client,
         TelegramSetupUser setupUser,
         CancellationToken cancellationToken)
     {

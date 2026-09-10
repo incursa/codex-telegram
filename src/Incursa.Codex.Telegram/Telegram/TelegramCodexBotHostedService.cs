@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Globalization;
+using Incursa.Codex.Telegram.Configuration;
 using Incursa.Codex.Telegram.Options;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -23,6 +24,7 @@ internal sealed class TelegramCodexBotHostedService : BackgroundService
     private readonly TelegramBotOptions _options;
     private readonly TelegramInputOptions _inputOptions;
     private readonly ILogger<TelegramCodexBotHostedService> _logger;
+    private readonly string _tempRoot;
     private readonly ConcurrentDictionary<TelegramMediaGroupKey, PendingTelegramMediaGroup> _pendingMediaGroups = new();
 
     public TelegramCodexBotHostedService(
@@ -33,7 +35,8 @@ internal sealed class TelegramCodexBotHostedService : BackgroundService
         ITelegramDebugTraceStore traceStore,
         IOptions<TelegramBotOptions> options,
         IOptions<TelegramInputOptions> inputOptions,
-        ILogger<TelegramCodexBotHostedService> logger)
+        ILogger<TelegramCodexBotHostedService> logger,
+        IOptions<CodexTelegramOptions>? codexOptions = null)
     {
         _handler = handler;
         _sender = sender;
@@ -43,6 +46,9 @@ internal sealed class TelegramCodexBotHostedService : BackgroundService
         _options = options.Value;
         _inputOptions = inputOptions.Value;
         _logger = logger;
+        _tempRoot = codexOptions is null
+            ? Path.Combine(Path.GetTempPath(), "codex-telegram")
+            : CodexTelegramDataRoot.GetTempRoot(codexOptions.Value);
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -60,10 +66,11 @@ internal sealed class TelegramCodexBotHostedService : BackgroundService
             return;
         }
 
+        string token = _options.Token.Trim();
         TelegramBotClient client;
         try
         {
-            client = new TelegramBotClient(_options.Token.Trim());
+            client = new TelegramBotClient(token);
         }
         catch (ArgumentException exception)
         {
@@ -73,12 +80,54 @@ internal sealed class TelegramCodexBotHostedService : BackgroundService
         }
 
         int pollingTimeoutSeconds = Math.Clamp(_options.PollingTimeoutSeconds, 1, 120);
+
+        IDisposable receiverLease;
+        try
+        {
+            receiverLease = TelegramUpdateReceiverLock.Acquire(token);
+        }
+        catch (InvalidOperationException exception)
+        {
+            _logger.LogError(exception, "Telegram polling could not start because another local receiver is already active for this bot token.");
+            return;
+        }
+
+        using (receiverLease)
+        {
+            await PollUpdatesAsync(client, token, pollingTimeoutSeconds, stoppingToken).ConfigureAwait(false);
+        }
+
+        _logger.LogInformation("Telegram bot long polling stopped.");
+    }
+
+    private async Task PollUpdatesAsync(
+        TelegramBotClient client,
+        string token,
+        int pollingTimeoutSeconds,
+        CancellationToken stoppingToken)
+    {
         int? offset = null;
 
         _logger.LogInformation(
             "Telegram bot long polling started with timeout {PollingTimeoutSeconds}s and {AllowedUserCount} allowed users.",
             pollingTimeoutSeconds,
             _options.AllowedUserIds.Length);
+
+        foreach (Update bufferedUpdate in TelegramSetupUpdateBuffer.Drain(token))
+        {
+            try
+            {
+                await HandleUpdateAsync(new TelegramUpdateFileClient(client), bufferedUpdate, _sender, stoppingToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception exception)
+            {
+                _logger.LogError(exception, "Buffered Telegram setup update {UpdateId} failed.", bufferedUpdate.Id);
+            }
+        }
 
         while (!stoppingToken.IsCancellationRequested)
         {
@@ -129,7 +178,6 @@ internal sealed class TelegramCodexBotHostedService : BackgroundService
             }
         }
 
-        _logger.LogInformation("Telegram bot long polling stopped.");
     }
 
     internal async Task HandleUpdateAsync(
@@ -973,7 +1021,7 @@ internal sealed class TelegramCodexBotHostedService : BackgroundService
             request.IsImage);
     }
 
-    private static string CreateTemporaryAudioPath(string? telegramFilePath)
+    private string CreateTemporaryAudioPath(string? telegramFilePath)
     {
         string extension = string.IsNullOrWhiteSpace(telegramFilePath)
             ? ".ogg"
@@ -984,12 +1032,12 @@ internal sealed class TelegramCodexBotHostedService : BackgroundService
             extension = ".ogg";
         }
 
-        string directory = Path.Combine(Path.GetTempPath(), "codex-telegram", "telegram-audio");
+        string directory = Path.Combine(_tempRoot, "telegram-audio");
         Directory.CreateDirectory(directory);
         return Path.Combine(directory, $"{Guid.NewGuid():n}{extension}");
     }
 
-    private static string CreateTemporaryAttachmentPath(string? telegramFilePath, string? fileName, string? contentType)
+    private string CreateTemporaryAttachmentPath(string? telegramFilePath, string? fileName, string? contentType)
     {
         string extension = Path.GetExtension(fileName ?? string.Empty);
         if (string.IsNullOrWhiteSpace(extension))
@@ -1007,7 +1055,7 @@ internal sealed class TelegramCodexBotHostedService : BackgroundService
             extension = ".bin";
         }
 
-        string directory = Path.Combine(Path.GetTempPath(), "codex-telegram", "telegram-attachments");
+        string directory = Path.Combine(_tempRoot, "telegram-attachments");
         Directory.CreateDirectory(directory);
         return Path.Combine(directory, $"{Guid.NewGuid():n}{extension}");
     }

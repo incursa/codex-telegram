@@ -26,6 +26,7 @@ internal sealed class TelegramPlanInputCoordinator : ITelegramPlanInputCoordinat
 {
     private const string RequestUserInputAction = "item/tool/requestUserInput";
     private const int ShortIdLength = 8;
+    private static readonly TimeSpan PendingInputLifetime = TimeSpan.FromMinutes(30);
 
     private readonly ConcurrentDictionary<TelegramConversationScope, PendingPlanInputRequest> _pendingByConversation = new();
     private readonly ConcurrentDictionary<string, PlanInputOptionToken> _optionTokens = new(StringComparer.Ordinal);
@@ -33,17 +34,29 @@ internal sealed class TelegramPlanInputCoordinator : ITelegramPlanInputCoordinat
     private readonly ITelegramBotMessageSender _sender;
     private readonly IHostApplicationLifetime _applicationLifetime;
     private readonly ILogger<TelegramPlanInputCoordinator> _logger;
+    private readonly TimeProvider _timeProvider;
 
     public TelegramPlanInputCoordinator(
         ITelegramThreadFollowRegistry followRegistry,
         ITelegramBotMessageSender sender,
         IHostApplicationLifetime applicationLifetime,
         ILogger<TelegramPlanInputCoordinator> logger)
+        : this(followRegistry, sender, applicationLifetime, logger, TimeProvider.System)
+    {
+    }
+
+    internal TelegramPlanInputCoordinator(
+        ITelegramThreadFollowRegistry followRegistry,
+        ITelegramBotMessageSender sender,
+        IHostApplicationLifetime applicationLifetime,
+        ILogger<TelegramPlanInputCoordinator> logger,
+        TimeProvider timeProvider)
     {
         _followRegistry = followRegistry;
         _sender = sender;
         _applicationLifetime = applicationLifetime;
         _logger = logger;
+        _timeProvider = timeProvider;
     }
 
     public JsonObject? HandleApprovalRequest(string action, JsonObject? request)
@@ -95,6 +108,17 @@ internal sealed class TelegramPlanInputCoordinator : ITelegramPlanInputCoordinat
             return false;
         }
 
+        if (IsExpired(pending))
+        {
+            Expire(pending);
+            await _sender.SendTextMessageAsync(
+                conversation,
+                "That plan question is no longer pending. Start a new plan turn.",
+                null,
+                cancellationToken).ConfigureAwait(false);
+            return true;
+        }
+
         PlanInputAnswer? answer = BuildAnswerFromText(pending, text);
         if (answer is null)
         {
@@ -106,7 +130,7 @@ internal sealed class TelegramPlanInputCoordinator : ITelegramPlanInputCoordinat
             return true;
         }
 
-        if (TryComplete(pending, answer))
+        if (TryComplete(pending, answer, conversation))
         {
             await _sender.SendTextMessageAsync(
                 conversation,
@@ -130,12 +154,28 @@ internal sealed class TelegramPlanInputCoordinator : ITelegramPlanInputCoordinat
             return true;
         }
 
+        PendingPlanInputRequest pending = optionToken.Pending;
+        if (!_pendingByConversation.TryGetValue(conversation, out PendingPlanInputRequest? current)
+            || !ReferenceEquals(current, pending)
+            || !pending.Targets.Contains(conversation))
+        {
+            await _sender.AnswerCallbackQueryAsync(callbackQueryId, "That plan answer is not for this conversation.", cancellationToken).ConfigureAwait(false);
+            return true;
+        }
+
+        if (IsExpired(pending))
+        {
+            Expire(pending);
+            await _sender.AnswerCallbackQueryAsync(callbackQueryId, "That plan answer is no longer pending.", cancellationToken).ConfigureAwait(false);
+            return true;
+        }
+
         PlanInputAnswer answer = new(new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal)
         {
             [optionToken.QuestionId] = [optionToken.Answer],
         });
 
-        if (TryComplete(optionToken.Pending, answer))
+        if (TryComplete(pending, answer, conversation))
         {
             await _sender.AnswerCallbackQueryAsync(callbackQueryId, "Answer sent.", cancellationToken).ConfigureAwait(false);
             await _sender.SendTextMessageAsync(
@@ -198,9 +238,22 @@ internal sealed class TelegramPlanInputCoordinator : ITelegramPlanInputCoordinat
             return null;
         }
 
-        PendingPlanInputRequest pending = new(threadId, turnId, itemId, targets, questions);
+        PendingPlanInputRequest pending = new(
+            threadId,
+            turnId,
+            itemId,
+            targets,
+            questions,
+            _timeProvider.GetUtcNow().Add(PendingInputLifetime));
         foreach (TelegramConversationScope target in targets)
         {
+            if (_pendingByConversation.TryGetValue(target, out PendingPlanInputRequest? previous)
+                && !ReferenceEquals(previous, pending))
+            {
+                previous.Completion.TrySetCanceled();
+                Cleanup(previous);
+            }
+
             _pendingByConversation[target] = pending;
         }
 
@@ -438,8 +491,24 @@ internal sealed class TelegramPlanInputCoordinator : ITelegramPlanInputCoordinat
         };
     }
 
-    private bool TryComplete(PendingPlanInputRequest pending, PlanInputAnswer answer)
+    private bool TryComplete(
+        PendingPlanInputRequest pending,
+        PlanInputAnswer answer,
+        TelegramConversationScope? conversation = null)
     {
+        if (conversation.HasValue
+            && (!_pendingByConversation.TryGetValue(conversation.Value, out PendingPlanInputRequest? current)
+                || !ReferenceEquals(current, pending)))
+        {
+            return false;
+        }
+
+        if (IsExpired(pending))
+        {
+            Expire(pending);
+            return false;
+        }
+
         bool completed = pending.Completion.TrySetResult(answer);
         if (completed)
         {
@@ -447,6 +516,15 @@ internal sealed class TelegramPlanInputCoordinator : ITelegramPlanInputCoordinat
         }
 
         return completed;
+    }
+
+    private bool IsExpired(PendingPlanInputRequest pending)
+        => pending.ExpiresAt <= _timeProvider.GetUtcNow();
+
+    private void Expire(PendingPlanInputRequest pending)
+    {
+        pending.Completion.TrySetCanceled();
+        Cleanup(pending);
     }
 
     private void Cleanup(PendingPlanInputRequest pending)
@@ -581,13 +659,15 @@ internal sealed class TelegramPlanInputCoordinator : ITelegramPlanInputCoordinat
             string turnId,
             string? itemId,
             IReadOnlyList<TelegramConversationScope> targets,
-            IReadOnlyList<PlanInputQuestion> questions)
+            IReadOnlyList<PlanInputQuestion> questions,
+            DateTimeOffset expiresAt)
         {
             ThreadId = threadId;
             TurnId = turnId;
             ItemId = itemId;
             Targets = targets;
             Questions = questions;
+            ExpiresAt = expiresAt;
         }
 
         public string ThreadId { get; }
@@ -599,6 +679,8 @@ internal sealed class TelegramPlanInputCoordinator : ITelegramPlanInputCoordinat
         public IReadOnlyList<TelegramConversationScope> Targets { get; }
 
         public IReadOnlyList<PlanInputQuestion> Questions { get; }
+
+        public DateTimeOffset ExpiresAt { get; }
 
         public List<string> OptionTokens { get; } = [];
 

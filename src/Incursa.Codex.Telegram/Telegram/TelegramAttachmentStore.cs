@@ -1,4 +1,5 @@
 using System.Globalization;
+using Incursa.Codex.Telegram.Configuration;
 using Incursa.Codex.Telegram.Options;
 using Microsoft.Extensions.Options;
 
@@ -79,8 +80,10 @@ internal sealed class TelegramAttachmentStore : ITelegramAttachmentStore
     {
         string? dataRoot = _options.Value.Workspace.DataRoot;
         string root = string.IsNullOrWhiteSpace(dataRoot)
-            ? Path.Combine(AppContext.BaseDirectory, "App_Data", "codex-telegram")
-            : dataRoot;
+            ? string.IsNullOrWhiteSpace(_options.Value.InstanceId)
+                ? Path.Combine(AppContext.BaseDirectory, "App_Data", "codex-telegram")
+                : CodexTelegramDataRoot.GetDefaultDataRoot(_options.Value.InstanceId)
+            : Path.GetFullPath(dataRoot);
         return Path.Combine(root, "telegram-attachments");
     }
 

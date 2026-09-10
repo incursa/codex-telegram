@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Incursa.Codex.Telegram.Options;
 
 namespace Incursa.Codex.Telegram.Configuration;
 
@@ -115,7 +116,11 @@ internal sealed class LocalSettingsStore
             GetString("Codex", "PlanMode", "ReasoningEffort"),
             GetString("CodexTelegram", "Context", "Sandbox"),
             GetString("CodexTelegram", "Context", "ApprovalMode"),
-            GetBool("CodexTelegram", "Context", "NetworkAccessEnabled"));
+            GetBool("CodexTelegram", "Context", "NetworkAccessEnabled"),
+            GetMode("CodexTelegram", "Mode"),
+            GetString("CodexTelegram", "RepositoryRoot"),
+            GetString("CodexTelegram", "RepositoryDisplayLabel"),
+            GetString("CodexTelegram", "InstanceId"));
 
     public void Save()
     {
@@ -133,6 +138,13 @@ internal sealed class LocalSettingsStore
 
     public void SetTelegramToken(string? value)
         => SetString(value, "TelegramBot", "Token");
+
+    /// <summary>
+    /// Gets the configured Telegram token for an explicitly requested setup
+    /// repair pass. Callers must never include the returned value in output.
+    /// </summary>
+    internal string? GetTelegramTokenForSetup()
+        => GetString("TelegramBot", "Token");
 
     public void SetAllowedUserIds(IEnumerable<long> values)
         => SetInt64Array(values, "TelegramBot", "AllowedUserIds");
@@ -188,6 +200,18 @@ internal sealed class LocalSettingsStore
     public void SetNetworkAccessEnabled(bool? value)
         => SetNullableBool(value, "CodexTelegram", "Context", "NetworkAccessEnabled");
 
+    public void SetMode(CodexTelegramMode value)
+        => SetString(value.ToString(), "CodexTelegram", "Mode");
+
+    public void SetRepositoryRoot(string? value)
+        => SetString(value, "CodexTelegram", "RepositoryRoot");
+
+    public void SetRepositoryDisplayLabel(string? value)
+        => SetString(value, "CodexTelegram", "RepositoryDisplayLabel");
+
+    public void SetInstanceId(string? value)
+        => SetString(value, "CodexTelegram", "InstanceId");
+
     private string? GetString(params string[] path)
     {
         JsonNode? node = GetNode(path);
@@ -224,6 +248,14 @@ internal sealed class LocalSettingsStore
         }
 
         return null;
+    }
+
+    private CodexTelegramMode GetMode(params string[] path)
+    {
+        string? value = GetString(path);
+        return Enum.TryParse(value, ignoreCase: true, out CodexTelegramMode mode)
+            ? mode
+            : CodexTelegramMode.GeneralPurpose;
     }
 
     private int? GetInt32(params string[] path)

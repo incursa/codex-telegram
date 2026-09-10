@@ -1,6 +1,22 @@
 namespace Incursa.Codex.Telegram.Options;
 
 /// <summary>
+/// Defines the host's workspace operating mode.
+/// </summary>
+public enum CodexTelegramMode
+{
+    /// <summary>
+    /// Use the existing general-purpose workspace behavior.
+    /// </summary>
+    GeneralPurpose,
+
+    /// <summary>
+    /// Pin the host to one explicitly configured repository root.
+    /// </summary>
+    Repository,
+}
+
+/// <summary>
 /// Default values for local Codex workspace browsing and persistence.
 /// </summary>
 public static class CodexWorkspaceDefaults
@@ -47,6 +63,26 @@ public static class CodexTurnStreamingDefaults
 /// </summary>
 public sealed class CodexTelegramOptions
 {
+    /// <summary>
+    /// Gets or sets the workspace operating mode.
+    /// </summary>
+    public CodexTelegramMode Mode { get; set; } = CodexTelegramMode.GeneralPurpose;
+
+    /// <summary>
+    /// Gets or sets the repository root used by <see cref="CodexTelegramMode.Repository"/>.
+    /// </summary>
+    public string? RepositoryRoot { get; set; }
+
+    /// <summary>
+    /// Gets or sets the optional operator-facing repository label.
+    /// </summary>
+    public string? RepositoryDisplayLabel { get; set; }
+
+    /// <summary>
+    /// Gets or sets an optional instance identifier used to partition the default local data root.
+    /// </summary>
+    public string? InstanceId { get; set; }
+
     /// <summary>
     /// Gets or sets a value indicating whether the Codex runtime should be initialized during startup.
     /// </summary>
