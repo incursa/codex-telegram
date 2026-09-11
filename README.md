@@ -29,7 +29,7 @@ The service also has launch modes:
 2. Start it with `--run` to skip the menu and run the hosted services directly.
 3. Start it with `--menu` to force the bootstrap/admin menu.
 4. Use private chat first, then trusted group roots or forum topics only after the private flow works.
-5. Use [docs/usage.md](docs/usage.md) for the user-facing output modes: `Compact`, `Verbose`, `LiveCard`, and `FinalOnly`.
+5. Use [docs/usage.md](docs/usage.md) for the user-facing output modes: `Compact`, `Verbose`, `LiveCard`, `Balanced`, and `FinalOnly`.
 
 `CodexTelegram:Mode` controls workspace scope; `TelegramOutput:PresentationMode` controls how turn output is presented. They are independent settings.
 
@@ -200,6 +200,8 @@ C:\tools\codex-telegram-repo\codex-telegram.exe
 Example settings differences:
 
 `codex-telegram-general\appsettings.Local.json`:
+
+Proposed configuration example:
 
 ```json
 {
@@ -456,6 +458,19 @@ Practical rules:
 4. Batched messages are concatenated with simple spacing and preserve multi-line content, including numbered lists and headings.
 5. If the local outbound buffer is compacted, the bot sends an explicit compaction notice.
 6. Terminal turn events are tracked internally; the bot no longer emits a standalone completion marker into the chat.
+
+Output presentation and text formatting are separate settings. `TelegramOutput:PresentationMode` defaults to `Compact`; `Balanced` adds concise lifecycle/tool milestones while keeping routine progress to sparse still-working pulses. `TelegramOutput:TextFormat` defaults to `PlainText`, which preserves literal Codex text. Set it to `SafeMarkdownV2` only when you want the constrained safe formatter for headings, emphasis, links, and code; unsupported or malformed markup is escaped as literal text. If a formatted message would split across an unsafe MarkdownV2 boundary, its chunks fall back to plain text. A transport that cannot apply formatting also falls back to plain text.
+
+```json
+{
+  "TelegramOutput": {
+    "PresentationMode": "Balanced",
+    "TextFormat": "SafeMarkdownV2"
+  }
+}
+```
+
+The runtime equivalent is `/output mode balanced`; use `/output mode reset` to return to the configured presentation mode. Text format is configuration-backed and is not changed by that runtime presentation override.
 
 ## Local State And Safety
 

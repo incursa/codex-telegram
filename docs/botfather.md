@@ -123,8 +123,14 @@ repo - Show repository status and guidance
 ```
 
 Advanced commands such as `/model`, `/thinking`, `/goal`, `/tail`, `/usage`,
-`/debug`, `/outbound`, `/topics`, and `/restart` remain supported as slash
+`/debug`, `/outbound`, `/output`, `/topics`, and `/restart` remain supported as slash
 commands even when they are omitted from the compact picker.
+
+`/output mode balanced` is the middle-ground presentation choice for concise
+milestones and sparse still-working pulses. It can be used directly even when
+the picker is stale; `TelegramOutput:TextFormat=SafeMarkdownV2` is an optional
+local setting for constrained formatting and does not change BotFather profile
+ownership.
 
 Command behavior:
 

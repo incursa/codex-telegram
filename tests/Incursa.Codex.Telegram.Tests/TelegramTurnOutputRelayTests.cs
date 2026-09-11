@@ -120,6 +120,50 @@ public sealed class TelegramTurnOutputRelayTests
     }
 
     [Fact]
+    public async Task PublishTurnEventAsync_BalancedModePublishesMilestoneAndPulsesRoutineProgress()
+    {
+        FakeOutboundTelegramQueue queue = new();
+        TelegramThreadFollowRegistry followRegistry = FollowThread();
+        TestTelegramBotMessageSender sender = new();
+        TelegramTurnOutputRelay relay = CreateRelay(
+            queue,
+            followRegistry,
+            outputOptions: new TelegramOutputOptions
+            {
+                PresentationMode = TelegramOutputPresentationMode.Balanced,
+                CompactPulseIntervalSeconds = 30,
+            },
+            messageSender: sender);
+
+        await relay.PublishTurnEventAsync(
+            CreateEntry(
+                type: "item.command",
+                title: "Command",
+                body: "",
+                isInternal: true,
+                metadata: new Dictionary<string, string?>
+                {
+                    ["command"] = "dotnet test",
+                    ["status"] = "completed",
+                }),
+            CancellationToken.None);
+
+        OutboundTelegramMessage milestone = Assert.Single(queue.Messages);
+        Assert.Equal(CodexOutboundMessageKind.Progress, milestone.Kind);
+        Assert.Contains("Command finished: dotnet test", milestone.Text);
+
+        await relay.PublishTurnEventAsync(
+            CreateEntry(type: "item.tool_output", title: "Tool output", body: "Running tests."),
+            CancellationToken.None);
+
+        Assert.Equal(2, queue.Messages.Count);
+        Assert.Contains("Still working: Running tests.", queue.Messages[1].Text);
+        Assert.Equal(OutboundPriority.Low, queue.Messages[1].Priority);
+        Assert.Empty(sender.Sent);
+        Assert.Empty(sender.Edited);
+    }
+
+    [Fact]
     public async Task PublishTurnEventAsync_RestoresFollowerFromPersistedStateForDurableFinalResponse()
     {
         using TemporaryDirectory dataRoot = TemporaryDirectory.Create();

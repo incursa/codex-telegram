@@ -94,11 +94,17 @@ Use these Telegram commands during operation:
 4. `/status` to confirm the active session state.
 5. `/outbound` to inspect delayed Telegram output.
 6. `/usage` to inspect five-hour and weekly Codex usage percentages and reset timing.
-7. `/output mode` to confirm whether the bot is in `Compact`, `Verbose`, `LiveCard`, or `FinalOnly` mode.
+7. `/output mode` to confirm whether the bot is in `Compact`, `Verbose`, `LiveCard`, `Balanced`, or `FinalOnly` mode and whether a runtime override is active.
 8. `/turn updates` or `/turn full` to inspect retained operational turn history.
 9. `/tail` to inspect recent session output.
 
 If Telegram output looks delayed or incomplete, use `/status`, `/outbound`, `/turn final`, and `/tail` before changing configuration. Those commands separate Codex completion, retained final-response capture, delivery backlog, and Codex session-output questions.
+
+### Output presentation and formatting
+
+Use `/output mode balanced` when operators need lifecycle and tool milestones without the message volume of `Verbose`. `milestones` and `milestone` are aliases. Use `/output mode reset` to clear a runtime presentation override and return to `TelegramOutput:PresentationMode`.
+
+`TelegramOutput:TextFormat` is independent and defaults to `PlainText`. `SafeMarkdownV2` is a constrained formatter for headings, emphasis, HTTP(S) links, lists, and code. It escapes unsupported or malformed markup. If a formatted payload cannot be split safely, or the active Telegram client does not support formatted sends, the payload falls back to plain-text chunks. A formatted appearance is not proof of delivery; use `/outbound`, `/trace`, and the manual plan for delivery evidence.
 
 Use these local commands before a release or demo:
 

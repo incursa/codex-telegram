@@ -38,10 +38,14 @@ Record the date, operator, OS, published asset or commit SHA, Codex CLI version,
 17. Send `/output mode final`, run a short prompt, and confirm progress/update chatter is suppressed while final output and `~~ fin ~~` are still durable messages.
 18. Send `/output mode verbose`, run a short prompt, and confirm update messages are visible as durable Telegram messages.
 19. Send `/output mode live`, run a short prompt, and confirm updates edit one live turn card while the final answer is delivered as normal Telegram messages.
-20. Use the `Output Mode`, `Show Updates`, `Show Full Turn`, `Final`, `Trace`, and `Diagnostics` buttons from session/live cards when available; slash commands should be fallbacks.
-21. Send `/turn updates`, `/turn full`, and `/turn final` after a prompt and confirm retained operational history is available without enabling full debug capture.
-22. Delete the live turn card during a run and confirm the next live-card update creates a replacement card without blocking final output delivery.
-23. Send `/stop` and confirm pending queued messages for the session are cleared.
+20. Send `/output mode balanced`, run a short prompt with at least one tool or lifecycle transition, and confirm concise milestones are durable while routine work is represented by sparse still-working pulses and final output remains durable.
+21. Send `/output mode milestones`, confirm it reports/uses `Balanced`, then send `/output mode reset` and confirm the configured presentation mode is restored.
+22. Use the `Output Mode`, `Show Updates`, `Show Full Turn`, `Final`, `Trace`, and `Diagnostics` buttons from session/live cards when available; slash commands should be fallbacks.
+23. Send `/turn updates`, `/turn full`, and `/turn final` after a prompt and confirm retained operational history is available without enabling full debug capture.
+24. Delete the live turn card during a run and confirm the next live-card update creates a replacement card without blocking final output delivery.
+25. Send `/stop` and confirm pending queued messages for the session are cleared.
+
+The following are proposed checks, not recorded results. Configure `TelegramOutput:TextFormat=SafeMarkdownV2`, restart the process, and run a prompt that produces a heading, emphasis, an HTTPS link, a list, and code. Confirm the rendering is readable, unsupported/malformed markup is literal, and long output remains deliverable. Repeat with `PlainText` and confirm the source text remains literal. Record any result as `Telegram-live` only when observed in the intended private chat; local formatter tests remain `synthetic`.
 
 ## Authorization
 

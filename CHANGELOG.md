@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 1.0.22 - 2026-09-11
+
+- Added `Balanced` Telegram output presentation with durable lifecycle/tool milestones and chronological still-working pulses, preserving the existing four modes and `Compact` default.
+- Added opt-in `TelegramOutput:TextFormat=SafeMarkdownV2` rendering for constrained headings, emphasis, links, lists, and code, with escaping, format-aware chunking, and plain-text fallback.
+- Threaded text-format metadata through queued delivery and Telegram send/edit paths while retaining raw text in local traces and context records.
+- Documented the `Balanced` Telegram presentation mode and independent `PlainText`/`SafeMarkdownV2` text-format configuration, including compatibility and chunk-boundary fallbacks.
+- Added configuration examples and synthetic/proposed verification guidance for output presentation and formatting; no Telegram-live result is implied.
+
 ## 1.0.21 - 2026-09-10
 
 - Added additive `GeneralPurpose`/`Repository` workspace configuration with validated repository roots, safe labels, automatic repository-bound sessions, read-only `/repo` summaries, and fail-closed cross-repository resume/project actions.

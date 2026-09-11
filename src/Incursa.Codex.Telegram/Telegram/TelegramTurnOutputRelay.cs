@@ -140,7 +140,7 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
         }
 
         TelegramOutputPresentationMode presentationMode = _outputModeState.CurrentMode;
-        if (presentationMode is TelegramOutputPresentationMode.Verbose or TelegramOutputPresentationMode.Compact)
+        if (presentationMode is TelegramOutputPresentationMode.Verbose or TelegramOutputPresentationMode.Compact or TelegramOutputPresentationMode.Balanced)
         {
             return;
         }
@@ -237,7 +237,7 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
                 repost: true,
                 presentationMode,
                 cancellationToken).ConfigureAwait(false);
-            if (presentationMode == TelegramOutputPresentationMode.Compact)
+            if (presentationMode is TelegramOutputPresentationMode.Compact or TelegramOutputPresentationMode.Balanced)
             {
                 await PublishCompactPulseAsync(entry, CodexOutboundMessageKind.Update, entry.Body ?? entry.Title, cancellationToken).ConfigureAwait(false);
             }
@@ -322,7 +322,7 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
         }
 
         TelegramOutputPresentationMode presentationMode = _outputModeState.CurrentMode;
-        if (presentationMode is TelegramOutputPresentationMode.Verbose or TelegramOutputPresentationMode.Compact)
+        if (presentationMode is TelegramOutputPresentationMode.Verbose or TelegramOutputPresentationMode.Compact or TelegramOutputPresentationMode.Balanced)
         {
             return false;
         }
@@ -408,7 +408,7 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
         TelegramOutputPresentationMode presentationMode,
         CancellationToken cancellationToken)
     {
-        if (presentationMode is TelegramOutputPresentationMode.Verbose or TelegramOutputPresentationMode.Compact
+        if (presentationMode is TelegramOutputPresentationMode.Verbose or TelegramOutputPresentationMode.Compact or TelegramOutputPresentationMode.Balanced
             || string.IsNullOrWhiteSpace(entry.ThreadId))
         {
             return;
@@ -493,13 +493,14 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
             int? messageId;
             if (previousMessageId.HasValue)
             {
-                bool edited = await _messageSender.TryEditTextMessageAsync(
+                bool edited = await TryEditTextMessageAsync(
                     snapshot.Conversation,
                     previousMessageId.Value,
                     cardText,
                     buttons,
                     cancellationToken,
-                    debugContext).ConfigureAwait(false);
+                    debugContext,
+                    _outputOptions.TextFormat).ConfigureAwait(false);
                 if (!edited)
                 {
                     if (!repost)
@@ -509,12 +510,13 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
                         return false;
                     }
 
-                    messageId = await _messageSender.SendTextMessageAndGetIdAsync(
+                    messageId = await SendTextMessageAndGetIdAsync(
                         snapshot.Conversation,
                         cardText,
                         buttons,
                         cancellationToken,
-                        debugContext).ConfigureAwait(false);
+                        debugContext,
+                        _outputOptions.TextFormat).ConfigureAwait(false);
                 }
                 else
                 {
@@ -523,7 +525,7 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
             }
             else
             {
-                messageId = await _messageSender.SendTextMessageAndGetIdAsync(snapshot.Conversation, cardText, buttons, cancellationToken, debugContext).ConfigureAwait(false);
+                messageId = await SendTextMessageAndGetIdAsync(snapshot.Conversation, cardText, buttons, cancellationToken, debugContext, _outputOptions.TextFormat).ConfigureAwait(false);
             }
 
             if (messageId.HasValue)
@@ -693,6 +695,29 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
         }
     }
 
+    private Task<int?> SendTextMessageAndGetIdAsync(
+        TelegramConversationScope conversation,
+        string text,
+        IReadOnlyList<IReadOnlyList<TelegramReplyButton>>? buttons,
+        CancellationToken cancellationToken,
+        TelegramDebugMessageContext? debugContext,
+        TelegramTextFormat textFormat)
+        => _messageSender is IFormattedTelegramBotMessageSender formatted
+            ? formatted.SendTextMessageAndGetIdAsync(conversation, text, buttons, cancellationToken, debugContext, textFormat)
+            : _messageSender.SendTextMessageAndGetIdAsync(conversation, text, buttons, cancellationToken, debugContext);
+
+    private Task<bool> TryEditTextMessageAsync(
+        TelegramConversationScope conversation,
+        int messageId,
+        string text,
+        IReadOnlyList<IReadOnlyList<TelegramReplyButton>>? buttons,
+        CancellationToken cancellationToken,
+        TelegramDebugMessageContext? debugContext,
+        TelegramTextFormat textFormat)
+        => _messageSender is IFormattedTelegramBotMessageSender formatted
+            ? formatted.TryEditTextMessageAsync(conversation, messageId, text, buttons, cancellationToken, debugContext, textFormat)
+            : _messageSender.TryEditTextMessageAsync(conversation, messageId, text, buttons, cancellationToken, debugContext);
+
     private async Task ReactToTerminalTurnAsync(CodexTimelineEntryVm entry, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(entry.ThreadId) || string.IsNullOrWhiteSpace(entry.TurnId))
@@ -747,6 +772,7 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
                         TurnId = string.IsNullOrWhiteSpace(turnId) ? null : turnId,
                         Kind = kind,
                         Text = FormatSpecialMessageForTelegram(eventType, kind, text, presentationMode),
+                        TextFormat = _outputOptions.TextFormat,
                         CreatedUtc = createdUtc,
                         Priority = priority,
                         TraceId = _traceStore.TryGetTraceIdForTurn(threadId, turnId),
@@ -772,7 +798,7 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
         string? text,
         CancellationToken cancellationToken)
     {
-        if (_outputModeState.CurrentMode != TelegramOutputPresentationMode.Compact
+        if (_outputModeState.CurrentMode is not (TelegramOutputPresentationMode.Compact or TelegramOutputPresentationMode.Balanced)
             || string.IsNullOrWhiteSpace(entry.ThreadId)
             || IsTerminalTurnEvent(entry)
             || IsHighPriorityDurableEvent(entry, kind)
@@ -843,6 +869,7 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
                     TurnId = string.IsNullOrWhiteSpace(entry.TurnId) ? null : entry.TurnId,
                     Kind = CodexOutboundMessageKind.Progress,
                     Text = builder.ToString().TrimEnd(),
+                    TextFormat = _outputOptions.TextFormat,
                     CreatedUtc = createdUtc,
                     Priority = OutboundPriority.Low,
                     TraceId = _traceStore.TryGetTraceIdForTurn(threadId, entry.TurnId),
@@ -1274,7 +1301,44 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
             return true;
         }
 
+        // Balanced mode keeps only concise lifecycle/milestone summaries, while routine
+        // updates remain quiet and are represented by the sparse still-working pulse.
+        if (presentationMode == TelegramOutputPresentationMode.Balanced)
+        {
+            return IsBalancedMilestone(entry) || IsHighPriorityDurableEvent(entry, kind);
+        }
+
         return IsHighPriorityDurableEvent(entry, kind);
+    }
+
+    private static bool IsBalancedMilestone(CodexTimelineEntryVm entry)
+    {
+        string type = entry.Type ?? string.Empty;
+        if (string.Equals(type, TurnStartedType, StringComparison.OrdinalIgnoreCase)
+            || IsRetryNotice(entry)
+            || ContainsAny(type, "phase", "milestone")
+            || IsApprovalNeeded(entry))
+        {
+            return true;
+        }
+
+        // Tool/command completion is useful as a milestone; the running/progress
+        // updates leading to it are intentionally left to the sparse pulse.
+        if (entry.IsInternal
+            && (type.StartsWith("item.command", StringComparison.OrdinalIgnoreCase)
+                || type.StartsWith("item.tool", StringComparison.OrdinalIgnoreCase)
+                || type.StartsWith("item.file_change", StringComparison.OrdinalIgnoreCase)))
+        {
+            string status = GetMetadata(entry, "status") ?? string.Empty;
+            string? exitCode = GetMetadata(entry, "exitCode");
+            return status.Contains("completed", StringComparison.OrdinalIgnoreCase)
+                || status.Contains("succeeded", StringComparison.OrdinalIgnoreCase)
+                || status.Contains("failed", StringComparison.OrdinalIgnoreCase)
+                || status.Contains("error", StringComparison.OrdinalIgnoreCase)
+                || (int.TryParse(exitCode, out int code) && code != 0);
+        }
+
+        return false;
     }
 
     private static bool IsHighPriorityDurableEvent(CodexTimelineEntryVm entry, CodexOutboundMessageKind kind)

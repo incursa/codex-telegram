@@ -2176,7 +2176,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
 
             if (!TryParseOutputMode(parts[1], out TelegramOutputPresentationMode mode))
             {
-                await ReplyAsync(sender, message, "Usage: /output mode [compact|verbose|live|final|reset]", BuildOutputModeButtons(), cancellationToken, includeNavigationButtons: false).ConfigureAwait(false);
+                await ReplyAsync(sender, message, "Usage: /output mode [compact|verbose|live|balanced|final|reset]", BuildOutputModeButtons(), cancellationToken, includeNavigationButtons: false).ConfigureAwait(false);
                 return;
             }
 
@@ -2185,7 +2185,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             return;
         }
 
-        await ReplyAsync(sender, message, "Usage: /output mode [compact|verbose|live|final|reset]", BuildOutputModeButtons(), cancellationToken, includeNavigationButtons: false).ConfigureAwait(false);
+        await ReplyAsync(sender, message, "Usage: /output mode [compact|verbose|live|balanced|final|reset]", BuildOutputModeButtons(), cancellationToken, includeNavigationButtons: false).ConfigureAwait(false);
     }
 
     private async Task HandleTurnAsync(TelegramInboundMessage message, string arguments, ITelegramBotMessageSender sender, CancellationToken cancellationToken)
@@ -4554,7 +4554,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             "/debug [status|on|off|reset] - show or change diagnostic message preambles",
             "/debug trace <on|off|status|latest> - control or inspect local trace diagnostics",
             "/trace [latest|traceId|status|on|off|reset] - inspect turn delivery diagnostics",
-            "/output mode [compact|verbose|live|final|reset] - show or change Telegram output presentation mode",
+            "/output mode [compact|verbose|live|balanced|final|reset] - show or change Telegram output presentation mode",
             "/turn [updates|progress|full|final] [sessionId] [turnId] - show operational turn history",
             "/outbound - show outbound Telegram queue status",
             "/stop [sessionId] - gracefully stop a session",
@@ -5045,6 +5045,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         builder.AppendLine("Compact: final messages plus sparse still-working pulses.");
         builder.AppendLine("Verbose: durable progress/update/final messages.");
         builder.AppendLine("LiveCard: progress/update events update a card; final output stays durable.");
+        builder.AppendLine("Balanced: concise milestones plus sparse still-working pulses; final output stays durable.");
         builder.AppendLine("FinalOnly: only final output, errors, approvals, and artifacts are pushed.");
         return builder.ToString().TrimEnd();
     }
@@ -5058,6 +5059,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
                 new TelegramReplyButton("LiveCard", "outmode:live"),
             ],
             [
+                new TelegramReplyButton("Balanced", "outmode:balanced"),
                 new TelegramReplyButton("FinalOnly", "outmode:final"),
                 new TelegramReplyButton("Reset", "outmode:reset"),
             ],
@@ -5085,6 +5087,14 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             || normalized.Equals("final-only", StringComparison.OrdinalIgnoreCase))
         {
             mode = TelegramOutputPresentationMode.FinalOnly;
+            return true;
+        }
+
+        if (normalized.Equals("balanced", StringComparison.OrdinalIgnoreCase)
+            || normalized.Equals("milestones", StringComparison.OrdinalIgnoreCase)
+            || normalized.Equals("milestone", StringComparison.OrdinalIgnoreCase))
+        {
+            mode = TelegramOutputPresentationMode.Balanced;
             return true;
         }
 

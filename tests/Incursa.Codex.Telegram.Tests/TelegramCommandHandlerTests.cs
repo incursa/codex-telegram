@@ -1174,7 +1174,23 @@ public sealed class TelegramCommandHandlerTests
         SentTelegramMessage sent = Assert.Single(harness.Sender.Sent);
         Assert.Contains("Output mode set to FinalOnly.", sent.Text);
         Assert.Contains("Output mode: FinalOnly", sent.Text);
-        Assert.Equal(["Compact", "Verbose", "LiveCard", "FinalOnly", "Reset"], FlattenButtonLabels(sent));
+        Assert.Equal(["Compact", "Verbose", "LiveCard", "Balanced", "FinalOnly", "Reset"], FlattenButtonLabels(sent));
+    }
+
+    [Fact]
+    public async Task HandleMessageAsync_OutputModeCommandAcceptsBalancedMilestonesAlias()
+    {
+        using CommandHandlerHarness harness = CommandHandlerHarness.Create();
+
+        await harness.Handler.HandleMessageAsync(
+            new TelegramInboundMessage(1234, 5555, "private", "/output mode milestones"),
+            harness.Sender,
+            CancellationToken.None);
+
+        Assert.Equal(TelegramOutputPresentationMode.Balanced, harness.OutputModeState.CurrentMode);
+        SentTelegramMessage sent = Assert.Single(harness.Sender.Sent);
+        Assert.Contains("Output mode set to Balanced.", sent.Text);
+        Assert.Contains("Balanced: concise milestones plus sparse still-working pulses", sent.Text);
     }
 
     [Fact]

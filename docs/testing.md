@@ -71,4 +71,21 @@ When documenting a verification result, label it as `automated`, `synthetic`, `l
 
 For workspace-mode changes, cover both `CodexTelegram:Mode=GeneralPurpose` (workspace-root browsing/project selection) and `CodexTelegram:Mode=Repository` (explicit `RepositoryRoot` boundary). For two-instance tests, use distinct Telegram tokens and `DataRoot` values so one process cannot consume the other's updates or state.
 
+## Output presentation and formatting coverage
+
+When the output surface changes, keep these checks separate:
+
+- `TelegramTextFormatterTests` are `synthetic`/automated coverage for `PlainText` compatibility, constrained `SafeMarkdownV2` headings/emphasis/links/lists/code, escaping, malformed markup, unsafe links, and chunk-boundary fallback.
+- Relay tests cover `Balanced` milestone durability, routine still-working pulses, high-priority events, and the existing `Compact`, `Verbose`, `LiveCard`, and `FinalOnly` behavior.
+- Command-handler tests cover `balanced`, `milestones`, `milestone`, and `/output mode reset`, including the distinction between configured mode and runtime override.
+
+Proposed synthetic before/after fixture:
+
+```text
+Proposed before (PlainText): **bold** [docs](https://example.test)
+Proposed after (SafeMarkdownV2): *bold* [docs](https://example.test)
+```
+
+Observed here means only a local formatter/test-double result. It is not Telegram-live rendering or proof that a real bot received the message. Do not report a live formatting result unless the private-chat manual check was actually run.
+
 The canonical requirement IDs for Codex testability and validation live in [`specs/requirements/codex-telegram/_index.md`](../specs/requirements/codex-telegram/_index.md).

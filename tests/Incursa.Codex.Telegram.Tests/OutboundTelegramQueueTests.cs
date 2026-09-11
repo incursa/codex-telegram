@@ -232,6 +232,34 @@ public sealed class OutboundTelegramQueueTests
     }
 
     [Fact]
+    public async Task ObserveDeliveries_PreservesRequestedTextFormatOnPreparedChunk()
+    {
+        TestTelegramSender sender = new();
+        OutboundTelegramScheduler scheduler = CreateScheduler(sender, new TelegramOutboundOptions
+        {
+            BatchWindowSeconds = 0,
+            PrivateMinimumSendIntervalSeconds = 0,
+            GroupMinimumSendIntervalSeconds = 0,
+            FlushIntervalMilliseconds = TelegramOutboundLimits.MinFlushIntervalMilliseconds,
+        });
+        TestDeliveryObserver observer = new();
+        using IDisposable subscription = scheduler.ObserveDeliveries().Subscribe(observer);
+
+        await scheduler.EnqueueAsync(
+            CreateMessage(
+                CodexOutboundMessageKind.Update,
+                "**formatted**",
+                textFormat: TelegramTextFormat.SafeMarkdownV2),
+            CancellationToken.None);
+
+        OutboundTelegramDelivery delivery = await observer.ReadRequiredAsync();
+
+        Assert.Equal("**formatted**", delivery.Text);
+        Assert.Equal(TelegramTextFormat.SafeMarkdownV2, delivery.TextFormat);
+        delivery.Complete();
+    }
+
+    [Fact]
     public async Task ObserveDeliveries_AppliesBackoffWhenSubscriberReportsRateLimit()
     {
         TestTimeProvider timeProvider = new(TestNow);
@@ -1168,7 +1196,8 @@ public sealed class OutboundTelegramQueueTests
         DateTimeOffset? createdUtc = null,
         OutboundPriority priority = OutboundPriority.Normal,
         bool omitCreatedUtc = false,
-        string? traceId = null)
+        string? traceId = null,
+        TelegramTextFormat textFormat = TelegramTextFormat.PlainText)
         => new()
         {
             MessageId = Guid.NewGuid().ToString("n"),
@@ -1179,6 +1208,7 @@ public sealed class OutboundTelegramQueueTests
             TraceId = traceId,
             Kind = kind,
             Text = text,
+            TextFormat = textFormat,
             CreatedUtc = omitCreatedUtc ? default : createdUtc ?? TestNow,
             Priority = priority,
         };

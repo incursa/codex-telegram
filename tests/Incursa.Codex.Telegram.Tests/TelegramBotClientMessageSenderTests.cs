@@ -33,6 +33,52 @@ public sealed class TelegramBotClientMessageSenderTests
     }
 
     [Fact]
+    public async Task SendAndEdit_WithSafeMarkdownUseTheSameFormattedApiSurface()
+    {
+        FormattedFakeTelegramBotApiClient client = new();
+        TelegramBotClientMessageSender sender = CreateSender(client);
+
+        int? messageId = await sender.SendTextMessageAndGetIdAsync(
+            new TelegramConversationScope(1234, null),
+            "**bold** and [docs](https://example.com)",
+            null,
+            CancellationToken.None,
+            textFormat: TelegramTextFormat.SafeMarkdownV2);
+        await sender.EditTextMessageAsync(
+            new TelegramConversationScope(1234, null),
+            messageId!.Value,
+            "**updated** and [docs](https://example.com)",
+            null,
+            CancellationToken.None,
+            debugContext: null,
+            textFormat: TelegramTextFormat.SafeMarkdownV2);
+
+        FormattedTelegramApiMessage sent = Assert.Single(client.FormattedSentMessages);
+        FormattedTelegramApiMessage edited = Assert.Single(client.FormattedEditedMessages);
+        Assert.Equal(TelegramTextFormat.SafeMarkdownV2, sent.TextFormat);
+        Assert.Equal("*bold* and [docs](https://example.com)", sent.Text);
+        Assert.Equal(TelegramTextFormat.SafeMarkdownV2, edited.TextFormat);
+        Assert.Equal("*updated* and [docs](https://example.com)", edited.Text);
+    }
+
+    [Fact]
+    public async Task SafeMarkdownFallsBackToPlainTextWhenApiHasNoFormattedSurface()
+    {
+        FakeTelegramBotApiClient client = new();
+        TelegramBotClientMessageSender sender = CreateSender(client);
+
+        int? messageId = await sender.SendTextMessageAndGetIdAsync(
+            new TelegramConversationScope(1234, null),
+            "**bold**",
+            null,
+            CancellationToken.None,
+            textFormat: TelegramTextFormat.SafeMarkdownV2);
+
+        Assert.Equal(1001, messageId);
+        Assert.Equal("**bold**", Assert.Single(client.SentMessages).Text);
+    }
+
+    [Fact]
     public async Task SendTextMessageAndGetIdAsync_FullCaptureRecordsTelegramApiSuccess()
     {
         using TemporaryDirectory dataRoot = TemporaryDirectory.Create();
@@ -826,7 +872,7 @@ public sealed class TelegramBotClientMessageSenderTests
         return File.ReadAllLines(file);
     }
 
-    private sealed class FakeTelegramBotApiClient : ITelegramBotApiClient
+    private class FakeTelegramBotApiClient : ITelegramBotApiClient
     {
         public List<SentTelegramApiMessage> SentMessages { get; } = [];
 
@@ -939,12 +985,50 @@ public sealed class TelegramBotClientMessageSenderTests
         }
     }
 
+    private sealed class FormattedFakeTelegramBotApiClient : FakeTelegramBotApiClient, IFormattedTelegramBotApiClient
+    {
+        public List<FormattedTelegramApiMessage> FormattedSentMessages { get; } = [];
+
+        public List<FormattedTelegramApiMessage> FormattedEditedMessages { get; } = [];
+
+        public Task<int> SendMessageAsync(
+            long chatId,
+            string text,
+            TelegramTextFormat textFormat,
+            InlineKeyboardMarkup? replyMarkup,
+            int? messageThreadId,
+            CancellationToken cancellationToken)
+        {
+            int messageId = 4000 + FormattedSentMessages.Count + 1;
+            FormattedSentMessages.Add(new FormattedTelegramApiMessage(messageId, chatId, text, textFormat));
+            return Task.FromResult(messageId);
+        }
+
+        public Task EditMessageTextAsync(
+            long chatId,
+            int messageId,
+            string text,
+            TelegramTextFormat textFormat,
+            InlineKeyboardMarkup? replyMarkup,
+            CancellationToken cancellationToken)
+        {
+            FormattedEditedMessages.Add(new FormattedTelegramApiMessage(messageId, chatId, text, textFormat));
+            return Task.CompletedTask;
+        }
+    }
+
     private sealed record SentTelegramApiMessage(
         int MessageId,
         long ChatId,
         string Text,
         int? MessageThreadId,
         InlineKeyboardMarkup? ReplyMarkup);
+
+    private sealed record FormattedTelegramApiMessage(
+        int MessageId,
+        long ChatId,
+        string Text,
+        TelegramTextFormat TextFormat);
 
     private sealed record EditedTelegramApiMessage(long ChatId, int MessageId, string Text, InlineKeyboardMarkup? ReplyMarkup);
 

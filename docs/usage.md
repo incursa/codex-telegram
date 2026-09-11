@@ -53,6 +53,8 @@ Use this short checklist at the start of a real work session:
 6. Send `/usage` when you need current five-hour and weekly Codex usage percentages and reset times.
 7. Send `/tail` before assuming Telegram scrollback contains the complete transcript.
 
+For a middle ground between quiet output and full progress, use `/output mode balanced`. Balanced publishes concise lifecycle/milestone messages, keeps routine progress represented by sparse still-working pulses, and leaves final output durable. It is a presentation mode; it does not change the text representation configured by `TelegramOutput:TextFormat`.
+
 ## Daily Private-Chat Flow
 
 1. Send `/projects` to see known repositories.
@@ -149,9 +151,34 @@ Output modes:
 1. `Compact` sends final output durably and publishes throttled still-working pulses while a turn is active and otherwise quiet.
 2. `Verbose` sends progress, update, and final messages as durable Telegram messages according to the normal filters. Use it when watching the full process is useful.
 3. `LiveCard` summarizes progress and updates into an editable live turn card. The card keeps a stable `Latest` line for assistant-visible output and a separate `Activity` line for ephemeral internal work. Final responses, errors, approval requests, artifacts, and the `~~ fin ~~` marker remain durable messages. The card does not show the internal Codex turn ID, and if Codex retries or restarts internally the same card is edited in place.
-4. `FinalOnly` suppresses normal progress/update chatter and sends only final output, errors, approval requests, artifacts, and terminal summaries that need attention.
+4. `Balanced` publishes concise lifecycle/tool milestones and sparse still-working pulses for routine progress; final output, errors, approvals, and artifacts remain durable.
+5. `FinalOnly` suppresses normal progress/update chatter and sends only final output, errors, approval requests, artifacts, and terminal summaries that need attention.
 
 Operational turn history is normalized and user-facing. It is separate from debug capture: history supports buttons such as `Show Updates`, `Show Full Turn`, and `Final`, while `/debug capture full on` records raw interface traffic for deeper diagnostics.
+
+## Text Formatting
+
+`TelegramOutput:TextFormat` controls text representation independently of the presentation mode:
+
+| Value | Behavior |
+| --- | --- |
+| `PlainText` (default) | Sends Codex text literally using the legacy plain-text path. |
+| `SafeMarkdownV2` | Converts a constrained Markdown subset to Telegram MarkdownV2, including headings, emphasis, HTTP(S) links, inline/fenced code, and list prefixes. Special characters are escaped. |
+
+The safe formatter does not accept arbitrary Markdown or HTML. Unsupported, malformed, or unsafe links are emitted as escaped literal text. Long output is chunked before each chunk is formatted; if a chunk boundary would leave a fence, link, or other supported marker incomplete, delivery falls back to plain-text chunks so Telegram does not reject the message. If the active transport has no formatted-message capability, the effective format is also `PlainText`. File captions and command/control notices retain their existing plain-text path.
+
+Example configuration:
+
+```json
+{
+  "TelegramOutput": {
+    "PresentationMode": "Balanced",
+    "TextFormat": "SafeMarkdownV2"
+  }
+}
+```
+
+Compatibility example (observed in synthetic formatter tests): input `**bold** [docs](https://example.test)` stays literal in `PlainText`; with `SafeMarkdownV2`, it is converted to Telegram-safe emphasis and an HTTPS link. This is synthetic evidence, not a Telegram-live rendering claim.
 
 ## Queueing
 

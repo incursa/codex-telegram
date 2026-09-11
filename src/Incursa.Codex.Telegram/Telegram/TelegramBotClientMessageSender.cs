@@ -7,7 +7,14 @@ using Telegram.Bot.Types.ReplyMarkups;
 
 namespace Incursa.Codex.Telegram.Telegram;
 
-internal sealed class TelegramBotClientMessageSender : ITelegramBotMessageSender, IOutboundTelegramMessageSender
+internal interface IFormattedTelegramBotMessageSender
+{
+    Task<int?> SendTextMessageAndGetIdAsync(TelegramConversationScope conversation, string text, IReadOnlyList<IReadOnlyList<TelegramReplyButton>>? buttons, CancellationToken cancellationToken, TelegramDebugMessageContext? debugContext, TelegramTextFormat textFormat);
+
+    Task<bool> TryEditTextMessageAsync(TelegramConversationScope conversation, int messageId, string text, IReadOnlyList<IReadOnlyList<TelegramReplyButton>>? buttons, CancellationToken cancellationToken, TelegramDebugMessageContext? debugContext, TelegramTextFormat textFormat);
+}
+
+internal sealed class TelegramBotClientMessageSender : ITelegramBotMessageSender, IOutboundTelegramMessageSender, IFormattedOutboundTelegramMessageSender, IFormattedTelegramBotMessageSender
 {
     private readonly TelegramBotOptions _options;
     private readonly ILogger<TelegramBotClientMessageSender> _logger;
@@ -107,14 +114,15 @@ internal sealed class TelegramBotClientMessageSender : ITelegramBotMessageSender
         IReadOnlyList<IReadOnlyList<TelegramReplyButton>>? buttons,
         CancellationToken cancellationToken,
         TelegramDebugMessageContext? debugContext = null)
-        => _ = await SendTextMessageAndGetIdAsync(conversation, text, buttons, cancellationToken, debugContext).ConfigureAwait(false);
+        => _ = await SendTextMessageAndGetIdAsync(conversation, text, buttons, cancellationToken, debugContext, TelegramTextFormat.PlainText).ConfigureAwait(false);
 
     public async Task<int?> SendTextMessageAndGetIdAsync(
         TelegramConversationScope conversation,
         string text,
         IReadOnlyList<IReadOnlyList<TelegramReplyButton>>? buttons,
         CancellationToken cancellationToken,
-        TelegramDebugMessageContext? debugContext = null)
+        TelegramDebugMessageContext? debugContext = null,
+        TelegramTextFormat textFormat = TelegramTextFormat.PlainText)
     {
         if (!_options.Enabled)
         {
@@ -123,7 +131,7 @@ internal sealed class TelegramBotClientMessageSender : ITelegramBotMessageSender
 
         try
         {
-            return await SendMessageReturningIdAsync(conversation, text, buttons, cancellationToken, debugContext).ConfigureAwait(false);
+            return await SendMessageReturningIdAsync(conversation, text, buttons, cancellationToken, debugContext, textFormat).ConfigureAwait(false);
         }
         catch (ApiRequestException exception) when (conversation.MessageThreadId is not null && IsThreadReplyFailure(exception))
         {
@@ -149,6 +157,9 @@ internal sealed class TelegramBotClientMessageSender : ITelegramBotMessageSender
         }
     }
 
+    Task<int?> IFormattedTelegramBotMessageSender.SendTextMessageAndGetIdAsync(TelegramConversationScope conversation, string text, IReadOnlyList<IReadOnlyList<TelegramReplyButton>>? buttons, CancellationToken cancellationToken, TelegramDebugMessageContext? debugContext, TelegramTextFormat textFormat)
+        => SendTextMessageAndGetIdAsync(conversation, text, buttons, cancellationToken, debugContext, textFormat);
+
     async Task IOutboundTelegramMessageSender.SendTextMessageAsync(
         TelegramConversationScope conversation,
         string text,
@@ -163,6 +174,37 @@ internal sealed class TelegramBotClientMessageSender : ITelegramBotMessageSender
         try
         {
             await SendMessageAsync(conversation, text, null, cancellationToken, debugContext).ConfigureAwait(false);
+        }
+        catch (ApiRequestException exception) when (IsRateLimited(exception))
+        {
+            throw new TelegramOutboundRateLimitException(
+                "Telegram Bot API returned a rate limit response.",
+                ResolveRetryAfter(exception),
+                exception);
+        }
+        catch (ApiRequestException exception) when (conversation.MessageThreadId is not null && IsThreadReplyFailure(exception))
+        {
+            throw new TelegramTopicSendException(
+                $"Telegram rejected a reply to chat {conversation.ChatId} topic {conversation.MessageThreadId}; the message was not retried in the main chat.",
+                exception);
+        }
+    }
+
+    async Task IFormattedOutboundTelegramMessageSender.SendTextMessageAsync(
+        TelegramConversationScope conversation,
+        string text,
+        TelegramTextFormat textFormat,
+        CancellationToken cancellationToken,
+        TelegramDebugMessageContext? debugContext)
+    {
+        if (!_options.Enabled)
+        {
+            return;
+        }
+
+        try
+        {
+            await SendMessageAsync(conversation, text, null, cancellationToken, debugContext, textFormat).ConfigureAwait(false);
         }
         catch (ApiRequestException exception) when (IsRateLimited(exception))
         {
@@ -215,14 +257,27 @@ internal sealed class TelegramBotClientMessageSender : ITelegramBotMessageSender
         string text,
         IReadOnlyList<IReadOnlyList<TelegramReplyButton>>? buttons,
         CancellationToken cancellationToken,
-        TelegramDebugMessageContext? debugContext = null)
+        TelegramDebugMessageContext? debugContext,
+        TelegramTextFormat textFormat)
         => _ = await EditTextMessageOrSendReplacementAsync(
             conversation,
             messageId,
             text,
             buttons,
             cancellationToken,
-            debugContext).ConfigureAwait(false);
+            debugContext,
+            textFormat).ConfigureAwait(false);
+
+    // Keep the legacy interface contract exact while exposing the additive
+    // format-aware overload above to backend callers.
+    public Task EditTextMessageAsync(
+        TelegramConversationScope conversation,
+        int messageId,
+        string text,
+        IReadOnlyList<IReadOnlyList<TelegramReplyButton>>? buttons,
+        CancellationToken cancellationToken,
+        TelegramDebugMessageContext? debugContext = null)
+        => EditTextMessageAsync(conversation, messageId, text, buttons, cancellationToken, debugContext, TelegramTextFormat.PlainText);
 
     public async Task<bool> TryEditTextMessageAsync(
         TelegramConversationScope conversation,
@@ -230,8 +285,12 @@ internal sealed class TelegramBotClientMessageSender : ITelegramBotMessageSender
         string text,
         IReadOnlyList<IReadOnlyList<TelegramReplyButton>>? buttons,
         CancellationToken cancellationToken,
-        TelegramDebugMessageContext? debugContext = null)
-        => await TryEditTextMessageCoreAsync(conversation, messageId, text, buttons, cancellationToken, debugContext, logFallback: false).ConfigureAwait(false);
+        TelegramDebugMessageContext? debugContext = null,
+        TelegramTextFormat textFormat = TelegramTextFormat.PlainText)
+        => await TryEditTextMessageCoreAsync(conversation, messageId, text, buttons, cancellationToken, debugContext, logFallback: false, textFormat: textFormat).ConfigureAwait(false);
+
+    Task<bool> IFormattedTelegramBotMessageSender.TryEditTextMessageAsync(TelegramConversationScope conversation, int messageId, string text, IReadOnlyList<IReadOnlyList<TelegramReplyButton>>? buttons, CancellationToken cancellationToken, TelegramDebugMessageContext? debugContext, TelegramTextFormat textFormat)
+        => TryEditTextMessageAsync(conversation, messageId, text, buttons, cancellationToken, debugContext, textFormat);
 
     private async Task<bool> TryEditTextMessageCoreAsync(
         TelegramConversationScope conversation,
@@ -240,7 +299,8 @@ internal sealed class TelegramBotClientMessageSender : ITelegramBotMessageSender
         IReadOnlyList<IReadOnlyList<TelegramReplyButton>>? buttons,
         CancellationToken cancellationToken,
         TelegramDebugMessageContext? debugContext,
-        bool logFallback)
+        bool logFallback,
+        TelegramTextFormat textFormat)
     {
         if (!_options.Enabled)
         {
@@ -249,7 +309,8 @@ internal sealed class TelegramBotClientMessageSender : ITelegramBotMessageSender
 
         try
         {
-            string sendText = ApplyDebugPreamble(conversation, text, debugContext);
+            TelegramTextFormat effectiveFormat = ResolveEffectiveTextFormat(textFormat);
+            string sendText = TelegramTextFormatter.Format(ApplyDebugPreamble(conversation, text, debugContext), effectiveFormat);
             string? traceId = ResolveTraceId(debugContext);
             await RecordTelegramApiTraceAsync(
                 traceId,
@@ -264,12 +325,14 @@ internal sealed class TelegramBotClientMessageSender : ITelegramBotMessageSender
                     ["buttonRows"] = (buttons?.Count ?? 0).ToString(System.Globalization.CultureInfo.InvariantCulture),
                 },
                 cancellationToken).ConfigureAwait(false);
-            await _client.Value.EditMessageTextAsync(
-                conversation.ChatId,
-                messageId,
-                sendText,
-                ToInlineKeyboardMarkup(buttons),
-                cancellationToken).ConfigureAwait(false);
+            if (effectiveFormat != TelegramTextFormat.PlainText && _client.Value is IFormattedTelegramBotApiClient formattedClient)
+            {
+                await formattedClient.EditMessageTextAsync(conversation.ChatId, messageId, sendText, effectiveFormat, ToInlineKeyboardMarkup(buttons), cancellationToken).ConfigureAwait(false);
+            }
+            else
+            {
+                await _client.Value.EditMessageTextAsync(conversation.ChatId, messageId, sendText, ToInlineKeyboardMarkup(buttons), cancellationToken).ConfigureAwait(false);
+            }
             await RecordTelegramApiTraceAsync(
                 traceId,
                 conversation,
@@ -359,19 +422,20 @@ internal sealed class TelegramBotClientMessageSender : ITelegramBotMessageSender
         string text,
         IReadOnlyList<IReadOnlyList<TelegramReplyButton>>? buttons,
         CancellationToken cancellationToken,
-        TelegramDebugMessageContext? debugContext = null)
+        TelegramDebugMessageContext? debugContext = null,
+        TelegramTextFormat textFormat = TelegramTextFormat.PlainText)
     {
         if (!_options.Enabled)
         {
             return null;
         }
 
-        if (await TryEditTextMessageCoreAsync(conversation, messageId, text, buttons, cancellationToken, debugContext, logFallback: true).ConfigureAwait(false))
+        if (await TryEditTextMessageCoreAsync(conversation, messageId, text, buttons, cancellationToken, debugContext, logFallback: true, textFormat: textFormat).ConfigureAwait(false))
         {
             return messageId;
         }
 
-        return await SendTextMessageAndGetIdAsync(conversation, text, buttons, cancellationToken, debugContext).ConfigureAwait(false);
+        return await SendTextMessageAndGetIdAsync(conversation, text, buttons, cancellationToken, debugContext, textFormat).ConfigureAwait(false);
     }
 
     public async Task AnswerCallbackQueryAsync(string callbackQueryId, string? text, CancellationToken cancellationToken)
@@ -771,17 +835,20 @@ internal sealed class TelegramBotClientMessageSender : ITelegramBotMessageSender
         string text,
         IReadOnlyList<IReadOnlyList<TelegramReplyButton>>? buttons,
         CancellationToken cancellationToken,
-        TelegramDebugMessageContext? debugContext)
-        => SendMessageReturningIdAsync(conversation, text, buttons, cancellationToken, debugContext);
+        TelegramDebugMessageContext? debugContext,
+        TelegramTextFormat textFormat = TelegramTextFormat.PlainText)
+        => SendMessageReturningIdAsync(conversation, text, buttons, cancellationToken, debugContext, textFormat);
 
     private async Task<int> SendMessageReturningIdAsync(
         TelegramConversationScope conversation,
         string text,
         IReadOnlyList<IReadOnlyList<TelegramReplyButton>>? buttons,
         CancellationToken cancellationToken,
-        TelegramDebugMessageContext? debugContext)
+        TelegramDebugMessageContext? debugContext,
+        TelegramTextFormat textFormat = TelegramTextFormat.PlainText)
     {
-        string sendText = ApplyDebugPreamble(conversation, text, debugContext);
+        TelegramTextFormat effectiveFormat = ResolveEffectiveTextFormat(textFormat);
+        string sendText = TelegramTextFormatter.Format(ApplyDebugPreamble(conversation, text, debugContext), effectiveFormat);
         string? traceId = ResolveTraceId(debugContext);
         await RecordTelegramApiTraceAsync(
             traceId,
@@ -799,12 +866,14 @@ internal sealed class TelegramBotClientMessageSender : ITelegramBotMessageSender
         int messageId;
         try
         {
-            messageId = await _client.Value.SendMessageAsync(
-                conversation.ChatId,
-                sendText,
-                ToInlineKeyboardMarkup(buttons),
-                conversation.MessageThreadId,
-                cancellationToken).ConfigureAwait(false);
+            if (effectiveFormat != TelegramTextFormat.PlainText && _client.Value is IFormattedTelegramBotApiClient formattedClient)
+            {
+                messageId = await formattedClient.SendMessageAsync(conversation.ChatId, sendText, effectiveFormat, ToInlineKeyboardMarkup(buttons), conversation.MessageThreadId, cancellationToken).ConfigureAwait(false);
+            }
+            else
+            {
+                messageId = await _client.Value.SendMessageAsync(conversation.ChatId, sendText, ToInlineKeyboardMarkup(buttons), conversation.MessageThreadId, cancellationToken).ConfigureAwait(false);
+            }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -984,6 +1053,11 @@ internal sealed class TelegramBotClientMessageSender : ITelegramBotMessageSender
     private static bool IsMessageNotModified(ApiRequestException exception)
         => exception.Message.Contains("message is not modified", StringComparison.OrdinalIgnoreCase);
 
+    private TelegramTextFormat ResolveEffectiveTextFormat(TelegramTextFormat requested)
+        => requested == TelegramTextFormat.SafeMarkdownV2 && _client.Value is not IFormattedTelegramBotApiClient
+            ? TelegramTextFormat.PlainText
+            : requested;
+
     private static bool IsRateLimited(ApiRequestException exception)
         => exception.ErrorCode == 429
             || exception.Message.Contains("too many requests", StringComparison.OrdinalIgnoreCase)
@@ -1037,6 +1111,13 @@ internal interface ITelegramBotApiClient
     Task ReadBusinessMessageAsync(string businessConnectionId, long chatId, int messageId, CancellationToken cancellationToken);
 }
 
+internal interface IFormattedTelegramBotApiClient
+{
+    Task<int> SendMessageAsync(long chatId, string text, TelegramTextFormat textFormat, InlineKeyboardMarkup? replyMarkup, int? messageThreadId, CancellationToken cancellationToken);
+
+    Task EditMessageTextAsync(long chatId, int messageId, string text, TelegramTextFormat textFormat, InlineKeyboardMarkup? replyMarkup, CancellationToken cancellationToken);
+}
+
 internal sealed class TelegramTopicSendException : Exception
 {
     public TelegramTopicSendException(string message, Exception? innerException = null)
@@ -1045,7 +1126,7 @@ internal sealed class TelegramTopicSendException : Exception
     }
 }
 
-internal sealed class TelegramBotApiClient : ITelegramBotApiClient
+internal sealed class TelegramBotApiClient : ITelegramBotApiClient, IFormattedTelegramBotApiClient
 {
     private readonly ITelegramBotClient _client;
 
@@ -1070,6 +1151,18 @@ internal sealed class TelegramBotApiClient : ITelegramBotApiClient
         return message.MessageId;
     }
 
+    public async Task<int> SendMessageAsync(long chatId, string text, TelegramTextFormat textFormat, InlineKeyboardMarkup? replyMarkup, int? messageThreadId, CancellationToken cancellationToken)
+    {
+        global::Telegram.Bot.Types.Message message = await _client.SendMessage(
+            chatId,
+            text,
+            parseMode: TelegramTextFormatter.ToParseMode(textFormat),
+            replyMarkup: replyMarkup,
+            messageThreadId: messageThreadId,
+            cancellationToken: cancellationToken).ConfigureAwait(false);
+        return message.MessageId;
+    }
+
     public Task EditMessageTextAsync(
         long chatId,
         int messageId,
@@ -1081,6 +1174,15 @@ internal sealed class TelegramBotApiClient : ITelegramBotApiClient
             messageId,
             text,
             global::Telegram.Bot.Types.Enums.ParseMode.None,
+            replyMarkup,
+            cancellationToken: cancellationToken);
+
+    public Task EditMessageTextAsync(long chatId, int messageId, string text, TelegramTextFormat textFormat, InlineKeyboardMarkup? replyMarkup, CancellationToken cancellationToken)
+        => _client.EditMessageText(
+            chatId,
+            messageId,
+            text,
+            TelegramTextFormatter.ToParseMode(textFormat),
             replyMarkup,
             cancellationToken: cancellationToken);
 

@@ -17,7 +17,7 @@ The terminal menu's workspace section is the configuration surface for the host 
 3. `RepositoryDisplayLabel` is optional operator-facing text; it is not a filesystem path.
 4. `InstanceId` is an optional state-partition label. Use a distinct explicit `DataRoot` when running more than one instance.
 
-These settings affect workspace scope. They do not change `Compact`, `Verbose`, `LiveCard`, or `FinalOnly` Telegram output presentation.
+These settings affect workspace scope. They do not change `Compact`, `Verbose`, `LiveCard`, `Balanced`, or `FinalOnly` Telegram output presentation.
 
 ## Bootstrap/Admin Menu
 
@@ -203,9 +203,24 @@ Buttons:
 3. `Show Updates` opens retained operational turn history for the selected session.
 4. Navigation buttons for sessions, projects, and help.
 
+## Output Mode
+
+The `Output Mode` button opens the same presentation choices as `/output mode`:
+
+| Choice | Behavior |
+| --- | --- |
+| `Compact` | Durable final output plus sparse still-working pulses. |
+| `Verbose` | Durable progress and update messages according to the normal filters. |
+| `LiveCard` | Progress is projected into one editable card; final output remains durable. |
+| `Balanced` | Concise lifecycle/tool milestones plus sparse pulses for routine work; final output, errors, approvals, and artifacts remain durable. |
+| `FinalOnly` | Suppresses ordinary progress/update chatter while retaining attention-worthy output. |
+| `Reset` | Clears the runtime override and returns to configured `TelegramOutput:PresentationMode`. |
+
+`milestones` and `milestone` are slash-command aliases for `Balanced`. The presentation picker does not change `TelegramOutput:TextFormat`: `PlainText` is the default, while `SafeMarkdownV2` is an opt-in constrained formatter. Unsupported transports and unsafe chunk boundaries fall back to plain text. Use the slash command when a stale picker is unavailable.
+
 ## Live Turn Card
 
-In `LiveCard` and `FinalOnly` output modes, progress and update events can be projected into one editable live turn card instead of a stream of chat messages. `Compact` mode is the default and uses sparse chronological still-working pulses instead of an editable card. In `LiveCard`, the card keeps a visible `Latest` line for assistant output and a separate `Activity` line for ephemeral internal work. The card does not show the internal Codex turn ID, and a retry or internal restart keeps editing the same card in place.
+In `LiveCard` and `FinalOnly` output modes, progress and update events can be projected into one editable live turn card instead of a stream of chat messages. `Compact` mode is the default and uses sparse chronological still-working pulses instead of an editable card. `Balanced` keeps routine progress quiet while publishing milestones and the same sparse pulses. In `LiveCard`, the card keeps a visible `Latest` line for assistant output and a separate `Activity` line for ephemeral internal work. The card does not show the internal Codex turn ID, and a retry or internal restart keeps editing the same card in place.
 
 Expected content:
 

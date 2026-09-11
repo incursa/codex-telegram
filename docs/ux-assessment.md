@@ -22,6 +22,7 @@ This is an initial, evidence-labeled assessment of the operator experience. It r
 | Private chat is simpler than a group root; forum topics add trust, privacy, and permission requirements. | `automated` routing/authorization tests and docs inspection; live Telegram scope remains open. | Silent group behavior is easy to misread as a Codex failure. |
 | Guided setup can apply the app-owned command list and menu button through the Bot API once, but there is no background synchronization; profile/privacy/group settings still need BotFather/manual handling. | `automated` source inspection. | The operator needs visible per-operation outcomes and a slash-command fallback. |
 | Codex authentication belongs to the local Codex installation, not this app. | `automated` source/config boundary inspection. | Two instances must not accidentally share credentials or state. |
+| `Balanced` presentation separates durable lifecycle/tool milestones from routine progress pulses, while `PlainText` remains the compatibility default and `SafeMarkdownV2` is opt-in. | `automated` source inspection and `synthetic` formatter/relay test coverage; no Telegram-live rendering. | Operators get a lower-noise middle mode and an explicit formatting choice without silently changing legacy text. |
 | Build, test, fuzz, and mutation results are not equivalent to live Telegram proof. | `automated` test and release-script inspection. | Release notes must name the evidence type and any skipped live checks. |
 
 ## Finding Register
@@ -48,6 +49,8 @@ The current documentation slice delivers:
 7. Private-chat, trusted-group-root, and forum-topic requirements with `/send` and topic commands as operational fallbacks.
 8. Codex authentication isolation guidance that keeps credentials out of app state and repositories.
 9. Honest verification language distinguishing automated, synthetic, local-live, and Telegram-live evidence.
+10. `Balanced` output guidance for milestone durability, routine still-working pulses, aliases, and runtime reset behavior.
+11. Independent `TelegramOutput:TextFormat` guidance for `PlainText`, constrained `SafeMarkdownV2`, escaping, unsupported transports, and unsafe chunk-boundary fallback.
 
 ## Synthetic Before/After Examples
 
@@ -68,9 +71,36 @@ Next: review the workspace mode and repository boundary, then run /doctor in the
 
 The after text reports what the wizard observed. It does not imply that a normal Codex turn or a group workflow has been tested.
 
+### Example: output presentation and formatting
+
+Proposed before (default compatibility path):
+
+```text
+PresentationMode=Compact
+TextFormat=PlainText
+Every routine update is either durable or omitted from the operator's immediate view.
+```
+
+Proposed after (explicit middle mode):
+
+```text
+PresentationMode=Balanced
+TextFormat=SafeMarkdownV2
+Milestones and final output are durable; routine work uses sparse "Still working" pulses.
+```
+
+Observed synthetic before/after (formatter test double, not Telegram-live):
+
+```text
+Before input under PlainText: **bold** [docs](https://example.test)
+After output under SafeMarkdownV2: *bold* [docs](https://example.test)
+```
+
+The observed result is local formatter behavior only. It does not establish that Telegram rendered or received the message. A malformed link, unsupported markup, unsupported transport, or unsafe formatted chunk boundary is expected to remain literal or fall back to plain-text chunks.
+
 ## Verification in this pass
 
-Observed locally (`automated`): `dotnet build CodexTelegram.slnx -c Release -m:1 --no-restore` succeeded with zero warnings/errors; `dotnet test ... -c Release --no-build --no-restore -m:1` passed 504 tests; the repository fuzz corpus passed 5 tests; `dotnet format --verify-no-changes` passed; the package vulnerability query found no vulnerable packages; and the tracked-file secret scan passed. A win-x64 publish was inspected and contained `Assets/codex-telegram-logo.png`. `Telegram-live`, phone, BotFather, and real Codex authentication checks were not run.
+Observed locally (`automated`): `dotnet build CodexTelegram.slnx -c Release -m:1 --no-restore` succeeded with zero warnings/errors; `dotnet test CodexTelegram.slnx -c Release --no-restore -m:1` passed 515 tests; the repository fuzz corpus passed 5 tests; `dotnet format --verify-no-changes` passed; the package vulnerability query found no vulnerable packages; and the tracked-file secret scan passed. A win-x64 publish was inspected and contained `Assets/codex-telegram-logo.png`. `Telegram-live`, phone, BotFather, and real Codex authentication checks were not run.
 
 ### Example: group troubleshooting
 
@@ -158,3 +188,14 @@ Acceptance criteria:
 - Trusted group-root checks pass for an allowlisted user and chat under the intended privacy mode.
 - Forum-topic creation/attachment checks pass only in a forum-enabled supergroup with required permissions.
 - The release record labels each result `Telegram-live` and names skipped scopes explicitly.
+
+### Title: Validate Balanced presentation and safe text formatting
+
+Description: As a mobile operator, I want a concise milestone view and predictable text formatting so that I can follow important work without losing final output or relying on Telegram-specific markup quirks.
+
+Acceptance criteria:
+
+- A synthetic relay check proves routine events produce sparse pulses while lifecycle/tool milestones, approvals, errors, artifacts, and final output remain durable.
+- A synthetic formatter check proves `PlainText` preserves legacy literal text and `SafeMarkdownV2` handles only the documented headings, emphasis, links, lists, and code subset.
+- Malformed/unsupported markup, unsafe links, unsupported formatted transports, and unsafe chunk boundaries are observed as literal text or plain-text fallback rather than a delivery error.
+- A private-chat run is performed and recorded separately as `Telegram-live`; no local automated or synthetic result is labeled as live evidence.

@@ -97,11 +97,23 @@ internal sealed class OutboundTelegramDeliveryHostedService : BackgroundService
                 }
                 else
                 {
-                    await _sender.SendTextMessageAsync(
-                        delivery.Conversation,
-                        delivery.Text ?? string.Empty,
-                        sendCancellation.Token,
-                        delivery.DebugContext).ConfigureAwait(false);
+                    if (_sender is IFormattedOutboundTelegramMessageSender formattedSender)
+                    {
+                        await formattedSender.SendTextMessageAsync(
+                            delivery.Conversation,
+                            delivery.Text ?? string.Empty,
+                            delivery.TextFormat,
+                            sendCancellation.Token,
+                            delivery.DebugContext).ConfigureAwait(false);
+                    }
+                    else
+                    {
+                        await _sender.SendTextMessageAsync(
+                            delivery.Conversation,
+                            delivery.Text ?? string.Empty,
+                            sendCancellation.Token,
+                            delivery.DebugContext).ConfigureAwait(false);
+                    }
                 }
 
                 delivery.Complete();

@@ -248,6 +248,8 @@ Syntax:
 /output mode compact
 /output mode verbose
 /output mode live
+/output mode balanced
+/output mode milestones
 /output mode final
 /output mode reset
 ```
@@ -258,9 +260,13 @@ Expected behavior:
 2. `compact` sends final output durably and publishes sparse still-working pulses while active work is otherwise quiet.
 3. `verbose` sends progress and update events as durable Telegram messages according to the normal filters.
 4. `live` uses an editable live turn card for progress/update events while final output remains durable Telegram history.
-5. `final` suppresses normal progress/update chatter and sends final output, errors, approval requests, and artifacts.
-6. `reset` clears the runtime override and returns to `TelegramOutput:PresentationMode`.
-7. The same choices are available from the `Output Mode` button on session cards.
+5. `balanced` publishes concise lifecycle/tool milestones and sparse still-working pulses for routine progress while final output remains durable.
+6. `milestones` and `milestone` are aliases for `balanced`.
+7. `final` suppresses normal progress/update chatter and sends final output, errors, approval requests, and artifacts.
+8. `reset` clears the runtime override and returns to `TelegramOutput:PresentationMode`.
+9. The same choices are available from the `Output Mode` button on session cards.
+
+`TelegramOutput:PresentationMode` is independent from `TelegramOutput:TextFormat`. The latter defaults to `PlainText`; set it to `SafeMarkdownV2` for the constrained formatter described in [usage.md](usage.md). A runtime `/output mode` override does not change text format.
 
 ### `/turn`
 

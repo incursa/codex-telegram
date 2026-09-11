@@ -1,6 +1,18 @@
 namespace Incursa.Codex.Telegram.Options;
 
 /// <summary>
+/// Text representation used for Telegram text sends and edits.
+/// </summary>
+public enum TelegramTextFormat
+{
+    /// <summary>Send text literally with Telegram's legacy plain-text behavior.</summary>
+    PlainText,
+
+    /// <summary>Use the constrained MarkdownV2 formatter for safe emphasis, links, and code blocks.</summary>
+    SafeMarkdownV2,
+}
+
+/// <summary>
 /// Controls how Codex turn output is presented in Telegram.
 /// </summary>
 public enum TelegramOutputPresentationMode
@@ -24,6 +36,11 @@ public enum TelegramOutputPresentationMode
     /// Suppress normal progress and update chatter, sending only high-priority durable events.
     /// </summary>
     FinalOnly,
+
+    /// <summary>
+    /// Publish concise internal milestones, final/high-priority output, and sparse "still working" pulses for ordinary updates.
+    /// </summary>
+    Balanced,
 }
 
 /// <summary>
@@ -31,6 +48,12 @@ public enum TelegramOutputPresentationMode
 /// </summary>
 public sealed class TelegramOutputOptions
 {
+    /// <summary>
+    /// Gets or sets the text representation used for outbound text. PlainText
+    /// preserves the pre-formatting behavior and is the default.
+    /// </summary>
+    public TelegramTextFormat TextFormat { get; set; } = TelegramTextFormat.PlainText;
+
     /// <summary>
     /// Gets or sets the configured presentation mode for Codex turn output.
     /// </summary>
