@@ -85,8 +85,14 @@ if (-not $VerifyOnly -and @($config.dependencies.aptPackages).Count -gt 0) {
 $globalJson = Get-Content (Join-Path $repoRoot $config.dependencies.dotnet.globalJson) -Raw | ConvertFrom-Json
 $sdkVersion = [string]$globalJson.sdk.version
 $installedSdks = @()
-if (Get-Command dotnet -ErrorAction SilentlyContinue) {
-    $installedSdks = @(& dotnet --list-sdks 2>$null | ForEach-Object { ($_ -split '\s+')[0] })
+$dotnetCommand = if (Test-Path -LiteralPath '/usr/local/bin/dotnet' -PathType Leaf) {
+    '/usr/local/bin/dotnet'
+} else {
+    $command = Get-Command dotnet -CommandType Application -ErrorAction SilentlyContinue
+    if ($null -ne $command) { $command.Source } else { $null }
+}
+if (-not [string]::IsNullOrWhiteSpace($dotnetCommand)) {
+    $installedSdks = @(& $dotnetCommand --list-sdks 2>$null | ForEach-Object { ($_ -split '\s+')[0] })
 }
 if ($installedSdks -notcontains $sdkVersion) {
     if ($VerifyOnly) { throw ".NET SDK $sdkVersion is not installed." }
@@ -96,6 +102,7 @@ if ($installedSdks -notcontains $sdkVersion) {
         Invoke-Root mkdir @('-p', '/usr/local/share/dotnet')
         Invoke-Root bash @($installer, '--version', $sdkVersion, '--install-dir', '/usr/local/share/dotnet', '--no-path')
         Invoke-Root ln @('-sfn', '/usr/local/share/dotnet/dotnet', '/usr/local/bin/dotnet')
+        $dotnetCommand = '/usr/local/bin/dotnet'
     } finally { Remove-Item $installer -Force -ErrorAction SilentlyContinue }
 }
 
@@ -115,7 +122,8 @@ foreach ($command in @($config.dependencies.requiredCommands)) {
     if (-not (Get-Command ([string]$command) -ErrorAction SilentlyContinue)) { throw "Required command '$command' is unavailable." }
 }
 
-Write-Host "Worker toolchain ready for $($config.name): .NET $(& dotnet --version), Codex installed." -ForegroundColor Green
+if ([string]::IsNullOrWhiteSpace($dotnetCommand)) { throw 'The .NET SDK was ensured, but no dotnet executable is available.' }
+Write-Host "Worker toolchain ready for $($config.name): .NET $(& $dotnetCommand --version), Codex installed." -ForegroundColor Green
 if (-not $VerifyOnly) {
     foreach ($command in @($config.commands.bootstrap)) { Invoke-AsWorker ([string]$command.file) @($command.args) $repoRoot }
     if ($RunTests) { foreach ($command in @($config.commands.test)) { Invoke-AsWorker ([string]$command.file) @($command.args) $repoRoot } }
