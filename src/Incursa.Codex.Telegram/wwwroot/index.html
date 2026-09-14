@@ -8,7 +8,7 @@
   <link rel="stylesheet" href="/vendor/incursa-ui-kit/dist/inc-design-language.css">
   <link rel="stylesheet" href="/vendor/incursa-ui-kit/dist/web-components/style.css">
   <link rel="stylesheet" href="/app.css">
-  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <script src="https://telegram.org/js/telegram-web-app.js?63"></script>
   <script type="module" src="/vendor/incursa-ui-kit/dist/web-components/index.js"></script>
 </head>
 <body>
@@ -20,6 +20,8 @@
       </a>
       <div class="navbar-actions">
         <inc-badge id="connection-badge" variant="neutral">Connecting</inc-badge>
+        <inc-badge id="viewport-badge" variant="info" hidden>Webview</inc-badge>
+        <button id="fullscreen-button" class="secondary-button" type="button" hidden>Fullscreen</button>
         <button id="refresh-button" class="icon-button" type="button" aria-label="Refresh dashboard" title="Refresh dashboard">↻</button>
       </div>
     </inc-navbar>

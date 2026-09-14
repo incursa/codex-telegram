@@ -70,6 +70,8 @@ If the published executable is already running from the output directory, Window
 
 `-StopRunningProcess` only targets a process whose executable path exactly matches the publish output binary.
 
+The Mini App is a static, read-only frontend under `src/Incursa.Codex.Telegram/wwwroot`. When changing its layout or Telegram WebApp integration, validate the actual served page at compact, full-height, and fullscreen viewport sizes. Check horizontal overflow, dynamic safe-area padding, the viewport badge, the fullscreen control, and activation/reopen refresh behavior with a real browser harness when available; a successful .NET publish does not establish frontend behavior.
+
 ## Release-Readiness Gate
 
 Run this before release validation, release tags, and pushes that affect runtime behavior:

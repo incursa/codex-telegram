@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 1.0.25 - 2026-09-14
+
+- Made the read-only Mini App responsive across compact, full-height, and true fullscreen Telegram webviews.
+- Added Telegram viewport, safe-area, fullscreen, activation, and deactivation handling so resizing, minimizing, and reopening refresh the surface safely.
+- Added a user-initiated fullscreen control and clear live viewport-mode status without changing Telegram authorization semantics.
+
 ## 1.0.24 - 2026-09-14
 
 - Fixed Linux Mini App release packaging by publishing `codex-telegram-linux-x64-webroot.tar.gz` from the same published tree as the Linux binary.

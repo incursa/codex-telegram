@@ -1,7 +1,9 @@
 (() => {
   const telegram = window.Telegram?.WebApp;
   const state = { data: null, preview: false };
+  let loadController = null;
   const byId = (id) => document.getElementById(id);
+  const root = document.documentElement;
 
   const previewData = {
     user: { id: 0, firstName: "Preview", username: "local" },
@@ -16,16 +18,109 @@
     usage: null
   };
 
-  function setTelegramTheme() {
+  function applyTelegramTheme() {
     if (!telegram) return;
-    telegram.ready();
-    telegram.expand();
     const colors = telegram.themeParams || {};
     if (colors.bg_color) document.documentElement.style.setProperty("--inc-app-bg", colors.bg_color);
     if (colors.text_color) document.documentElement.style.setProperty("--inc-ink", colors.text_color);
     if (colors.hint_color) document.documentElement.style.setProperty("--inc-muted", colors.hint_color);
     if (colors.button_color) document.documentElement.style.setProperty("--inc-primary", colors.button_color);
-    telegram.onEvent?.("themeChanged", setTelegramTheme);
+    if (colors.secondary_bg_color) document.documentElement.style.setProperty("--inc-surface", colors.secondary_bg_color);
+  }
+
+  function setTelegramInset(name, value) {
+    if (Number.isFinite(Number(value)) && Number(value) >= 0) {
+      root.style.setProperty(name, `${Number(value)}px`);
+    }
+  }
+
+  function syncViewport() {
+    if (!telegram) {
+      root.dataset.telegramDisplayMode = "browser";
+      byId("viewport-badge").hidden = true;
+      byId("fullscreen-button").hidden = true;
+      return;
+    }
+
+    const viewportHeight = Number(telegram.viewportHeight);
+    const stableHeight = Number(telegram.viewportStableHeight);
+    if (Number.isFinite(viewportHeight) && viewportHeight > 0) {
+      root.style.setProperty("--app-viewport-height", `${viewportHeight}px`);
+    }
+    if (Number.isFinite(stableHeight) && stableHeight > 0) {
+      root.style.setProperty("--app-viewport-stable-height", `${stableHeight}px`);
+    }
+
+    const safeArea = telegram.safeAreaInset || {};
+    const contentSafeArea = telegram.contentSafeAreaInset || {};
+    setTelegramInset("--app-safe-top", safeArea.top);
+    setTelegramInset("--app-safe-right", safeArea.right);
+    setTelegramInset("--app-safe-bottom", safeArea.bottom);
+    setTelegramInset("--app-safe-left", safeArea.left);
+    setTelegramInset("--app-content-safe-top", contentSafeArea.top);
+    setTelegramInset("--app-content-safe-right", contentSafeArea.right);
+    setTelegramInset("--app-content-safe-bottom", contentSafeArea.bottom);
+    setTelegramInset("--app-content-safe-left", contentSafeArea.left);
+
+    const mode = telegram.isFullscreen === true
+      ? "Full screen"
+      : telegram.isExpanded === false
+        ? "Compact"
+        : "Full height";
+    root.dataset.telegramDisplayMode = mode.toLowerCase().replace(" ", "-");
+    const viewportBadge = byId("viewport-badge");
+    viewportBadge.hidden = false;
+    viewportBadge.textContent = mode;
+    viewportBadge.setAttribute("variant", mode === "Compact" ? "warning" : mode === "Full screen" ? "success" : "info");
+
+    const fullscreenButton = byId("fullscreen-button");
+    const supportsFullscreen = telegram.isFullscreen === true
+      ? typeof telegram.exitFullscreen === "function"
+      : typeof telegram.requestFullscreen === "function";
+    fullscreenButton.hidden = !supportsFullscreen;
+    fullscreenButton.textContent = telegram.isFullscreen === true ? "Exit fullscreen" : "Fullscreen";
+    fullscreenButton.setAttribute("aria-label", fullscreenButton.textContent);
+    fullscreenButton.title = fullscreenButton.textContent;
+  }
+
+  function requestMaximumHeight() {
+    if (!telegram || typeof telegram.expand !== "function" || telegram.isExpanded === true) return;
+    try {
+      telegram.expand();
+    } catch (error) {
+      showNotice(`Telegram could not expand this Mini App: ${error.message || "unsupported operation"}.`, true);
+    }
+  }
+
+  function initializeTelegram() {
+    if (!telegram) {
+      root.dataset.telegramDisplayMode = "browser";
+      syncViewport();
+      return;
+    }
+
+    if (typeof telegram.ready === "function") telegram.ready();
+    applyTelegramTheme();
+    syncViewport();
+    requestMaximumHeight();
+    syncViewport();
+
+    if (typeof telegram.onEvent === "function") {
+      telegram.onEvent("themeChanged", applyTelegramTheme);
+      telegram.onEvent("viewportChanged", syncViewport);
+      telegram.onEvent("safeAreaChanged", syncViewport);
+      telegram.onEvent("contentSafeAreaChanged", syncViewport);
+      telegram.onEvent("fullscreenChanged", syncViewport);
+      telegram.onEvent("fullscreenFailed", (event) => {
+        syncViewport();
+        showNotice(`Telegram could not enter fullscreen mode${event?.error ? ` (${event.error})` : ""}.`, true);
+      });
+      telegram.onEvent("activated", () => {
+        syncViewport();
+        load();
+      });
+      telegram.onEvent("deactivated", syncViewport);
+    }
   }
 
   function showNotice(message, error = false) {
@@ -172,28 +267,48 @@
   }
 
   async function load() {
+    loadController?.abort();
+    loadController = new AbortController();
+    const { signal } = loadController;
     setBadge("Connecting", "neutral");
     showNotice("");
     try {
       const headers = {};
       if (telegram?.initData) headers["X-Telegram-Init-Data"] = telegram.initData;
-      const response = await fetch("/api/mini-app/bootstrap", { headers, credentials: "same-origin" });
-      if (response.status === 401) throw new Error("Open this surface from the Telegram bot menu to connect your account.");
+      const response = await fetch("/api/mini-app/bootstrap", { headers, credentials: "same-origin", signal });
+      if (signal.aborted) return;
+      if (response.status === 401) throw new Error("Open this Mini App from Telegram to connect your account.");
       if (!response.ok) throw new Error(`Mini App is not enabled on this host (${response.status}).`);
       state.preview = false;
       setBadge("Live", "success");
       render(await response.json());
     } catch (error) {
+      if (signal.aborted) return;
       state.preview = true;
       setBadge("Preview", "warning");
       render(previewData);
-      showNotice(`${error.message} This screen is showing clearly marked local preview data.`);
+      showNotice(`${error.message || "The Mini App could not load live data."} This screen is showing clearly marked local preview data.`, true);
     }
   }
 
+  byId("fullscreen-button").addEventListener("click", () => {
+    if (!telegram) return;
+    try {
+      if (telegram.isFullscreen === true && typeof telegram.exitFullscreen === "function") {
+        telegram.exitFullscreen();
+      } else if (typeof telegram.requestFullscreen === "function") {
+        telegram.requestFullscreen();
+      } else {
+        showNotice("Fullscreen mode is not supported by this Telegram client.", true);
+      }
+    } catch (error) {
+      showNotice(`Fullscreen mode could not be changed: ${error.message || "unsupported operation"}.`, true);
+    }
+  });
   byId("refresh-button").addEventListener("click", load);
   byId("close-detail-button").addEventListener("click", () => { byId("detail-card").hidden = true; });
   byId("open-chat-button").addEventListener("click", () => { if (telegram) telegram.close(); else showNotice("Return to the Telegram chat to send prompts and change context."); });
-  setTelegramTheme();
+  window.addEventListener("resize", syncViewport);
+  initializeTelegram();
   load();
 })();

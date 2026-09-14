@@ -61,6 +61,8 @@ Never publish the local listener directly, and do not enable the feature without
 
 Mini App requests must include Telegram's signed initialization data. The host rejects missing, stale, tampered, or non-allowlisted identities. Treat the public URL and all displayed session/workspace data as private operator data.
 
+Telegram's profile Main Mini App and bot menu button are different launch contracts and may use different initial webview presentation. The shipped dashboard is responsive for compact, full-height, and true fullscreen modes. It reports the current mode in the `Webview` badge, responds to viewport and safe-area changes, and reloads after Telegram activates the app again. Keep the static webroot installed beside the binary; this runtime behavior does not require creating directories or writing under the protected installation path.
+
 ## Stop
 
 In an interactive terminal, press Ctrl+C.

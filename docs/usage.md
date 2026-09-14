@@ -13,6 +13,8 @@ For Telegram buttons and menus, use [menus.md](menus.md).
 
 When enabled by the operator, open the bot's Telegram menu button to view a mobile-friendly, Incursa UI Kit dashboard of the current runtime, active session, recent sessions, saved projects, and account usage. The preview is read-only; continue using this chat for prompts and session/project changes. If the surface says `Preview`, it is not connected to a Telegram identity or live Codex data.
 
+Telegram may open the profile Main Mini App and the chat menu Mini App with different initial presentation. The dashboard supports compact, full-height, and true fullscreen webviews. In compact mode it requests the maximum available height when the client allows that transition; use the `Fullscreen` button for a user-initiated true fullscreen transition when available. The `Webview` badge reflects the current client state, and returning to the app after minimizing or closing refreshes the dashboard data.
+
 ## Normal Start
 
 1. Start the bot from its app folder, or use the full executable path; settings resolve beside the executable by default. If that file is missing and the launch directory has `appsettings.Local.json`, the app uses the launch-directory file.

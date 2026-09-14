@@ -68,6 +68,8 @@ To try it locally, add the following to `appsettings.Local.json` or user secrets
 
 Telegram requires the Mini App URL to be HTTPS and reachable from the Telegram client. For a real Telegram test, put the local listener behind an operator-controlled HTTPS reverse proxy or Cloudflare Tunnel, then configure that URL as the bot's menu button through BotFather. A temporary Cloudflare test can use `cloudflared tunnel --url http://127.0.0.1:5287`; use a named tunnel and stable hostname for ongoing operation. Keep `TelegramBot:AllowedUserIds` populated; the Mini App validates Telegram's signed initialization data and applies the same user allowlist. `PublicUrl` is recorded for operator setup and is not a credential.
 
+Telegram can present the same Mini App in different webview modes depending on how it was launched. The bot profile's Main Mini App and the chat menu button are separate Telegram launch paths, so one may appear full-height while another initially appears compact. The dashboard handles compact, full-height, and true fullscreen presentation: it expands to the maximum available height when Telegram permits it, respects dynamic and content safe areas, and exposes a `Fullscreen` action when the Telegram client supports true fullscreen. The `Webview` badge shows the current presentation (`Compact`, `Full height`, or `Full screen`).
+
 The first spike is intentionally read-only. Use the Telegram chat for creating sessions, changing projects, sending prompts, steering turns, and approvals. Do not expose the listener beyond the intended HTTPS proxy or tunnel.
 
 ## Before You Start
