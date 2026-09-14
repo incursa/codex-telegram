@@ -1,0 +1,6 @@
+/*
+ * Convenience stylesheet entrypoint for the optional Web Components layer.
+ * This aliases the shared compiled UI kit stylesheet so consumers can pair
+ * one package-local CSS import with the custom-elements runtime.
+ */
+@import "../inc-design-language.css";

@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#f7f8fb">
+  <title>Codex Telegram</title>
+  <link rel="stylesheet" href="/vendor/incursa-ui-kit/dist/inc-design-language.css">
+  <link rel="stylesheet" href="/vendor/incursa-ui-kit/dist/web-components/style.css">
+  <link rel="stylesheet" href="/app.css">
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <script type="module" src="/vendor/incursa-ui-kit/dist/web-components/index.js"></script>
+</head>
+<body>
+  <inc-app-shell>
+    <inc-navbar class="app-navbar">
+      <a class="brand" href="/" aria-label="Codex Telegram home">
+        <span class="brand-mark">C</span>
+        <span>Codex Telegram</span>
+      </a>
+      <div class="navbar-actions">
+        <inc-badge id="connection-badge" variant="neutral">Connecting</inc-badge>
+        <button id="refresh-button" class="icon-button" type="button" aria-label="Refresh dashboard" title="Refresh dashboard">↻</button>
+      </div>
+    </inc-navbar>
+
+    <inc-page>
+      <inc-page-header>
+        <div class="page-heading">
+          <div>
+            <p class="eyebrow">Mini App preview</p>
+            <h1>Your Codex control room</h1>
+            <p class="page-summary">Keep the conversation in Telegram. Use this surface to switch context and see what is happening.</p>
+          </div>
+          <button id="open-chat-button" class="secondary-button" type="button">Return to chat</button>
+        </div>
+      </inc-page-header>
+
+      <div id="notice" class="notice" role="status" hidden></div>
+
+      <section class="summary-grid" aria-label="Codex overview">
+        <inc-card class="summary-card">
+          <span class="summary-label">Runtime</span>
+          <strong id="runtime-value" class="summary-value">—</strong>
+          <span id="runtime-detail" class="summary-detail">Waiting for Codex</span>
+        </inc-card>
+        <inc-card class="summary-card">
+          <span class="summary-label">Active session</span>
+          <strong id="session-value" class="summary-value">—</strong>
+          <span id="session-detail" class="summary-detail">No session selected</span>
+        </inc-card>
+        <inc-card class="summary-card">
+          <span class="summary-label">Projects</span>
+          <strong id="project-value" class="summary-value">—</strong>
+          <span class="summary-detail">Known working directories</span>
+        </inc-card>
+        <inc-card class="summary-card">
+          <span class="summary-label">Usage</span>
+          <strong id="usage-value" class="summary-value">—</strong>
+          <span id="usage-detail" class="summary-detail">Account window</span>
+        </inc-card>
+      </section>
+
+      <div class="dashboard-grid">
+        <inc-card class="dashboard-card sessions-card">
+          <div class="card-heading">
+            <div>
+              <h2>Recent sessions</h2>
+              <p>Threads available to your allowlisted Telegram account.</p>
+            </div>
+            <inc-badge variant="info">Read only</inc-badge>
+          </div>
+          <div id="sessions-list" class="session-list" aria-live="polite">
+            <div class="loading-row">Loading sessions…</div>
+          </div>
+        </inc-card>
+
+        <inc-card class="dashboard-card workspace-card">
+          <div class="card-heading">
+            <div>
+              <h2>Workspace</h2>
+              <p>Your saved project context and current routing.</p>
+            </div>
+          </div>
+          <div id="workspace-list" class="workspace-list" aria-live="polite">
+            <div class="loading-row">Loading workspace…</div>
+          </div>
+        </inc-card>
+      </div>
+
+      <inc-card id="detail-card" class="detail-card" hidden>
+        <div class="card-heading">
+          <div>
+            <h2 id="detail-title">Session details</h2>
+            <p id="detail-subtitle"></p>
+          </div>
+          <button id="close-detail-button" class="secondary-button" type="button">Close</button>
+        </div>
+        <pre id="detail-body" class="detail-body"></pre>
+      </inc-card>
+
+      <footer class="app-footer">
+        <span>Incursa Codex Telegram</span>
+        <span>Private, local companion surface</span>
+      </footer>
+    </inc-page>
+  </inc-app-shell>
+  <script src="/app.js"></script>
+</body>
+</html>

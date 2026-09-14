@@ -49,6 +49,27 @@ It does not:
 4. Bundle optional audio tools such as `ffmpeg`.
 5. Remove the need for a local machine where the bot will run.
 
+## Optional Telegram Mini App Preview
+
+The host includes a disabled-by-default, read-only Mini App companion surface. It is intended for at-a-glance runtime, session, usage, and saved-project information while prompts and control actions remain in the Telegram chat.
+
+To try it locally, add the following to `appsettings.Local.json` or user secrets:
+
+```json
+{
+  "TelegramMiniApp": {
+    "Enabled": true,
+    "ListenUrl": "http://127.0.0.1:5287",
+    "PublicUrl": "https://your-https-host.example/",
+    "InitDataMaxAgeSeconds": 900
+  }
+}
+```
+
+Telegram requires the Mini App URL to be HTTPS and reachable from the Telegram client. For a real Telegram test, put the local listener behind an operator-controlled HTTPS reverse proxy or Cloudflare Tunnel, then configure that URL as the bot's menu button through BotFather. A temporary Cloudflare test can use `cloudflared tunnel --url http://127.0.0.1:5287`; use a named tunnel and stable hostname for ongoing operation. Keep `TelegramBot:AllowedUserIds` populated; the Mini App validates Telegram's signed initialization data and applies the same user allowlist. `PublicUrl` is recorded for operator setup and is not a credential.
+
+The first spike is intentionally read-only. Use the Telegram chat for creating sessions, changing projects, sending prompts, steering turns, and approvals. Do not expose the listener beyond the intended HTTPS proxy or tunnel.
+
 ## Before You Start
 
 Have these ready before you touch the config:

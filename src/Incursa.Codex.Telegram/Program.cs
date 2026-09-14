@@ -1,9 +1,12 @@
 using System.Globalization;
 using Incursa.Codex.Telegram.Configuration;
+using Incursa.Codex.Telegram.MiniApp;
 using Incursa.Codex.Telegram.Options;
 using Incursa.Codex.Telegram.Services;
 using Incursa.Codex.Telegram.Telegram;
 using Incursa.OpenAI.Codex;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -66,12 +69,17 @@ if (ShouldRunInteractiveMenu(commandLine))
     }
 }
 
-HostApplicationBuilder builder = Host.CreateApplicationBuilder(commandLine.ConfigurationArgs);
+WebApplicationBuilder builder = WebApplication.CreateBuilder(new WebApplicationOptions
+{
+    Args = commandLine.ConfigurationArgs,
+    WebRootPath = Path.Combine(AppContext.BaseDirectory, "wwwroot"),
+});
 builder.Logging.ClearProviders();
 builder.Configuration.AddJsonFile(localSettingsPath, optional: true, reloadOnChange: true);
 builder.Configuration.AddUserSecrets<Program>(optional: true);
 builder.Configuration.AddEnvironmentVariables(prefix: "CODEX_TELEGRAM_");
 builder.Configuration.AddCommandLine(commandLine.ConfigurationArgs);
+builder.WebHost.UseUrls(builder.Configuration["TelegramMiniApp:ListenUrl"] ?? "http://127.0.0.1:5287");
 
 builder.Services.Configure<HostOptions>(options =>
 {
@@ -97,6 +105,8 @@ builder.Services.AddOptions<TelegramOutputOptions>()
     .Bind(builder.Configuration.GetSection("TelegramOutput"));
 builder.Services.AddOptions<OpenAiSpeechToTextOptions>()
     .Bind(builder.Configuration.GetSection("OpenAI"));
+builder.Services.AddOptions<TelegramMiniAppOptions>()
+    .Bind(builder.Configuration.GetSection("TelegramMiniApp"));
 
 builder.Services.PostConfigure<CodexClientOptions>(options =>
 {
@@ -315,6 +325,12 @@ builder.Services.PostConfigure<OpenAiSpeechToTextOptions>(options =>
     options.FfmpegPath = DefaultIfWhiteSpace(options.FfmpegPath, OpenAiSpeechToTextDefaults.FfmpegPath);
 });
 
+builder.Services.PostConfigure<TelegramMiniAppOptions>(options =>
+{
+    options.ListenUrl = DefaultIfWhiteSpace(options.ListenUrl, "http://127.0.0.1:5287")!;
+    options.InitDataMaxAgeSeconds = Math.Clamp(options.InitDataMaxAgeSeconds, 60, 86_400);
+});
+
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton<ICodexRealtimeBroadcaster, NullCodexRealtimeBroadcaster>();
 builder.Services.AddSingleton<CodexThreadManifestStore>();
@@ -348,6 +364,7 @@ builder.Services.AddSingleton<CodexSessionRuntimeRegistry>();
 builder.Services.AddSingleton<ICodexTurnExecutionCoordinator>(sp => sp.GetRequiredService<CodexSessionRuntimeRegistry>());
 builder.Services.AddSingleton<ICodexGateway, CodexGateway>();
 builder.Services.AddSingleton<ICodexAccountUsageService, CodexAccountUsageService>();
+builder.Services.AddSingleton<TelegramMiniAppAuth>();
 builder.Services.AddSingleton<TelegramCommandParser>();
 builder.Services.AddSingleton<TelegramMessageChunker>();
 builder.Services.AddSingleton<ITelegramBotStateStore, TelegramBotStateStore>();
@@ -363,11 +380,11 @@ builder.Services.AddHostedService<TelegramTypingHeartbeatHostedService>();
 builder.Services.AddHostedService<OutboundTelegramDeliveryHostedService>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<CodexSessionRuntimeRegistry>());
 
-IHost host;
+WebApplication app;
 try
 {
-    host = builder.Build();
-    _ = host.Services.GetRequiredService<IOptions<CodexTelegramOptions>>().Value;
+    app = builder.Build();
+    _ = app.Services.GetRequiredService<IOptions<CodexTelegramOptions>>().Value;
 }
 catch (OptionsValidationException exception)
 {
@@ -384,9 +401,14 @@ catch (InvalidOperationException exception)
     Environment.ExitCode = 2;
     return;
 }
-await RehydrateTelegramThreadFollowsAsync(host.Services, CancellationToken.None);
-await ReattachPersistedCodexTurnsAsync(host.Services, CancellationToken.None);
-await host.RunAsync();
+
+app.UseDefaultFiles();
+app.UseStaticFiles();
+TelegramMiniAppEndpoints.Map(app);
+
+await RehydrateTelegramThreadFollowsAsync(app.Services, CancellationToken.None);
+await ReattachPersistedCodexTurnsAsync(app.Services, CancellationToken.None);
+await app.RunAsync();
 
 static string? DefaultIfWhiteSpace(string? value, string? fallback)
     => string.IsNullOrWhiteSpace(value) ? fallback : value;

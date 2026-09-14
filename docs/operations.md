@@ -32,6 +32,22 @@ dotnet run --project src\Incursa.Codex.Telegram -- --run
 
 Without `--run`, an interactive terminal opens the bootstrap/admin menu.
 
+## Mini App Companion Surface
+
+The optional Mini App host listens on `http://127.0.0.1:5287` by default. The static preview is available locally, while its live API is disabled for Telegram use until `TelegramMiniApp:Enabled` is set to `true`. It is a read-only dashboard for recent sessions, runtime state, usage, and saved projects; message and Codex control actions remain in Telegram.
+
+For a Telegram test, set `TelegramMiniApp:ListenUrl` to the local listener and place it behind an HTTPS Cloudflare Tunnel. With the bot running, a temporary test tunnel is:
+
+```bash
+cloudflared tunnel --url http://127.0.0.1:5287
+```
+
+Put the resulting HTTPS URL in `TelegramMiniApp:PublicUrl`, configure the same URL as the bot menu button through BotFather, and keep the tunnel running while testing. Use a named Cloudflare Tunnel and stable hostname for ongoing operation. `PublicUrl` is operator documentation/configuration; the application does not create the Cloudflare route or BotFather menu button automatically. If `cloudflared` runs in a separate container, route it to the bot container and bind `ListenUrl` to an address reachable from that container rather than `127.0.0.1`.
+
+Never publish the local listener directly, and do not enable the feature without a populated `TelegramBot:AllowedUserIds` allowlist.
+
+Mini App requests must include Telegram's signed initialization data. The host rejects missing, stale, tampered, or non-allowlisted identities. Treat the public URL and all displayed session/workspace data as private operator data.
+
 ## Stop
 
 In an interactive terminal, press Ctrl+C.

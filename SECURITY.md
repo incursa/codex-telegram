@@ -10,6 +10,8 @@ Incursa.Codex.Telegram runs local Codex work on the same machine as the bot proc
 - Set explicit workspace roots and a default working directory before enabling polling. If these are omitted, the app falls back to the process current directory.
 - Store bot tokens and OpenAI API keys in user secrets, environment variables, or another secret store. Do not commit `appsettings.Local.json`.
 - Review Codex sandbox and approval settings before using the bot on sensitive repositories.
+- Keep `TelegramMiniApp` disabled unless you intentionally need the companion surface. If enabled, expose it only through an operator-controlled HTTPS proxy or tunnel, keep `TelegramBot:AllowedUserIds` narrow, and do not treat `TelegramMiniApp:PublicUrl` as a secret.
+- Mini App API requests are authorized from Telegram's signed `initData`; the server validates the HMAC, freshness window, and allowlisted user ID. Client-side `initDataUnsafe` is not used as an authorization source.
 
 ## Voice Notes
 
