@@ -23,6 +23,10 @@ try {
     & (Join-Path $repoRoot "scripts\Test-TrackedSecretScan.ps1")
 
     if (-not $SkipPublish) {
+        if (Test-Path -LiteralPath $publishOutput) {
+            Remove-Item -LiteralPath $publishOutput -Recurse -Force
+        }
+
         & (Join-Path $repoRoot "scripts\Publish.ps1") -Runtime $Runtime -Configuration $Configuration -OutputDirectory $publishOutput
 
         if ($Runtime -eq "linux-x64") {
