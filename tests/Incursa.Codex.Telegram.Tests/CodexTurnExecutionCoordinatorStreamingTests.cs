@@ -582,6 +582,11 @@ public sealed class CodexTurnExecutionCoordinatorStreamingTests
 
         await coordinator.StartAsync(thread, [], new CodexTurnOptions(), CancellationToken.None);
         await script.Finished.Task.WaitAsync(TimeSpan.FromSeconds(1));
+        await WaitForConditionAsync(
+            () => queue.Messages.Any(message => message.Text.Contains("Command finished: echo before", StringComparison.OrdinalIgnoreCase))
+                && queue.Messages.Any(message => message.Text.Contains("Command finished: echo after", StringComparison.OrdinalIgnoreCase))
+                && queue.Messages.Any(message => string.Equals(message.Text, "done", StringComparison.Ordinal)),
+            () => $"Turn output did not drain. Count={queue.Messages.Count}; messages={string.Join(" || ", queue.Messages.Select(message => $"{message.Kind}:{message.Text}"))}");
 
         string[] messages = queue.Messages.Select(message => message.Text).ToArray();
         int beforeIndex = Array.FindIndex(messages, text => text.Contains("Command finished: echo before", StringComparison.OrdinalIgnoreCase));
