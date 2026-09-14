@@ -122,7 +122,8 @@ jobs:
             throw "Published binary not found in $publishDir."
           }
 
-          $assetPath = Join-Path $publishDir ("${{ matrix.asset_name }}{0}" -f $binary.Extension)
+          $assetExtension = if ('${{ matrix.runtime }}' -eq 'win-x64') { '.exe' } else { '' }
+          $assetPath = Join-Path $publishDir ("${{ matrix.asset_name }}$assetExtension")
           Move-Item -LiteralPath $binary.FullName -Destination $assetPath
 
           $checksumPath = "$assetPath.sha256"
