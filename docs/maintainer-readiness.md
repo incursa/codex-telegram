@@ -162,6 +162,14 @@ Use the publish script directly when validating packaging or refreshing a local 
 
 `-StopRunningProcess` is intended for the published executable at the target path. It should not be treated as a general process killer.
 
+For Linux release packaging, run the dedicated release-style check:
+
+```powershell
+.\scripts\Test-LinuxReleasePackaging.ps1
+```
+
+This proves the archive contains the complete published `wwwroot` tree and `wwwroot/index.html`, then starts a clean extracted installation as a non-root user with `ProtectSystem=strict` and verifies `/` plus `/app.js`. The release workflow publishes the exact assets `codex-telegram-linux-x64`, `codex-telegram-linux-x64-webroot.tar.gz`, `codex-telegram-linux-x64.sha256`, and `codex-telegram-linux-x64-LICENSE.txt` from one tag commit.
+
 Before a tag or public release, also run the manual Telegram checklist in `docs/manual-test-plan.md` against the exact commit or published asset being released.
 
 ## Documentation Ownership
@@ -176,13 +184,14 @@ This service is deployed by placing the published binary and local settings on a
 
 Operator checklist:
 
-1. Verify the published asset checksum.
-2. Confirm `codex --version` and an interactive `codex` command work for the same account that runs the bot.
-3. Confirm `appsettings.Local.json` is loaded from the intended directory.
-4. Confirm `CodexTelegram:Workspace:DataRoot` points to the intended durable state folder.
-5. Start with `--run`.
-6. In Telegram, run `/whoami`, `/doctor`, `/project current`, `/status`, `/usage`, `/output mode`, `/outbound`, and `/tail`.
-7. Run a short private-chat prompt before enabling any group or forum workflow.
+1. Verify the published binary checksum.
+2. Download and extract the matching Linux webroot archive when installing Linux; confirm `wwwroot/index.html` exists before starting the service.
+3. Confirm `codex --version` and an interactive `codex` command work for the same account that runs the bot.
+4. Confirm `appsettings.Local.json` is loaded from the intended directory.
+5. Confirm `CodexTelegram:Workspace:DataRoot` points to the intended durable state folder.
+6. Start with `--run`.
+7. In Telegram, run `/whoami`, `/doctor`, `/project current`, `/status`, `/usage`, `/output mode`, `/outbound`, and `/tail`.
+8. Run a short private-chat prompt before enabling any group or forum workflow.
 
 For restarts, stop the process through the terminal or supervisor, start it again from the same working directory, then verify `/project current`, `/status`, and `/tail`.
 

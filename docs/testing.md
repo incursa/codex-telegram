@@ -89,3 +89,15 @@ Proposed after (SafeMarkdownV2): *bold* [docs](https://example.test)
 Observed here means only a local formatter/test-double result. It is not Telegram-live rendering or proof that a real bot received the message. Do not report a live formatting result unless the private-chat manual check was actually run.
 
 The canonical requirement IDs for Codex testability and validation live in [`specs/requirements/codex-telegram/_index.md`](../specs/requirements/codex-telegram/_index.md).
+
+## Linux Release Packaging
+
+Run the Linux-specific packaging test for a release-style proof:
+
+```powershell
+.\scripts\Test-LinuxReleasePackaging.ps1
+```
+
+The test publishes `linux-x64` when no publish directory is supplied, creates `codex-telegram-linux-x64-webroot.tar.gz` from that published `wwwroot`, compares archive files with the complete published static tree, and requires `wwwroot/index.html`. It then creates a clean staging installation without a pre-existing webroot, extracts only the release archive, and starts the actual binary as a non-root systemd service with `ProtectSystem=strict`. The service must serve `/` and `/app.js`, remain active, and leave the extracted webroot unchanged; a missing-directory creation failure is therefore not hidden by a writable install directory.
+
+The test is local/synthetic packaging evidence. It does not prove Telegram authorization, BotFather configuration, or Codex authentication.

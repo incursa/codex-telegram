@@ -73,7 +73,8 @@ Download the latest release binary for your operating system:
 | Platform | Download | Checksum |
 | --- | --- | --- |
 | Windows x64 | [codex-telegram-win-x64.exe](https://github.com/incursa/codex-telegram/releases/latest/download/codex-telegram-win-x64.exe) | [sha256](https://github.com/incursa/codex-telegram/releases/latest/download/codex-telegram-win-x64.exe.sha256) |
-| Linux x64 | [codex-telegram-linux-x64](https://github.com/incursa/codex-telegram/releases/latest/download/codex-telegram-linux-x64) | [sha256](https://github.com/incursa/codex-telegram/releases/latest/download/codex-telegram-linux-x64.sha256) |
+| Linux x64 binary | [codex-telegram-linux-x64](https://github.com/incursa/codex-telegram/releases/latest/download/codex-telegram-linux-x64) | [sha256](https://github.com/incursa/codex-telegram/releases/latest/download/codex-telegram-linux-x64.sha256) |
+| Linux x64 Mini App webroot | [codex-telegram-linux-x64-webroot.tar.gz](https://github.com/incursa/codex-telegram/releases/latest/download/codex-telegram-linux-x64-webroot.tar.gz) | — |
 | macOS arm64 | [codex-telegram-osx-arm64](https://github.com/incursa/codex-telegram/releases/latest/download/codex-telegram-osx-arm64) | [sha256](https://github.com/incursa/codex-telegram/releases/latest/download/codex-telegram-osx-arm64.sha256) |
 
 All releases are listed at [GitHub Releases](https://github.com/incursa/codex-telegram/releases).
@@ -237,11 +238,12 @@ Do not run two processes with the same Telegram token or the same `DataRoot`. A 
 
 Use this path if the bot will run on Linux x64.
 
-1. Download `codex-telegram-linux-x64` and `codex-telegram-linux-x64.sha256` from the [latest release](https://github.com/incursa/codex-telegram/releases/latest).
-2. Or download both files directly with `curl`.
+1. Download `codex-telegram-linux-x64`, `codex-telegram-linux-x64-webroot.tar.gz`, and `codex-telegram-linux-x64.sha256` from the [same latest release](https://github.com/incursa/codex-telegram/releases/latest). The webroot archive is required for every Linux install because the host uses the published static webroot even when the Mini App API is disabled.
+2. Or download all three files directly with `curl`.
 
 ```bash
 curl -fL -o codex-telegram-linux-x64 https://github.com/incursa/codex-telegram/releases/latest/download/codex-telegram-linux-x64
+curl -fL -o codex-telegram-linux-x64-webroot.tar.gz https://github.com/incursa/codex-telegram/releases/latest/download/codex-telegram-linux-x64-webroot.tar.gz
 curl -fL -o codex-telegram-linux-x64.sha256 https://github.com/incursa/codex-telegram/releases/latest/download/codex-telegram-linux-x64.sha256
 ```
 
@@ -251,11 +253,12 @@ curl -fL -o codex-telegram-linux-x64.sha256 https://github.com/incursa/codex-tel
 shasum -a 256 -c ./codex-telegram-linux-x64.sha256
 ```
 
-4. Put the binary in a stable folder and mark it executable.
+4. Put the binary and the matching published webroot tree in a stable folder and mark the binary executable.
 
 ```bash
 mkdir -p ~/tools/codex-telegram
 mv ./codex-telegram-linux-x64 ~/tools/codex-telegram/codex-telegram
+tar -xzf ./codex-telegram-linux-x64-webroot.tar.gz -C ~/tools/codex-telegram
 chmod +x ~/tools/codex-telegram/codex-telegram
 cd ~/tools/codex-telegram
 ```
@@ -527,7 +530,7 @@ These commands are local evidence only. They prove build/test/format and reposit
 
 The repository publishes self-contained release binaries through `scripts\Publish.ps1` and `.github/workflows/publish.yml`.
 
-Release tags that start with `v` produce GitHub Releases with Windows x64, Linux x64, and macOS arm64 assets, plus SHA-256 checksum files and a copied `LICENSE.txt`.
+Release tags that start with `v` produce GitHub Releases with Windows x64, Linux x64, and macOS arm64 assets, plus SHA-256 checksum files and a copied `LICENSE.txt`. Linux releases also include `codex-telegram-linux-x64-webroot.tar.gz`; it contains the complete published static tree rooted at `wwwroot/`, including `wwwroot/index.html`, and must be generated from the same commit as the binary.
 
 Before a public release, run the repo-native release gate and the live Telegram checklist:
 

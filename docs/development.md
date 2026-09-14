@@ -49,9 +49,18 @@ The publish script writes:
 1. The self-contained binary.
 2. A `.sha256` checksum file.
 3. `LICENSE.txt`.
-4. `appsettings.Local.json` when one already exists in the publish output, or when an ignored repository-root local settings file exists.
+4. The published `wwwroot` directory used by a local run.
+5. `appsettings.Local.json` when one already exists in the publish output, or when an ignored repository-root local settings file exists.
 
 Other runtime identifiers can be passed with `-Runtime`, for example `linux-x64` or `osx-arm64`, when the .NET SDK has the required runtime packs.
+
+Validate the Linux release-style package, including the matching webroot archive, clean installation, static HTTP serving, and the intended non-root `ProtectSystem=strict` service boundary:
+
+```powershell
+.\scripts\Test-LinuxReleasePackaging.ps1
+```
+
+On Windows this uses the configured WSL distribution; on Linux it requires `systemd-run`, `curl`, `tar`, and permission to start a transient service. The check is intentionally separate from the local `Publish.ps1` output because the fleet installer receives the binary and webroot archive as separate release assets.
 
 If the published executable is already running from the output directory, Windows will lock the existing binary and `dotnet publish` cannot replace it. Stop that process first, or opt in to the script-managed stop:
 
@@ -111,7 +120,7 @@ Pull requests and pushes to `main` run build, format, vulnerability-report, unit
 
 Pushes to `main` also publish short-retention artifacts for Windows x64, Linux x64, and macOS arm64.
 
-Tag pushes that start with `v` create a GitHub Release and upload the published artifacts with generated release notes.
+Tag pushes that start with `v` create a GitHub Release and upload the published artifacts with generated release notes. Linux tag builds additionally archive the published `wwwroot` directory as `codex-telegram-linux-x64-webroot.tar.gz`, attest the archive, and verify the release asset set before creation.
 
 ## Documentation Expectations
 

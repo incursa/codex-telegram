@@ -24,6 +24,12 @@ try {
 
     if (-not $SkipPublish) {
         & (Join-Path $repoRoot "scripts\Publish.ps1") -Runtime $Runtime -Configuration $Configuration -OutputDirectory $publishOutput
+
+        if ($Runtime -eq "linux-x64") {
+            & (Join-Path $repoRoot "scripts\Test-LinuxReleasePackaging.ps1") `
+                -Configuration $Configuration `
+                -PublishDirectory $publishOutput
+        }
     }
 }
 finally {

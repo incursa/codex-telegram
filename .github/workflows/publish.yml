@@ -34,6 +34,43 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          fetch-depth: 0
+
+      - name: Verify source provenance
+        id: provenance
+        shell: pwsh
+        env:
+          EXPECTED_SHA: ${{ github.sha }}
+          SOURCE_REF: ${{ github.ref }}
+          SOURCE_REF_NAME: ${{ github.ref_name }}
+        run: |
+          $head = (git rev-parse --verify HEAD).Trim()
+          if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($head)) {
+            throw "Unable to resolve the checked-out source commit."
+          }
+
+          if (-not [string]::Equals($head, $env:EXPECTED_SHA, [System.StringComparison]::OrdinalIgnoreCase)) {
+            throw "Checked-out source commit $head does not match the workflow commit $env:EXPECTED_SHA."
+          }
+
+          $sourceTag = ''
+          if ($env:SOURCE_REF.StartsWith('refs/tags/', [System.StringComparison]::Ordinal)) {
+            $sourceTag = $env:SOURCE_REF_NAME
+            $tagRef = "refs/tags/$($env:SOURCE_REF_NAME)"
+            $tagCommit = (git rev-list -n 1 $tagRef).Trim()
+            if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($tagCommit)) {
+              throw "Unable to resolve source tag $env:SOURCE_REF_NAME."
+            }
+
+            if (-not [string]::Equals($tagCommit, $env:EXPECTED_SHA, [System.StringComparison]::OrdinalIgnoreCase)) {
+              throw "Source tag $env:SOURCE_REF_NAME resolves to $tagCommit, not workflow commit $env:EXPECTED_SHA."
+            }
+          }
+
+          "source_commit=$head" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "source_ref=$env:SOURCE_REF" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "source_tag=$sourceTag" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
 
       - name: Setup .NET
         uses: actions/setup-dotnet@c2fa09f4bde5ebb9d1777cf28262a3eb3db3ced7 # v5
@@ -74,12 +111,11 @@ jobs:
             -c Release `
             -r ${{ matrix.runtime }} `
             -o $publishDir `
-            /p:AssemblyName=codex-telegram `
             /p:PublishSingleFile=true `
             /p:SelfContained=true
 
           $binary = Get-ChildItem -Path $publishDir -File |
-            Where-Object { $_.BaseName -eq 'codex-telegram' -and ($_.Extension -eq '.exe' -or $_.Extension -eq '') } |
+            Where-Object { $_.Name -in @('codex-telegram.exe', 'codex-telegram', 'Incursa.Codex.Telegram', 'Incursa.Codex.Telegram.exe') } |
             Select-Object -First 1
 
           if (-not $binary) {
@@ -96,9 +132,21 @@ jobs:
           $licensePath = Join-Path $publishDir "${{ matrix.asset_name }}-LICENSE.txt"
           Copy-Item -LiteralPath LICENSE -Destination $licensePath -Force
 
+          $webrootArchivePath = $null
+          if ('${{ matrix.runtime }}' -eq 'linux-x64') {
+            $webrootArchivePath = Join-Path $publishDir "${{ matrix.asset_name }}-webroot.tar.gz"
+            & (Join-Path $env:GITHUB_WORKSPACE 'scripts/New-LinuxWebRootArchive.ps1') `
+              -PublishDirectory $publishDir `
+              -OutputPath $webrootArchivePath
+            if ($LASTEXITCODE -ne 0) {
+              throw "Unable to create the Linux Mini App webroot archive at $webrootArchivePath."
+            }
+          }
+
           "asset_path=$assetPath" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
           "checksum_path=$checksumPath" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
           "license_path=$licensePath" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "webroot_archive_path=$webrootArchivePath" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
 
       - name: Generate artifact attestation
         if: github.event.repository.private == false
@@ -106,7 +154,13 @@ jobs:
         with:
           subject-path: ${{ steps.publish.outputs.asset_path }}
 
-      - name: Upload artifact
+      - name: Generate Linux Mini App webroot attestation
+        if: github.event.repository.private == false && matrix.runtime == 'linux-x64'
+        uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4
+        with:
+          subject-path: ${{ steps.publish.outputs.webroot_archive_path }}
+
+      - name: Upload binary artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: ${{ matrix.asset_name }}
@@ -116,6 +170,23 @@ jobs:
             ${{ steps.publish.outputs.license_path }}
           if-no-files-found: error
           retention-days: 14
+
+      - name: Upload Linux Mini App webroot artifact
+        if: matrix.runtime == 'linux-x64'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: ${{ matrix.asset_name }}-webroot
+          path: ${{ steps.publish.outputs.webroot_archive_path }}
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Linux release packaging smoke
+        if: matrix.runtime == 'linux-x64'
+        shell: pwsh
+        run: |
+          pwsh -NoProfile -File scripts/Test-LinuxReleasePackaging.ps1 `
+            -PublishDirectory (Join-Path $env:RUNNER_TEMP 'codex-telegram-linux-x64') `
+            -ArchivePath (Join-Path $env:RUNNER_TEMP 'codex-telegram-linux-x64/codex-telegram-linux-x64-webroot.tar.gz')
 
   release:
     name: Create GitHub Release
@@ -130,6 +201,23 @@ jobs:
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           path: ${{ runner.temp }}/release-assets
+
+      - name: Verify release provenance
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          EXPECTED_SHA: ${{ github.sha }}
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          $tagCommit = (gh api "repos/$env:GH_REPO/commits/$env:TAG_NAME" --jq '.sha').Trim()
+          if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($tagCommit)) {
+            throw "Unable to resolve remote release tag $env:TAG_NAME."
+          }
+
+          if (-not [string]::Equals($tagCommit, $env:EXPECTED_SHA, [System.StringComparison]::OrdinalIgnoreCase)) {
+            throw "Remote release tag $env:TAG_NAME resolves to $tagCommit, not workflow commit $env:EXPECTED_SHA."
+          }
 
       - name: Create release
         shell: pwsh
@@ -146,6 +234,25 @@ jobs:
 
           if (-not $assets) {
             throw "No release assets were downloaded."
+          }
+
+          $expectedNames = @(
+            'codex-telegram-win-x64.exe',
+            'codex-telegram-win-x64.exe.sha256',
+            'codex-telegram-win-x64-LICENSE.txt',
+            'codex-telegram-linux-x64',
+            'codex-telegram-linux-x64.sha256',
+            'codex-telegram-linux-x64-LICENSE.txt',
+            'codex-telegram-linux-x64-webroot.tar.gz',
+            'codex-telegram-osx-arm64',
+            'codex-telegram-osx-arm64.sha256',
+            'codex-telegram-osx-arm64-LICENSE.txt'
+          ) | Sort-Object
+          $actualNames = @($assets | ForEach-Object { Split-Path -Leaf $_ } | Sort-Object)
+          $missingNames = @($expectedNames | Where-Object { $_ -notin $actualNames })
+          $unexpectedNames = @($actualNames | Where-Object { $_ -notin $expectedNames })
+          if ($missingNames.Count -gt 0 -or $unexpectedNames.Count -gt 0 -or $actualNames.Count -ne $expectedNames.Count) {
+            throw "Release asset set mismatch. Missing: $($missingNames -join ', '); unexpected: $($unexpectedNames -join ', ')."
           }
 
           gh release create $env:TAG_NAME $assets --title $version --generate-notes --repo $env:GH_REPO

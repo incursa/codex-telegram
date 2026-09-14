@@ -24,6 +24,19 @@ From a published Windows binary:
 .\artifacts\publish\win-x64\codex-telegram.exe --run
 ```
 
+For a Linux release, install the binary and the matching `codex-telegram-linux-x64-webroot.tar.gz` from the same GitHub release. Extract the archive beside the binary so the installed layout contains `wwwroot/index.html` before starting the service:
+
+```bash
+mkdir -p ~/tools/codex-telegram
+mv codex-telegram-linux-x64 ~/tools/codex-telegram/codex-telegram
+tar -xzf codex-telegram-linux-x64-webroot.tar.gz -C ~/tools/codex-telegram
+chmod +x ~/tools/codex-telegram/codex-telegram
+cd ~/tools/codex-telegram
+./codex-telegram --run
+```
+
+The archive is generated from the same published commit as the binary. Keep the installation directory read-only under the fleet service; application state belongs in the configured writable data root, not beside the executable or under `wwwroot`.
+
 From source:
 
 ```powershell

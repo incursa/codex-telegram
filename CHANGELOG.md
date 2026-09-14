@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 1.0.24 - 2026-09-14
+
+- Fixed Linux Mini App release packaging by publishing `codex-telegram-linux-x64-webroot.tar.gz` from the same published tree as the Linux binary.
+- Added clean-install and `ProtectSystem=strict` smoke coverage for the extracted static asset tree, including `/` and `/app.js` serving.
+- Added release workflow provenance checks and artifact attestation for the Linux webroot archive.
+- Documented the Linux binary plus webroot archive installation contract.
+
 ## 1.0.22 - 2026-09-11
 
 - Added `Balanced` Telegram output presentation with durable lifecycle/tool milestones and chronological still-working pulses, preserving the existing four modes and `Compact` default.
