@@ -203,7 +203,7 @@ chmod 0755 "$smoke_root"
 cleanup() {
     "${SUDO[@]}" systemctl stop "$unit" >/dev/null 2>&1 || true
     "${SUDO[@]}" systemctl reset-failed "$unit" >/dev/null 2>&1 || true
-    rm -rf "$smoke_root"
+    "${SUDO[@]}" rm -rf "$smoke_root"
 }
 trap cleanup EXIT
 
