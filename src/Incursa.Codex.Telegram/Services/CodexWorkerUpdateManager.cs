@@ -23,6 +23,22 @@ internal interface ICodexWorkerUpdateManager
 
 internal sealed record CodexWorkerUpdateCompletion(string Version, string Sha256, bool Healthy);
 
+internal sealed record CodexWorkerUpdateControlRequest(
+    string WorkerId,
+    string RolloutId,
+    string Action,
+    bool Confirm,
+    string? TargetVersion = null,
+    string? ExpectedSha256 = null,
+    IReadOnlyList<string>? RequiredCapabilities = null);
+
+internal sealed record CodexWorkerUpdateControlResponse(
+    bool Accepted,
+    string WorkerId,
+    string RolloutId,
+    CodexWorkerUpdateSnapshot Update,
+    string OutcomeCode);
+
 internal enum CodexWorkerUpdateState
 {
     None,
@@ -186,7 +202,16 @@ internal sealed class CodexWorkerUpdateManager : ICodexWorkerUpdateManager, IDis
         try
         {
             WorkerUpdateState state = await LoadAsync(cancellationToken).ConfigureAwait(false);
-            if (state.State is not (CodexWorkerUpdateState.Staged or CodexWorkerUpdateState.HealthFailed)
+            if (state.State == CodexWorkerUpdateState.RollbackActive)
+            {
+                return ToSnapshot(state with
+                {
+                    UpdatedAtUtc = _timeProvider.GetUtcNow(),
+                    OutcomeCode = "rollback_already_active",
+                });
+            }
+
+            if (state.State is not (CodexWorkerUpdateState.Staged or CodexWorkerUpdateState.HealthFailed or CodexWorkerUpdateState.Active)
                 || string.IsNullOrWhiteSpace(state.RollbackPackageName))
             {
                 return await RejectAsync(state, "no_staged_update", cancellationToken).ConfigureAwait(false);

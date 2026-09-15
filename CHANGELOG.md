@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 1.0.49 - 2026-09-15
+
+- Added owner-scoped fleet rollout plans with persisted per-worker staging, activation, health-failure, and rollback evidence.
+- Added one-worker-at-a-time advancement with capability, admitted-worker, drain, and zero-active-lease compatibility gates.
+- Added authenticated remote worker update status/control contracts; package activation remains external-installer-owned.
+- Added Mini App rollout planning and explicitly confirmed advance, finalize, and rollback actions.
+
 ## 1.0.48 - 2026-09-15
 
 - Added bounded Mini App handoff evidence containing review status, changed-file metadata, and artifact metadata from the same redacted task packet.

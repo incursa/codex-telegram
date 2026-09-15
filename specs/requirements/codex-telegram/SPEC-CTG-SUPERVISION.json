@@ -8,18 +8,18 @@
   "owner": "codex-telegram-maintainers",
   "tags": ["codex", "telegram", "supervision", "recovery", "workers", "mini-app"],
   "purpose": "Define the authority, identity, recovery, isolation, review, browser, recipe, and release contracts for supervising Codex work across private self-hosted workers.",
-  "scope": "This specification covers the staged supervision workspace roadmap. It establishes the durable Telegram update receipt and bounded Task/Run/Command, delivery, approval/input, claim, recovery-action, restart-reconciliation, review-packet, Telegram-handoff, task-workspace allocation, explicit Telegram task-flow, opt-in browser-pairing projection, local worker-boundary, authenticated coordinator registration, coordinator lease-handoff, remote task provisioning, remote prompt/event relay, remote workspace lifecycle, remote Mini App task detail, recipe, and staged update slices.",
+  "scope": "This specification covers the staged supervision workspace roadmap. It establishes the durable Telegram update receipt and bounded Task/Run/Command, delivery, approval/input, claim, recovery-action, restart-reconciliation, review-packet, Telegram-handoff, task-workspace allocation, explicit Telegram task-flow, opt-in browser-pairing projection, local worker-boundary, authenticated coordinator registration, coordinator lease-handoff, remote task provisioning, remote prompt/event relay, remote workspace lifecycle, remote Mini App task detail, recipe, staged update, and fleet rollout slices.",
   "authority": {
     "telegram": "authentication, operator control, and consequential approval",
     "codex": "thread and turn execution plus execution provenance",
     "local_persistence": "supervision metadata, command receipts, acknowledgements, claims, leases, and recovery evidence; never a replacement for Codex history",
-    "mini_app_and_browser": "authenticated, user-scoped evidence projection with only bounded acknowledgement, handoff preparation, and confirmed worker drain/resume actions"
+    "mini_app_and_browser": "authenticated, user-scoped evidence projection with bounded acknowledgement, handoff preparation, confirmed worker drain/resume, and Telegram-authenticated staged fleet rollout actions; paired browsers remain inspection-only for rollout activation"
   },
   "requirements": [
     {
       "id": "REQ-CTG-SUP-0001",
       "title": "Preserve authority boundaries",
-      "statement": "The host MUST keep Telegram as the authentication, operator-control, and consequential-approval authority; Codex MUST remain the execution and execution-provenance authority; and the Mini App and browser surfaces MUST remain bounded evidence surfaces, allowing only the separately approved user-scoped acknowledgement, Telegram-handoff preparation, and confirmed worker drain/resume actions.",
+      "statement": "The host MUST keep Telegram as the authentication, operator-control, and consequential-approval authority; Codex MUST remain the execution and execution-provenance authority; and the Mini App and browser surfaces MUST remain bounded evidence surfaces, allowing only the separately approved user-scoped acknowledgement, Telegram-handoff preparation, and confirmed worker drain/resume actions, while staged fleet rollout actions require Telegram-authenticated identity and paired browsers remain inspection-only.",
       "trace": {"upstream_refs": ["`docs/mini-app-roadmap.md`", "`SECURITY.md`", "`src/Incursa.Codex.Telegram/MiniApp/TelegramMiniAppEndpoints.cs`", "`src/Incursa.Codex.Telegram/Services/CodexGateway.cs`"]}
     },
     {
@@ -151,6 +151,13 @@
       "statement": "A Mini App handoff response MUST derive its changed-file and artifact metadata from the same redacted review packet as task detail, preserve TaskId, RunId, Codex thread, and Codex turn provenance, apply bounded counts and metadata lengths, and explicitly report unavailable runtime evidence. Handoff preparation MUST continue to return only the existing Telegram command and MUST NOT deliver a Telegram message, execute Codex, transfer workspace files, expose worker paths, or approve an action.",
       "coverage": {"positive": "required", "negative": "required", "edge": "required", "restart": "required"},
       "trace": {"upstream_refs": ["`docs/mini-app-roadmap.md`", "`src/Incursa.Codex.Telegram/MiniApp/TelegramMiniAppHandoff.cs`", "`src/Incursa.Codex.Telegram/MiniApp/TelegramMiniAppTaskActionEndpoints.cs`", "`src/Incursa.Codex.Telegram/wwwroot/app.js`", "`tests/Incursa.Codex.Telegram.Tests/TelegramMiniAppHandoffTests.cs`"]}
+    },
+    {
+      "id": "REQ-CTG-SUP-0021",
+      "title": "Coordinate staged fleet updates with installer-owned activation",
+      "statement": "A fleet rollout MUST be owner-scoped and explicitly target distinct admitted workers, persist only bounded version, digest, capability, sequence, state, timestamp, and outcome metadata, advance no more than one worker at a time, and require capability, fresh admission, drain, and zero-active-lease gates before staging. Remote staging and status MUST use authenticated worker identity-bound contracts; activation MUST remain external-installer-owned and finalize MUST require active target evidence from every selected worker. A health failure MUST preserve evidence and require explicit reverse-order rollback staging; the coordinator MUST NOT overwrite protected installations, stop services, or claim health from staging alone.",
+      "coverage": {"positive": "required", "negative": "required", "edge": "required", "restart": "required"},
+      "trace": {"upstream_refs": ["`docs/mini-app-roadmap.md`", "`src/Incursa.Codex.Telegram/Services/CodexFleetRolloutStore.cs`", "`src/Incursa.Codex.Telegram/Services/CodexFleetRolloutCoordinator.cs`", "`src/Incursa.Codex.Telegram/Services/CodexRemoteWorkerUpdateRelay.cs`", "`src/Incursa.Codex.Telegram/MiniApp/CodexWorkerUpdateEndpoints.cs`", "`src/Incursa.Codex.Telegram/MiniApp/TelegramMiniAppRolloutEndpoints.cs`", "`tests/Incursa.Codex.Telegram.Tests/CodexFleetRolloutTests.cs`", "`tests/Incursa.Codex.Telegram.Tests/CodexWorkerUpdateControlTests.cs`"]}
     }
   ],
   "non_goals": ["A competing task database or replacement for Codex history", "Browser prompts, approvals, steering, retries, cancellation, file writes, uploads, commits, merges, or deployments", "Blind replay of side-effecting work after a crash or timeout", "Autonomous merge, push, deploy, or release", "Public multi-tenant hosting or broad implicit Telegram authorization", "Bundling or synchronizing Codex authentication"]

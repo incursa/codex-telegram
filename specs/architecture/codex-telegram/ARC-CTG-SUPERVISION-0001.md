@@ -82,7 +82,7 @@ On startup, accepted or in-flight runs are reconciled atomically to non-terminal
 - Completed Telegram delivery or failed Telegram delivery is never used as proof of Codex execution.
 - An ambiguous Codex execution is visible as recovery-required evidence and is never silently resent.
 - `Needs attention` remains a derived display category, not a persisted lifecycle.
-- Mini App and browser projections remain read-only for Codex execution; separately authorized task-action endpoints may only acknowledge an exact review packet, prepare an existing Telegram handoff command, or explicitly drain/resume a worker.
+- Mini App and browser projections remain read-only for Codex execution; separately authorized action endpoints may only acknowledge an exact review packet, prepare an existing Telegram handoff command, explicitly drain/resume a worker, or coordinate the staged worker-update protocol. Fleet rollout actions require Telegram-signed identity; paired browsers may inspect rollout state but cannot activate it.
 
 ## R2.1 review packet and handoff
 
@@ -170,9 +170,15 @@ The `handoff` action returns the existing `/handoff <CodexThreadId>` command plu
 
 `POST /api/mini-app/workers/{workerId}/actions` accepts only explicitly confirmed `drain` and `resume` actions after Telegram or paired-browser authentication. A local worker applies the transition through its serialized registry. For an admitted remote WorkerId, the coordinator resolves a non-stale worker with a private control endpoint and sends an authenticated `/api/worker/v1/worker/control` request; the worker re-checks its exact identity and confirmation before changing its local registry. The response returns only the bounded worker projection and outcome code. Drain prevents new lease acquisition but does not interrupt existing sessions or remove active leases; unavailable workers and mismatched identities fail closed.
 
+## R5.4 fleet rollout coordination
+
+The coordinator stores an owner-scoped rollout with an exact target version, package SHA-256, required capabilities, and an explicit ordered list of admitted WorkerIds. It advances at most one worker at a time. Before staging, it re-reads worker admission, capability, drain, and zero-active-lease state. A local target calls the existing update manager; a remote target uses authenticated `/api/worker/v1/update/control`, and status refresh uses `/api/worker/v1/update/status`. The worker validates the rollout target against its own operator-configured package metadata before staging.
+
+Staging does not activate or overwrite the protected installation. The external installer remains responsible for package transfer, service restart, and the separate authenticated `/api/worker/v1/update/complete` health callback. Finalize refreshes every selected worker and reports completion only when all report `Active` evidence. A health failure remains visible as rollback-required; explicit rollback stages workers in reverse order and requires the same drain and zero-lease gates. Package paths, installer tokens, service commands, and private worker files never enter coordinator state.
+
 ## Later dependency sequence
 
-1. Add fleet-wide staged rollout coordination, compatibility gates, and safe rollback finalization.
+No later dependency slice is currently queued. The next product work should be selected after exercising the complete review, worker, and rollout workflow with real operator fixtures.
 
 Each step requires focused automated tests plus the repository release floor. Browser and Telegram-live checks remain separate evidence categories.
 

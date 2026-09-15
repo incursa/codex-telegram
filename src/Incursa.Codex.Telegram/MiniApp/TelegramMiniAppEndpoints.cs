@@ -23,6 +23,7 @@ internal static class TelegramMiniAppEndpoints
         app.MapGet("/api/mini-app/threads/{threadId}", GetThreadAsync);
         TelegramMiniAppTaskActionEndpoints.Map(app);
         TelegramMiniAppWorkerActionEndpoints.Map(app);
+        TelegramMiniAppRolloutEndpoints.Map(app);
     }
 
     private static async Task<IResult> StartBrowserPairingAsync(
@@ -68,6 +69,7 @@ internal static class TelegramMiniAppEndpoints
         ITelegramMiniAppAcknowledgementStore acknowledgementStore,
         ICodexWorkerRegistry workerRegistry,
         ICodexCoordinatorWorkerStore coordinatorWorkerStore,
+        ICodexFleetRolloutStore rolloutStore,
         CancellationToken cancellationToken)
     {
         if (!miniAppOptions.Value.Enabled)
@@ -193,6 +195,19 @@ internal static class TelegramMiniAppEndpoints
             workersError ??= "Coordinator worker status is currently unavailable.";
         }
 
+        IReadOnlyList<TelegramMiniAppRolloutVm> rollouts = Array.Empty<TelegramMiniAppRolloutVm>();
+        string? rolloutsError = null;
+        try
+        {
+            rollouts = (await rolloutStore.ListAsync(identity.UserId, cancellationToken).ConfigureAwait(false))
+                .Select(TelegramMiniAppRolloutEndpoints.ToViewModel)
+                .ToArray();
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            rolloutsError = "Fleet rollout status is currently unavailable.";
+        }
+
         TelegramMiniAppThreadVm[] projectedThreads = threads
             .Select(thread => TelegramMiniAppProjection.ToThreadViewModel(thread, turnCoordinator.TryGetActiveTurnState(thread.Id)))
             .ToArray();
@@ -218,6 +233,8 @@ internal static class TelegramMiniAppEndpoints
             SupervisionError = supervisionError,
             Workers = workers,
             WorkersError = workersError,
+            Rollouts = rollouts,
+            RolloutsError = rolloutsError,
         });
     }
 
@@ -470,6 +487,10 @@ internal sealed record TelegramMiniAppBootstrapVm(
     public IReadOnlyList<TelegramMiniAppWorkerVm> Workers { get; init; } = Array.Empty<TelegramMiniAppWorkerVm>();
 
     public string? WorkersError { get; init; }
+
+    public IReadOnlyList<TelegramMiniAppRolloutVm> Rollouts { get; init; } = Array.Empty<TelegramMiniAppRolloutVm>();
+
+    public string? RolloutsError { get; init; }
 }
 
 internal sealed record TelegramMiniAppProjectVm(

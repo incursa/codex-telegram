@@ -163,6 +163,17 @@ inc-card { display: block; }
 .worker-copy { min-width: 0; }
 .worker-name { overflow: hidden; margin-bottom: 0.2rem; font-size: 0.8rem; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
 .worker-meta { overflow: hidden; color: var(--inc-muted); font: 0.67rem "IBM Plex Mono", ui-monospace, monospace; text-overflow: ellipsis; white-space: nowrap; }
+.rollout-start-form { display: grid; gap: 0.55rem; margin-bottom: 0.8rem; }
+.rollout-start-form label { display: grid; gap: 0.25rem; color: var(--inc-muted); font-size: 0.72rem; }
+.rollout-start-form input { min-width: 0; padding: 0.55rem 0.65rem; border: 1px solid var(--inc-border); border-radius: 7px; background: #fff; color: var(--inc-ink); font: 0.72rem "IBM Plex Mono", ui-monospace, monospace; }
+.rollout-workers-picker { display: flex; flex-wrap: wrap; gap: 0.4rem 0.65rem; }
+.rollout-worker-option { display: inline-flex !important; grid-template-columns: none !important; align-items: center; gap: 0.3rem !important; }
+.rollout-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 0.75rem; padding: 0.7rem 0; border-top: 1px solid var(--inc-border); }
+.rollout-copy { min-width: 0; flex: 1 1 auto; }
+.rollout-title { overflow: hidden; font-size: 0.78rem; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+.rollout-meta { overflow: hidden; margin-top: 0.2rem; color: var(--inc-muted); font: 0.64rem "IBM Plex Mono", ui-monospace, monospace; text-overflow: ellipsis; white-space: nowrap; }
+.rollout-status { display: grid; flex: 0 0 auto; justify-items: end; gap: 0.35rem; }
+.rollout-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 0.3rem; }
 .worker-status { display: flex; flex: 0 0 auto; align-items: center; gap: 0.45rem; }
 .worker-actions { display: flex; gap: 0.35rem; }
 .compact-button { padding: 0.35rem 0.55rem; font-size: 0.7rem; }

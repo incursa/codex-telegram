@@ -17,7 +17,7 @@ public sealed class CodexCoordinatorLeaseHandoffTests
     public async Task HandoffSelectsEligibleRemoteWorkerAndIsIdempotentByTask()
     {
         using TemporaryDirectory dataRoot = TemporaryDirectory.Create();
-        FixedTimeProvider clock = new(DateTimeOffset.Parse("2026-09-15T12:00:00Z", CultureInfo.InvariantCulture));
+        FixedTimeProvider clock = new(DateTimeOffset.UtcNow);
         IOptions<CodexTelegramOptions> options = CreateOptions(dataRoot.Path);
         using CodexCoordinatorWorkerStore workerStore = new(options, clock, dataRoot.Path);
         using CodexCoordinatorLeaseStore leaseStore = new(options, dataRoot.Path);

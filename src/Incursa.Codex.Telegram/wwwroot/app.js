@@ -487,6 +487,86 @@
     });
   }
 
+  function rolloutVariant(state) {
+    if (state === "completed" || state === "rolledback") return "success";
+    if (state === "rollbackrequired" || state === "rollbackawaitinginstaller") return "danger";
+    if (state === "awaitinginstaller") return "warning";
+    return "info";
+  }
+
+  function renderRollouts(data) {
+    const list = byId("rollouts-list");
+    const picker = byId("rollout-workers-picker");
+    list.replaceChildren();
+    picker.replaceChildren();
+    const workers = data.workers || [];
+    workers.forEach((worker) => {
+      const label = document.createElement("label");
+      label.className = "rollout-worker-option";
+      const checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+      checkbox.name = "workerId";
+      checkbox.value = worker.workerId || "";
+      checkbox.disabled = worker.readiness === "unavailable";
+      const name = document.createElement("span");
+      name.textContent = worker.displayName || worker.workerId || "Worker";
+      label.append(checkbox, name);
+      picker.append(label);
+    });
+    const form = byId("rollout-start-form");
+    form.hidden = !!data.workersError || !workers.length;
+    if (data.rolloutsError) {
+      const unavailable = document.createElement("div");
+      unavailable.className = "empty-row";
+      unavailable.textContent = data.rolloutsError;
+      list.append(unavailable);
+      return;
+    }
+    const rollouts = data.rollouts || [];
+    if (!rollouts.length) {
+      const empty = document.createElement("div");
+      empty.className = "empty-row";
+      empty.textContent = "No staged fleet rollouts have been planned.";
+      list.append(empty);
+      return;
+    }
+    rollouts.slice(0, 8).forEach((rollout) => {
+      const row = document.createElement("div");
+      row.className = "rollout-row";
+      const copy = document.createElement("div");
+      copy.className = "rollout-copy";
+      const title = document.createElement("div");
+      title.className = "rollout-title";
+      title.textContent = `${rollout.targetVersion || "unknown"} · ${rollout.rolloutId || "rollout"}`;
+      const workersText = (rollout.workers || []).map((worker) => `${worker.workerId}: ${worker.state}`).join(" · ");
+      const meta = document.createElement("div");
+      meta.className = "rollout-meta";
+      meta.textContent = workersText || "No worker evidence";
+      copy.append(title, meta);
+      const status = document.createElement("div");
+      status.className = "rollout-status";
+      const badge = document.createElement("inc-badge");
+      badge.setAttribute("variant", rolloutVariant(rollout.state));
+      badge.textContent = rollout.state || "unknown";
+      status.append(badge);
+      if (rollout.state !== "completed" && rollout.state !== "rolledback") {
+        const actions = document.createElement("div");
+        actions.className = "rollout-actions";
+        [["advance", "Advance"], ["finalize", "Finalize"], ["rollback", "Rollback"]].forEach(([action, label]) => {
+          const button = document.createElement("button");
+          button.type = "button";
+          button.className = "secondary-button compact-button";
+          button.textContent = label;
+          button.addEventListener("click", () => postRolloutAction(action, rollout));
+          actions.append(button);
+        });
+        status.append(actions);
+      }
+      row.append(copy, status);
+      list.append(row);
+    });
+  }
+
   function setDetailLoading(message) {
     byId("detail-card").hidden = false;
     byId("detail-title").textContent = "Task details";
@@ -777,6 +857,56 @@
     }
   }
 
+  async function postRolloutAction(action, rollout) {
+    if (!rollout?.rolloutId) return;
+    const label = action === "rollback" ? "Rollback" : action === "finalize" ? "Finalize" : "Advance";
+    if (!window.confirm(`${label} fleet rollout ${rollout.rolloutId}?`)) return;
+    try {
+      const response = await fetch("/api/mini-app/rollouts/actions", {
+        method: "POST",
+        headers: { ...authHeaders(), "Content-Type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({ action, rolloutId: rollout.rolloutId, confirm: true })
+      });
+      if (response.status === 401) throw new Error("Open this Mini App from Telegram to connect your account.");
+      if (!response.ok) throw new Error("The fleet rollout action could not be completed.");
+      const result = await response.json();
+      showNotice(`Fleet rollout: ${result.outcomeCode || "updated"}.`);
+      await load();
+    } catch (error) {
+      showNotice(error.message || "The fleet rollout action could not be completed.", true);
+    }
+  }
+
+  async function startRollout(event) {
+    event.preventDefault();
+    const workerIds = [...document.querySelectorAll("#rollout-workers-picker input[name=workerId]:checked")].map((input) => input.value);
+    const targetVersion = byId("rollout-version").value.trim();
+    const expectedSha256 = byId("rollout-sha256").value.trim();
+    const requiredCapabilities = byId("rollout-capabilities").value.split(",").map((value) => value.trim()).filter(Boolean);
+    if (!workerIds.length) {
+      showNotice("Select at least one worker for the staged rollout.", true);
+      return;
+    }
+    if (!window.confirm(`Plan rollout ${targetVersion} for ${workerIds.length} worker(s)? The external installer will still control activation.`)) return;
+    try {
+      const response = await fetch("/api/mini-app/rollouts/actions", {
+        method: "POST",
+        headers: { ...authHeaders(), "Content-Type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({ action: "start", confirm: true, targetVersion, expectedSha256, requiredCapabilities, workerIds })
+      });
+      if (response.status === 401) throw new Error("Open this Mini App to connect your account.");
+      if (!response.ok) throw new Error("The fleet rollout could not be planned; check worker compatibility and package metadata.");
+      const result = await response.json();
+      event.target.reset();
+      showNotice(`Fleet rollout planned: ${result.outcomeCode || "rollout_planned"}.`);
+      await load();
+    } catch (error) {
+      showNotice(error.message || "The fleet rollout could not be planned.", true);
+    }
+  }
+
   function renderChanges(changes) {
     const list = byId("detail-changes");
     list.replaceChildren();
@@ -846,6 +976,7 @@
     renderWorkspace({ projects: [] });
     renderSupervision({ supervisionTasks: [] });
     renderWorkers({ workers: [] });
+    renderRollouts({ workers: [], rollouts: [] });
   }
 
   function render(data) {
@@ -856,6 +987,7 @@
     renderWorkspace(data);
     renderSupervision(data);
     renderWorkers(data);
+    renderRollouts(data);
   }
 
   function authHeaders() {
@@ -966,6 +1098,7 @@
     } catch (error) { showNotice(`Fullscreen mode could not be changed: ${error.message || "unsupported operation"}.`, true); }
   });
   byId("refresh-button").addEventListener("click", load);
+  byId("rollout-start-form").addEventListener("submit", startRollout);
   byId("browser-pairing-retry").addEventListener("click", beginBrowserPairing);
   byId("close-detail-button").addEventListener("click", () => closeThreadDetail());
   byId("open-chat-button").addEventListener("click", () => { if (telegram) telegram.close(); else showNotice("Return to the Telegram chat to send prompts and change context."); });

@@ -140,6 +140,26 @@
             <div class="loading-row">Loading workers…</div>
           </div>
         </inc-card>
+
+        <inc-card class="dashboard-card rollouts-card">
+          <div class="card-heading">
+            <div>
+              <h2>Fleet rollouts</h2>
+              <p>Advance one drained worker at a time; the external installer activates packages.</p>
+            </div>
+            <inc-badge variant="info">Staged</inc-badge>
+          </div>
+          <form id="rollout-start-form" class="rollout-start-form">
+            <label>Target version <input id="rollout-version" name="version" maxlength="40" autocomplete="off" placeholder="1.0.49" required></label>
+            <label>Package SHA-256 <input id="rollout-sha256" name="sha256" maxlength="64" inputmode="text" autocomplete="off" placeholder="64 hex characters" required></label>
+            <label>Required capabilities <input id="rollout-capabilities" name="capabilities" maxlength="512" autocomplete="off" placeholder="codex-execution,task-workspaces"></label>
+            <div id="rollout-workers-picker" class="rollout-workers-picker"></div>
+            <button class="secondary-button" type="submit">Plan staged rollout</button>
+          </form>
+          <div id="rollouts-list" class="rollouts-list" aria-live="polite">
+            <div class="loading-row">Loading fleet rollouts…</div>
+          </div>
+        </inc-card>
       </div>
 
       <inc-card id="detail-card" class="detail-card" hidden>

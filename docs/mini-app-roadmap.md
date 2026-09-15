@@ -16,7 +16,7 @@ The roadmap is delivered in independently verifiable releases:
 | R1 | Durable task/run identity, private-chat approval interlock, claim/recovery state, delivery acknowledgements, and duplicate protection | Unknown, stale, replayed, cross-user, or cross-chat actions fail closed; restart and crash fixtures are unambiguous. |
 | R2 | Read-only changes/review, bounded artifact metadata, review evidence, acknowledgement, and explicit Telegram handoffs | Every review item links to a task/run and preserves Codex provenance; consequential actions still require Telegram approval. |
 | R3 | Managed worktrees, per-task ports and database namespaces, worker registration, coordinator routing, leases, readiness, draining, and isolation enforcement | Concurrent workers cannot cross repository, workspace, port, database, or identity boundaries. |
-| R4 | Needs attention, task detail, changes, artifacts/previews, workers, and revocable browser pairing | The Mini App is deterministic, signed, user-scoped, redacted, responsive in all Telegram display modes, and read-only. |
+| R4 | Needs attention, task detail, changes, artifacts/previews, workers, and revocable browser pairing | The Mini App is deterministic, signed, user-scoped, redacted, responsive in all Telegram display modes, and limits writes to explicitly bounded actions. |
 | R5 | Versioned task recipes, compatibility checks, staged worker updates, rollback, and release evidence | Recipes are inspectable and immutable per run; updates are drain-aware, operator-controlled, and reversible. |
 
 ## Current release
@@ -27,7 +27,7 @@ The current Mini App foundation is the first R2/R4-compatible evidence and decis
 - `Recent activity` and task detail use stable Codex thread identity. Detail includes bounded turns, timeline entries, Codex-reported file diffs, and redacted artifact metadata.
 - Live refresh failures preserve the last confirmed workspace snapshot as stale. Synthetic preview data is available only with the explicit `?preview=1` query string.
 - Opening task detail does not create a missing local manifest or state directory.
-- The surface has one bounded Mini App mutation capability: an authenticated user may acknowledge an exact task/run/review packet, and may prepare (but not execute) the existing Telegram `/handoff <thread>` command. Prompts, steering, approvals, retries, cancellation, file edits, uploads, commits, merges, and deployment remain in Telegram or their existing operator authority. Codex command and file-change approvals fail closed when no explicit Telegram decision exists.
+- The surface has bounded Mini App mutation capabilities: an authenticated Telegram user may acknowledge an exact task/run/review packet, prepare (but not execute) the existing Telegram `/handoff <thread>` command, explicitly drain or resume an admitted worker, and coordinate a staged fleet rollout. Paired browsers may inspect rollout state but cannot activate or roll back packages. Prompts, steering, approvals, retries, cancellation, file edits, uploads, commits, merges, and deployment remain in Telegram or their existing operator authority. Codex command and file-change approvals fail closed when no explicit Telegram decision exists.
 
 The v1.0.28 R1.0 slice is the update-boundary foundation. Its contract is recorded in [`SPEC-CTG-SUPERVISION`](../specs/requirements/codex-telegram/SPEC-CTG-SUPERVISION.json) and [`ARC-CTG-SUPERVISION-0001`](../specs/architecture/codex-telegram/ARC-CTG-SUPERVISION-0001.md). Telegram `UpdateId` receipts provide bounded replay protection at the transport boundary; this is not yet the application-owned `CommandId` or full Task/Run lifecycle. Handler failures remain retryable, stale in-flight receipts are reclaimable, and completed receipts are retained only for the documented window.
 
@@ -73,6 +73,8 @@ The v1.0.47 R3.12 slice adds explicitly confirmed worker drain/resume actions to
 
 The v1.0.48 R2.3 slice extends Mini App handoff preparation with bounded evidence from the same redacted review packet used by task detail. The response and UI include review status, changed-file metadata, artifact metadata, counts, and Codex turn provenance. If the runtime is unavailable, the command remains available but the response says explicitly that evidence could not be retrieved. No raw worker paths, file payloads, Telegram delivery, Codex execution, or approval semantics are added.
 
+The v1.0.49 R5.4 slice adds owner-scoped fleet rollout coordination. An operator can plan a rollout for explicit workers and advance only one worker at a time after capability, admission, drain, and zero-lease checks. Worker staging uses the existing local update manager or authenticated remote worker control; status is refreshed from the worker, and the external installer remains responsible for package activation and health completion. A health failure requires explicit rollback staging in reverse order; finalize records completion only from worker-reported activation evidence.
+
 ## Identity and state vocabulary
 
 Until R1 introduces durable application records, a Mini App task is a Codex thread and its turns are the run history. The implementation must not imply stronger guarantees than the underlying thread state provides.
@@ -91,6 +93,6 @@ Initial display states are `queued`, `running`, `waiting`, `failed`, `completed`
 
 ## Later slices
 
-1. Add fleet-wide staged rollout coordination, compatibility gates, and safe rollback finalization.
+No later dependency slice is currently queued. The next product work should be selected after exercising the complete review, worker, and rollout workflow with real operator fixtures.
 
 Full IDE behavior, arbitrary terminal/file-manager access, autonomous merge/push/deploy, public multi-tenant hosting, and blind replay of side-effecting work are out of scope.
