@@ -7567,8 +7567,10 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
                 || message.Contains("thread-store internal error", StringComparison.OrdinalIgnoreCase);
             bool mentionsEmptyRollout = message.Contains("rollout", StringComparison.OrdinalIgnoreCase)
                 && message.Contains("is empty", StringComparison.OrdinalIgnoreCase);
+            bool mentionsMissingRollout = message.Contains("no rollout found for thread id", StringComparison.OrdinalIgnoreCase);
 
-            if ((mentionsThreadRead && mentionsEmptyRollout)
+            if (mentionsMissingRollout
+                || (mentionsThreadRead && mentionsEmptyRollout)
                 || (mentionsThreadRead && message.Contains(".jsonl", StringComparison.OrdinalIgnoreCase)))
             {
                 return true;

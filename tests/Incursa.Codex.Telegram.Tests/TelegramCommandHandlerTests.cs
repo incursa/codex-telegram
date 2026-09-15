@@ -859,6 +859,54 @@ public sealed class TelegramCommandHandlerTests
     }
 
     [Fact]
+    public async Task ProcessDueInputBundleAsync_MissingRolloutReplacesSessionAndRetries()
+    {
+        using CommandHandlerHarness harness = CommandHandlerHarness.Create(
+            inputOptionsOverride: new TelegramInputOptions
+            {
+                DefaultCaptureMode = TelegramInputCaptureMode.BundleAlways,
+                AutoDispatchAfterSeconds = 5,
+            });
+        TelegramConversationScope conversation = new(5555, null);
+        string projectPath = harness.Temp.CreateDirectory("repo");
+        harness.ProjectCatalog.Projects.Add(new CodexProjectCatalogRecord
+        {
+            WorkingDirectory = projectPath,
+            AddedAt = DateTimeOffset.Parse("2026-05-04T00:00:00Z"),
+        });
+        harness.SessionManager.Sessions.Add(CreateSession("thread-stale", "Stale session", projectPath));
+        harness.SessionManager.SendExceptions.Enqueue(new InvalidOperationException("no rollout found for thread id thread-stale"));
+        await harness.StateStore.SetActiveProjectWorkingDirectoryAsync(conversation, projectPath, CancellationToken.None);
+        await harness.StateStore.SetActiveSessionIdAsync(conversation, "thread-stale", CancellationToken.None);
+
+        await harness.Handler.HandleMessageAsync(
+            new TelegramInboundMessage(1234, conversation.ChatId, "private", "retry after rollout loss"),
+            harness.Sender,
+            CancellationToken.None);
+
+        TelegramInputBundle bundle = Assert.Single(await harness.InputBundleStore.ListAsync(conversation, CancellationToken.None));
+        await MarkBundleIdleAsync(harness, bundle, secondsAgo: 10);
+
+        Assert.True(await harness.Handler.ProcessDueInputBundleAsync(harness.Sender, CancellationToken.None));
+
+        Assert.Equal("thread-1", await harness.StateStore.GetActiveSessionIdAsync(conversation, CancellationToken.None));
+        Assert.Equal(projectPath, Assert.Single(harness.SessionManager.CreateRequests).WorkingDirectory);
+        Assert.Equal(["thread-1"], harness.SessionManager.SendSessionIds);
+        Assert.Equal("retry after rollout loss", Assert.Single(harness.SessionManager.SendRequests));
+        TelegramInputBundle completed = Assert.Single(await harness.InputBundleStore.ListAsync(conversation, CancellationToken.None));
+        Assert.Equal(TelegramInputBundleStatus.Sent, completed.Status);
+        Assert.Contains(harness.Sender.Sent, sent => sent.Text.Contains("could not be resumed", StringComparison.Ordinal));
+        Assert.Contains(harness.Sender.Edited, edited => edited.Text.Contains("Bundle sent to Codex", StringComparison.Ordinal));
+
+        IReadOnlyList<CodexSupervisionRecoverySnapshot> recoveries =
+            await harness.SupervisionLedger.ListRecoveryActionsAsync(1234, CancellationToken.None);
+        Assert.Equal(2, recoveries.Count);
+        Assert.All(recoveries, recovery => Assert.Equal("replace_unreadable_thread", recovery.ActionKind));
+        Assert.Contains(recoveries, recovery => recovery.State == CodexSupervisionRecoveryState.Requested);
+        Assert.Contains(recoveries, recovery => recovery.State == CodexSupervisionRecoveryState.Applied);
+    }
+
+    [Fact]
     public async Task ProcessDueInputBundleAsync_ActiveTurnAutoQueuesAfterInactivity()
     {
         using CommandHandlerHarness harness = CommandHandlerHarness.Create(

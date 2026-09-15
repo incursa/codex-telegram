@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 1.0.51 - 2026-09-15
+
+- Recovered input-bundle auto-dispatch when Codex reports that the selected thread has no rollout, replacing the stale session and retrying the bundle once.
 
 ## 1.0.50 - 2026-09-15
 
