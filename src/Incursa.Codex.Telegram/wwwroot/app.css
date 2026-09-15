@@ -163,6 +163,9 @@ inc-card { display: block; }
 .worker-copy { min-width: 0; }
 .worker-name { overflow: hidden; margin-bottom: 0.2rem; font-size: 0.8rem; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
 .worker-meta { overflow: hidden; color: var(--inc-muted); font: 0.67rem "IBM Plex Mono", ui-monospace, monospace; text-overflow: ellipsis; white-space: nowrap; }
+.worker-status { display: flex; flex: 0 0 auto; align-items: center; gap: 0.45rem; }
+.worker-actions { display: flex; gap: 0.35rem; }
+.compact-button { padding: 0.35rem 0.55rem; font-size: 0.7rem; }
 .supervision-copy { min-width: 0; }
 .supervision-name { overflow: hidden; margin-bottom: 0.2rem; font-size: 0.8rem; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
 .supervision-ids { overflow: hidden; color: var(--inc-muted); font: 0.67rem "IBM Plex Mono", ui-monospace, monospace; text-overflow: ellipsis; white-space: nowrap; }

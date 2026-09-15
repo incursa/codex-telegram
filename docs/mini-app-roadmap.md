@@ -69,6 +69,8 @@ The v1.0.45 R3.11 slice completes the next remote execution boundary. Model/reas
 
 The v1.0.46 R2.2 slice adds the first authenticated Mini App task actions. A user-scoped acknowledgement store records only the exact TaskId, RunId, PacketId, and timestamp; stale runs and cross-user tasks fail closed, and repeated acknowledgement is idempotent. The Mini App can also prepare a bounded `/handoff <thread>` command for the existing Telegram handoff flow. These actions do not execute Codex, grant approval, or bypass Telegram authorization. Bootstrap and detail projections show acknowledgement state, and a newer run makes attention visible again.
 
+The v1.0.47 R3.12 slice adds explicitly confirmed worker drain/resume actions to the Mini App. Local workers apply the change through their existing serialized registry; admitted remote workers receive an authenticated worker-identity-bound control request through the coordinator. Stale or unavailable workers fail closed, and draining changes admission only—existing Codex sessions and leases are not interrupted. The UI returns to the Telegram path for prompts, approvals, and other execution controls.
+
 ## Identity and state vocabulary
 
 Until R1 introduces durable application records, a Mini App task is a Codex thread and its turns are the run history. The implementation must not imply stronger guarantees than the underlying thread state provides.
@@ -87,7 +89,7 @@ Initial display states are `queued`, `running`, `waiting`, `failed`, `completed`
 
 ## Later slices
 
-1. Extend combined Mini App task actions with coordinator-backed worker operations and richer artifact handoff evidence.
+1. Extend combined Mini App task actions with richer artifact handoff evidence.
 2. Add fleet-wide staged rollout coordination, compatibility gates, and safe rollback finalization.
 
 Full IDE behavior, arbitrary terminal/file-manager access, autonomous merge/push/deploy, public multi-tenant hosting, and blind replay of side-effecting work are out of scope.

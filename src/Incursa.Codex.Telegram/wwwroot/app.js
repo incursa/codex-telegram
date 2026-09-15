@@ -465,7 +465,24 @@
       const badge = document.createElement("inc-badge");
       badge.setAttribute("variant", workerVariant(worker));
       badge.textContent = worker.state || "unknown";
-      row.append(copy, badge);
+      const actions = document.createElement("div");
+      actions.className = "worker-actions";
+      if (worker.state === "online" || worker.state === "draining") {
+        const action = document.createElement("button");
+        action.type = "button";
+        action.className = "secondary-button compact-button";
+        action.textContent = worker.state === "draining" ? "Resume" : "Drain";
+        action.disabled = worker.readiness === "unavailable";
+        action.addEventListener("click", (event) => {
+          event.stopPropagation();
+          postWorkerAction(worker, worker.state === "draining" ? "resume" : "drain");
+        });
+        actions.append(action);
+      }
+      const status = document.createElement("div");
+      status.className = "worker-status";
+      status.append(badge, actions);
+      row.append(copy, status);
       list.append(row);
     });
   }
@@ -707,6 +724,28 @@
       if (state.detailThreadId) await openThread(state.detailThreadId);
     } catch (error) {
       showNotice(error.message || "The Mini App task action could not be completed.", true);
+    }
+  }
+
+  async function postWorkerAction(worker, action) {
+    if (!worker?.workerId) return;
+    const verb = action === "drain" ? "drain" : "resume";
+    if (!window.confirm(`${verb === "drain" ? "Drain" : "Resume"} ${worker.displayName || worker.workerId}? ${verb === "drain" ? "Existing sessions will continue; new task claims will stop." : "New task claims will be allowed again."}`)) return;
+    try {
+      const response = await fetch(`/api/mini-app/workers/${encodeURIComponent(worker.workerId)}/actions`, {
+        method: "POST",
+        headers: { ...authHeaders(), "Content-Type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({ action, confirm: true })
+      });
+      if (response.status === 401) throw new Error("Open this Mini App from Telegram to connect your account.");
+      if (response.status === 409) throw new Error("That worker is unavailable or changed state. Refresh the dashboard.");
+      if (!response.ok) throw new Error("The worker action could not be completed.");
+      await response.json();
+      showNotice(`${worker.displayName || worker.workerId} is now ${action === "drain" ? "draining" : "accepting new work"}.`);
+      await load();
+    } catch (error) {
+      showNotice(error.message || "The worker action could not be completed.", true);
     }
   }
 

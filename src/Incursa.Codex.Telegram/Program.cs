@@ -388,6 +388,7 @@ builder.Services.AddSingleton<CodexRemoteSessionRelay>();
 builder.Services.AddSingleton<CodexRemoteSessionControlRelay>();
 builder.Services.AddSingleton<CodexRemoteTaskDetailRelay>();
 builder.Services.AddSingleton<CodexRemoteSessionSettingsRelay>();
+builder.Services.AddSingleton<CodexRemoteWorkerControlRelay>();
 builder.Services.AddSingleton<CodexWorkerUpdateManager>();
 builder.Services.AddSingleton<ICodexWorkerUpdateManager>(sp => sp.GetRequiredService<CodexWorkerUpdateManager>());
 builder.Services.AddSingleton<ICodexTaskRecipeCatalog, CodexTaskRecipeCatalog>();
@@ -447,6 +448,7 @@ CodexRemoteSessionEndpoints.Map(app);
 CodexRemoteSessionControlEndpoints.Map(app);
 CodexRemoteTaskDetailEndpoints.Map(app);
 CodexRemoteSessionSettingsEndpoints.Map(app);
+CodexRemoteWorkerControlEndpoints.Map(app);
 CodexWorkerUpdateEndpoints.Map(app);
 TelegramMiniAppEndpoints.Map(app);
 

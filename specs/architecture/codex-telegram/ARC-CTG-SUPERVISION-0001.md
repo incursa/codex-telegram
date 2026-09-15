@@ -82,7 +82,7 @@ On startup, accepted or in-flight runs are reconciled atomically to non-terminal
 - Completed Telegram delivery or failed Telegram delivery is never used as proof of Codex execution.
 - An ambiguous Codex execution is visible as recovery-required evidence and is never silently resent.
 - `Needs attention` remains a derived display category, not a persisted lifecycle.
-- Mini App and browser projections remain read-only for Codex execution; the separately authorized task-action endpoint may only acknowledge an exact review packet or prepare an existing Telegram handoff command.
+- Mini App and browser projections remain read-only for Codex execution; separately authorized task-action endpoints may only acknowledge an exact review packet, prepare an existing Telegram handoff command, or explicitly drain/resume a worker.
 
 ## R2.1 review packet and handoff
 
@@ -166,9 +166,13 @@ Normal remote prompts may include up to eight attachments, with a 16 MiB per-fil
 
 The `handoff` action returns only the existing `/handoff <CodexThreadId>` command and bounded task identity. It does not send a Telegram message or execute Codex; the user must return to the authorized Telegram conversation. This keeps the Mini App useful for review without making it a second control or approval authority.
 
+## R3.12 Mini App worker operations
+
+`POST /api/mini-app/workers/{workerId}/actions` accepts only explicitly confirmed `drain` and `resume` actions after Telegram or paired-browser authentication. A local worker applies the transition through its serialized registry. For an admitted remote WorkerId, the coordinator resolves a non-stale worker with a private control endpoint and sends an authenticated `/api/worker/v1/worker/control` request; the worker re-checks its exact identity and confirmation before changing its local registry. The response returns only the bounded worker projection and outcome code. Drain prevents new lease acquisition but does not interrupt existing sessions or remove active leases; unavailable workers and mismatched identities fail closed.
+
 ## Later dependency sequence
 
-1. Extend combined Mini App task actions with coordinator-backed worker operations and richer artifact handoff evidence.
+1. Extend combined Mini App task actions with richer artifact handoff evidence.
 2. Add fleet-wide staged rollout coordination, compatibility gates, and safe rollback finalization.
 
 Each step requires focused automated tests plus the repository release floor. Browser and Telegram-live checks remain separate evidence categories.

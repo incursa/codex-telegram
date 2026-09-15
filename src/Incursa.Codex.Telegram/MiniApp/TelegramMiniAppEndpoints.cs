@@ -22,6 +22,7 @@ internal static class TelegramMiniAppEndpoints
         app.MapGet("/api/mini-app/bootstrap", GetBootstrapAsync);
         app.MapGet("/api/mini-app/threads/{threadId}", GetThreadAsync);
         TelegramMiniAppTaskActionEndpoints.Map(app);
+        TelegramMiniAppWorkerActionEndpoints.Map(app);
     }
 
     private static async Task<IResult> StartBrowserPairingAsync(
@@ -361,7 +362,7 @@ internal static class TelegramMiniAppEndpoints
     private static string BuildProjectId(string path)
         => "project-" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(path))).ToLowerInvariant()[..16];
 
-    private static TelegramMiniAppWorkerVm ToWorkerViewModel(CodexWorkerSnapshot worker)
+    internal static TelegramMiniAppWorkerVm ToWorkerViewModel(CodexWorkerSnapshot worker)
         => new(
             worker.WorkerId,
             worker.DisplayName,

@@ -13,13 +13,13 @@
     "telegram": "authentication, operator control, and consequential approval",
     "codex": "thread and turn execution plus execution provenance",
     "local_persistence": "supervision metadata, command receipts, acknowledgements, claims, leases, and recovery evidence; never a replacement for Codex history",
-    "mini_app_and_browser": "authenticated, user-scoped evidence projection with only bounded acknowledgement and handoff preparation actions"
+    "mini_app_and_browser": "authenticated, user-scoped evidence projection with only bounded acknowledgement, handoff preparation, and confirmed worker drain/resume actions"
   },
   "requirements": [
     {
       "id": "REQ-CTG-SUP-0001",
       "title": "Preserve authority boundaries",
-      "statement": "The host MUST keep Telegram as the authentication, operator-control, and consequential-approval authority; Codex MUST remain the execution and execution-provenance authority; and the Mini App and browser surfaces MUST remain bounded evidence surfaces, allowing only the separately approved user-scoped acknowledgement and Telegram-handoff preparation actions.",
+      "statement": "The host MUST keep Telegram as the authentication, operator-control, and consequential-approval authority; Codex MUST remain the execution and execution-provenance authority; and the Mini App and browser surfaces MUST remain bounded evidence surfaces, allowing only the separately approved user-scoped acknowledgement, Telegram-handoff preparation, and confirmed worker drain/resume actions.",
       "trace": {"upstream_refs": ["`docs/mini-app-roadmap.md`", "`SECURITY.md`", "`src/Incursa.Codex.Telegram/MiniApp/TelegramMiniAppEndpoints.cs`", "`src/Incursa.Codex.Telegram/Services/CodexGateway.cs`"]}
     },
     {
@@ -137,6 +137,13 @@
       "statement": "A Mini App or paired-browser acknowledgement MUST require the authenticated allowlisted user, exact owner-bound TaskId, current RunId, and bounded review PacketId; repeated acknowledgement of the same tuple MUST be idempotent, stale runs MUST fail closed, and a newer run MUST make attention visible again. Handoff preparation MAY return only a bounded command for the existing Telegram handoff path and MUST NOT execute Codex, approve an action, or create a browser control path.",
       "coverage": {"positive": "required", "negative": "required", "edge": "required", "restart": "required"},
       "trace": {"upstream_refs": ["`docs/mini-app-roadmap.md`", "`src/Incursa.Codex.Telegram/MiniApp/TelegramMiniAppTaskActionEndpoints.cs`", "`src/Incursa.Codex.Telegram/Services/TelegramMiniAppAcknowledgementStore.cs`", "`src/Incursa.Codex.Telegram/MiniApp/TelegramMiniAppEndpoints.cs`", "`tests/Incursa.Codex.Telegram.Tests/TelegramMiniAppTaskActionTests.cs`"]}
+    },
+    {
+      "id": "REQ-CTG-SUP-0019",
+      "title": "Make Mini App worker controls explicit and drain-aware",
+      "statement": "A Mini App worker drain or resume action MUST require the authenticated allowlisted user and explicit confirmation, MUST target an exact local or currently admitted remote WorkerId, MUST reject stale or unavailable remote workers, and MUST use the worker's serialized registry or authenticated control endpoint. Draining MUST prevent new leases without interrupting existing sessions or removing active leases.",
+      "coverage": {"positive": "required", "negative": "required", "edge": "required", "restart": "required"},
+      "trace": {"upstream_refs": ["`docs/mini-app-roadmap.md`", "`src/Incursa.Codex.Telegram/MiniApp/TelegramMiniAppWorkerActionEndpoints.cs`", "`src/Incursa.Codex.Telegram/MiniApp/CodexRemoteWorkerControlEndpoints.cs`", "`src/Incursa.Codex.Telegram/Services/CodexRemoteWorkerControl.cs`", "`src/Incursa.Codex.Telegram/Services/CodexWorkerRegistry.cs`", "`tests/Incursa.Codex.Telegram.Tests/CodexRemoteWorkerControlTests.cs`"]}
     }
   ],
   "non_goals": ["A competing task database or replacement for Codex history", "Browser prompts, approvals, steering, retries, cancellation, file writes, uploads, commits, merges, or deployments", "Blind replay of side-effecting work after a crash or timeout", "Autonomous merge, push, deploy, or release", "Public multi-tenant hosting or broad implicit Telegram authorization", "Bundling or synchronizing Codex authentication"]

@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 1.0.47 - 2026-09-15
+
+- Added explicit Mini App worker drain/resume actions for local and admitted remote workers.
+- Added authenticated coordinator-to-worker control relay with worker identity, readiness, and stale-worker checks.
+- Kept drain non-disruptive for active sessions and required confirmation for all worker state changes.
+- Added worker control endpoint and relay coverage for authentication, confirmation, identity, and outcome evidence.
+
 ## 1.0.46 - 2026-09-15
 
 - Added a user-scoped durable Mini App acknowledgement for an exact task, run, and review packet.
