@@ -5062,7 +5062,6 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             "/sessions all [count] - show recent Codex history",
             "/new [name] - create and select a Codex session in this conversation",
             "/task <new|status|release|discard> ... - manage an isolated task workspace",
-            "/pair <code> - approve a browser session; /pair status or /pair revoke",
             "/use <sessionId> - select the active session for this conversation",
             "/resume <sessionId> - resume a session in this conversation",
             "/send <text> - send text to the active session",
