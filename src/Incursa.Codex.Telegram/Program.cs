@@ -338,7 +338,8 @@ builder.Services.PostConfigure<TelegramMiniAppOptions>(options =>
 });
 
 builder.Services.AddSingleton(TimeProvider.System);
-builder.Services.AddSingleton<ICodexRealtimeBroadcaster, NullCodexRealtimeBroadcaster>();
+builder.Services.AddSingleton<ICodexRemoteTurnEventForwarder, CodexRemoteTurnEventForwarder>();
+builder.Services.AddSingleton<ICodexRealtimeBroadcaster, CodexRemoteTurnEventBroadcaster>();
 builder.Services.AddSingleton<CodexThreadManifestStore>();
 builder.Services.AddSingleton<ICodexThreadManifestStore>(sp => sp.GetRequiredService<CodexThreadManifestStore>());
 builder.Services.AddSingleton<CodexProjectCatalogStore>();
@@ -366,6 +367,8 @@ builder.Services.AddHttpClient<OpenAiSpeechToTextService>();
 builder.Services.AddHttpClient(nameof(CodexWorkerCoordinatorHostedService));
 builder.Services.AddHttpClient(nameof(CodexCoordinatorLeaseHandoffService));
 builder.Services.AddHttpClient(nameof(CodexRemoteTaskProvisioningService));
+builder.Services.AddHttpClient(nameof(CodexRemoteSessionRelay));
+builder.Services.AddHttpClient(nameof(CodexRemoteTurnEventForwarder));
 builder.Services.AddSingleton<IAudioTranscriptionService>(sp => sp.GetRequiredService<OpenAiSpeechToTextService>());
 builder.Services.AddSingleton<ICodexRuntimeClientFactory, CodexRuntimeClientFactory>();
 builder.Services.AddSingleton<ICodexSessionEventLog, CodexSessionEventLog>();
@@ -378,6 +381,7 @@ builder.Services.AddSingleton<ICodexCoordinatorLeaseStore, CodexCoordinatorLease
 builder.Services.AddSingleton<CodexCoordinatorLeaseHandoffService>();
 builder.Services.AddSingleton<ICodexCoordinatorTaskStore, CodexCoordinatorTaskStore>();
 builder.Services.AddSingleton<CodexRemoteTaskProvisioningService>();
+builder.Services.AddSingleton<CodexRemoteSessionRelay>();
 builder.Services.AddSingleton<CodexWorkerUpdateManager>();
 builder.Services.AddSingleton<ICodexWorkerUpdateManager>(sp => sp.GetRequiredService<CodexWorkerUpdateManager>());
 builder.Services.AddSingleton<ICodexTaskRecipeCatalog, CodexTaskRecipeCatalog>();
@@ -429,7 +433,9 @@ catch (InvalidOperationException exception)
 app.UseDefaultFiles();
 app.UseStaticFiles();
 CodexCoordinatorWorkerEndpoints.Map(app);
+CodexCoordinatorTurnEventEndpoints.Map(app);
 CodexRemoteTaskEndpoints.Map(app);
+CodexRemoteSessionEndpoints.Map(app);
 CodexWorkerUpdateEndpoints.Map(app);
 TelegramMiniAppEndpoints.Map(app);
 

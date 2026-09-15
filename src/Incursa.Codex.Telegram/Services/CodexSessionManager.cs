@@ -89,7 +89,8 @@ internal sealed record CodexSessionSummary(
     DateTimeOffset LastActivityUtc,
     int? ExitCode,
     string? LastError,
-    CodexTurnCloseoutSummary? LastTurnCloseout = null);
+    CodexTurnCloseoutSummary? LastTurnCloseout = null,
+    bool IsRemote = false);
 
 internal enum CodexSessionStatus
 {

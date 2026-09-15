@@ -439,9 +439,11 @@ Example:
 
 Expected behavior:
 
-1. Routes text to the active session or creates one when allowed.
+1. Routes text to the active session or creates one when allowed. When the active session belongs to a remote task, the coordinator sends the bounded command to that task's owning worker.
 2. Useful when Telegram privacy mode or an unsupported chat type prevents normal auto-routing.
 3. Keeps immediate send behavior for command fallback use; normal non-command input is captured into an input bundle by default and can be changed with `TelegramInput:DefaultCaptureMode`.
+
+Remote `/send` currently supports text only. Plan mode is relayed with the same worker-owned execution boundary. Attachments, steering, stopping, model/goal controls, and task workspace status/release remain local-only until their dedicated remote control contracts are added.
 
 ### `/steer <text>`
 
@@ -683,7 +685,7 @@ Use /task status [taskId] to inspect the allocation. Stop the task session befor
 
 ### `/task remote <workerId> [name] [| baseRef] [| recipeId]`
 
-Creates a task on one explicitly selected registered worker. The coordinator first obtains an idempotent lease handoff, then asks the worker to validate its identity, repository admission, recipe version, and local readiness before creating the worktree and Codex session. The worker returns only bounded ownership and allocated-resource metadata; repository paths and Codex execution remain local to that worker. Remote prompt/session relay is a separate capability and is not implied by provisioning.
+Creates a task on one explicitly selected registered worker. The coordinator first obtains an idempotent lease handoff, then asks the worker to validate its identity, repository admission, recipe version, and local readiness before creating the worktree and Codex session. The worker returns only bounded ownership and allocated-resource metadata; repository paths and Codex execution remain local to that worker. After creation, `/send <text>` and Plan mode can target the selected worker; the worker records the durable command before executing it and forwards bounded turn events back to the coordinator. Attachments and remote session controls remain separate capabilities.
 
     /task remote worker:linux Codex review | main | review-branch
 

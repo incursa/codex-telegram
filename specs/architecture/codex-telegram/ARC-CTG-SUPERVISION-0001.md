@@ -138,12 +138,19 @@ The external installer reports completion only through the authenticated `/api/w
 
 ## R3.6 remote task provisioning
 
-`/task remote` is an explicit coordinator operation. The coordinator first obtains a bounded lease handoff for the requested worker and then sends authenticated provisioning metadata to `/api/worker/v1/tasks/provision`. The worker re-checks the grant's WorkerId and LeaseId, its local ready state, its configured Repository mode and exact repository root, and the recipe version before creating the task worktree and Codex session. The worker registers the task locally and the coordinator records only the returned WorkerId, LeaseId, WorkspaceId, Codex thread ID, branch, port, and database namespace. No private filesystem path, credential, prompt body, or transcript is transferred. The endpoint is idempotent by owner and TaskId; it provisions ownership and execution placement but does not yet relay prompts or live turn events.
+`/task remote` is an explicit coordinator operation. The coordinator first obtains a bounded lease handoff for the requested worker and then sends authenticated provisioning metadata to `/api/worker/v1/tasks/provision`. The worker re-checks the grant's WorkerId and LeaseId, its local ready state, its configured Repository mode and exact repository root, and the recipe version before creating the task worktree and Codex session. The worker registers the task locally and the coordinator records only the returned WorkerId, LeaseId, WorkspaceId, Codex thread ID, branch, port, and database namespace. No private filesystem path, credential, prompt body, or transcript is transferred. The endpoint is idempotent by owner and TaskId.
+
+## R3.7 remote prompt and event relay
+
+For a selected remote task, `/send` and Plan mode use an authenticated coordinator-to-worker request at `/api/worker/v1/sessions/send`. The request contains only the bounded task/thread ownership identifiers, Telegram conversation scope, durable CommandId, text, Plan mode, and an exact coordinator callback URL. The worker validates its registered identity, ready state, task ownership, callback configuration, and supervision command receipt before invoking the local Codex session manager. Repeated CommandId values return the recorded execution result and do not start a second turn.
+
+The worker's existing realtime event seam forwards bounded timeline entries for the registered thread to `/api/coordinator/v1/worker-events` using the same exact bearer-token boundary. The coordinator accepts events only from a registered remote worker, republishes them through the normal Telegram output relay, and updates the matching supervision run on terminal events. Callback registrations are intentionally in-memory and must be re-established by a new accepted send after a worker restart. Attachments, steering, cancellation, model/goal controls, and review/file actions are not implied by this slice.
 
 ## Later dependency sequence
 
-1. Add remote task/session relay and cross-worker task ownership to the combined Mini App worker/attention projection.
-2. Add fleet-wide staged rollout coordination, compatibility gates, and safe rollback finalization.
+1. Complete remote session/control relay as separately authorized operations, including steering, stop, attachments, model/goal controls, and task status/release where worker-owned.
+2. Add combined Mini App task detail, attention, review-packet, artifact, and worker views backed by the coordinator's bounded projections.
+3. Add fleet-wide staged rollout coordination, compatibility gates, and safe rollback finalization.
 
 Each step requires focused automated tests plus the repository release floor. Browser and Telegram-live checks remain separate evidence categories.
 

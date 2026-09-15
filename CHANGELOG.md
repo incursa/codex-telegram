@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 1.0.41 - 2026-09-15
+
+- Added authenticated remote text and Plan mode relay to the worker that owns a task.
+- Added bounded worker-to-coordinator turn event forwarding and supervision state reconciliation.
+- Added durable duplicate command detection at the worker boundary; attachments and remote session controls remain separate follow-up capabilities.
+
 ## 1.0.40 - 2026-09-15
 
 - Added explicit coordinator-selected remote task provisioning through an authenticated worker endpoint.

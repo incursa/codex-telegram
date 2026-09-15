@@ -205,6 +205,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
     private readonly ICodexTaskRecipeCatalog? _recipeCatalog;
     private readonly ICodexWorkerUpdateManager? _workerUpdateManager;
     private readonly CodexRemoteTaskProvisioningService? _remoteTaskProvisioner;
+    private readonly CodexRemoteSessionRelay? _remoteSessionRelay;
     private readonly bool _browserPairingEnabled;
     private readonly TelegramBotOptions _options;
     private readonly TelegramInputOptions _inputOptions;
@@ -257,7 +258,8 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         ICodexWorkerRegistry? workerRegistry = null,
         ICodexTaskRecipeCatalog? recipeCatalog = null,
         ICodexWorkerUpdateManager? workerUpdateManager = null,
-        CodexRemoteTaskProvisioningService? remoteTaskProvisioner = null)
+        CodexRemoteTaskProvisioningService? remoteTaskProvisioner = null,
+        CodexRemoteSessionRelay? remoteSessionRelay = null)
     {
         _parser = parser;
         _chunker = chunker;
@@ -303,6 +305,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         _recipeCatalog = recipeCatalog;
         _workerUpdateManager = workerUpdateManager;
         _remoteTaskProvisioner = remoteTaskProvisioner;
+        _remoteSessionRelay = remoteSessionRelay;
     }
 
     public async Task HandleMessageAsync(
@@ -1808,7 +1811,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
 
     private async Task HandleUseAsync(TelegramInboundMessage message, string arguments, ITelegramBotMessageSender sender, CancellationToken cancellationToken)
     {
-        ResolvedSession resolved = await ResolveSessionAsync(message.ConversationScope, arguments, cancellationToken).ConfigureAwait(false);
+        ResolvedSession resolved = await ResolveSessionAsync(message.ConversationScope, arguments, cancellationToken, message.UserId).ConfigureAwait(false);
         if (resolved.Session is null)
         {
             await ReplyAsync(sender, message, resolved.Message, null, cancellationToken).ConfigureAwait(false);
@@ -2435,6 +2438,8 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             return true;
         }
 
+        message = message with { CommandId = supervision.CommandId };
+
         string? supervisionRunId = supervision.Run?.RunId;
         await _stateStore.TrackSessionAsync(session.Id, cancellationToken).ConfigureAwait(false);
 
@@ -2649,20 +2654,53 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             planMode: planMode).ConfigureAwait(false);
     }
 
-    private Task<CodexThreadExecutionVm> StartSessionSendAsync(
+    private async Task<CodexThreadExecutionVm> StartSessionSendAsync(
         TelegramInboundMessage message,
         CodexSessionSummary session,
         string text,
         bool planMode,
         CancellationToken cancellationToken)
-        => message.Attachments is { Count: > 0 }
-            ? _sessionManager.SendAsync(
+    {
+        CodexSupervisionTaskSnapshot? task = await _supervisionLedger.GetTaskForSessionAsync(
+            message.UserId,
+            session.Id,
+            cancellationToken).ConfigureAwait(false);
+        if (task?.WorkerId is not null && _workerRegistry is not null)
+        {
+            CodexWorkerSnapshot localWorker = await _workerRegistry.GetSnapshotAsync(cancellationToken).ConfigureAwait(false);
+            if (!string.Equals(task.WorkerId, localWorker.WorkerId, StringComparison.Ordinal))
+            {
+                if (message.Attachments is { Count: > 0 })
+                {
+                    throw new InvalidOperationException("Remote task relay does not support attachments yet.");
+                }
+
+                if (_remoteSessionRelay is null)
+                {
+                    throw new InvalidOperationException("Remote task relay is not configured.");
+                }
+
+                return await _remoteSessionRelay.SendAsync(
+                    task,
+                    message.UserId,
+                    message.ChatId,
+                    message.MessageThreadId,
+                    message.CommandId ?? $"command:remote:{Guid.NewGuid():N}",
+                    text,
+                    planMode,
+                    cancellationToken).ConfigureAwait(false);
+            }
+        }
+
+        return message.Attachments is { Count: > 0 }
+            ? await _sessionManager.SendAsync(
                 session.Id,
                 TelegramAttachmentInputBuilder.BuildInputItems(text, message.Attachments),
-                cancellationToken)
+                cancellationToken).ConfigureAwait(false)
             : planMode
-                ? _sessionManager.SendPlanAsync(session.Id, text, cancellationToken)
-            : _sessionManager.SendAsync(session.Id, text, cancellationToken);
+                ? await _sessionManager.SendPlanAsync(session.Id, text, cancellationToken).ConfigureAwait(false)
+                : await _sessionManager.SendAsync(session.Id, text, cancellationToken).ConfigureAwait(false);
+    }
 
     private void RegisterTurnReactionTarget(TelegramInboundMessage message, CodexThreadExecutionVm execution)
     {
@@ -4895,7 +4933,10 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         await ReplyAsync(sender, message, $"Forgot {resolved.Session.Name}. Transcript logs were not deleted.", null, cancellationToken).ConfigureAwait(false);
     }
 
-    private async Task<ResolvedSession> ResolveActiveSessionAsync(TelegramConversationScope conversation, CancellationToken cancellationToken)
+    private async Task<ResolvedSession> ResolveActiveSessionAsync(
+        TelegramConversationScope conversation,
+        CancellationToken cancellationToken,
+        long? ownerUserId = null)
     {
         string? activeSessionId = await _stateStore.GetActiveSessionIdAsync(conversation, cancellationToken).ConfigureAwait(false);
         if (string.IsNullOrWhiteSpace(activeSessionId))
@@ -4920,8 +4961,12 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
 
         if (session is null)
         {
-            await _stateStore.ClearActiveSessionAsync(conversation, cancellationToken).ConfigureAwait(false);
-            return new ResolvedSession(null, "The selected session is no longer known. Use /sessions, /new [name], /use <sessionId>, or send a message to start a new session.");
+            session = await GetRemoteSessionAsync(ownerUserId ?? conversation.ChatId, activeSessionId, cancellationToken).ConfigureAwait(false);
+            if (session is null)
+            {
+                await _stateStore.ClearActiveSessionAsync(conversation, cancellationToken).ConfigureAwait(false);
+                return new ResolvedSession(null, "The selected session is no longer known. Use /sessions, /new [name], /use <sessionId>, or send a message to start a new session.");
+            }
         }
 
         if (!IsSessionInConfiguredRepository(session))
@@ -4932,12 +4977,16 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         return new ResolvedSession(session, string.Empty);
     }
 
-    private async Task<ResolvedSession> ResolveSessionAsync(TelegramConversationScope conversation, string arguments, CancellationToken cancellationToken)
+    private async Task<ResolvedSession> ResolveSessionAsync(
+        TelegramConversationScope conversation,
+        string arguments,
+        CancellationToken cancellationToken,
+        long? ownerUserId = null)
     {
         string sessionId = SplitArguments(arguments, 2).FirstOrDefault() ?? string.Empty;
         if (string.IsNullOrWhiteSpace(sessionId))
         {
-            return await ResolveActiveSessionAsync(conversation, cancellationToken).ConfigureAwait(false);
+            return await ResolveActiveSessionAsync(conversation, cancellationToken, ownerUserId).ConfigureAwait(false);
         }
 
         IReadOnlyCollection<CodexSessionSummary> sessions = await _sessionManager.ListSessionsAsync(cancellationToken).ConfigureAwait(false);
@@ -4945,6 +4994,16 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             .Where(session => session.Id.Equals(sessionId, StringComparison.OrdinalIgnoreCase)
                 || session.Id.StartsWith(sessionId, StringComparison.OrdinalIgnoreCase))
             .ToList();
+
+        foreach (CodexSupervisionTaskSnapshot task in await _supervisionLedger.ListTasksAsync(ownerUserId ?? conversation.ChatId, cancellationToken).ConfigureAwait(false))
+        {
+            if ((task.CodexThreadId.Equals(sessionId, StringComparison.OrdinalIgnoreCase)
+                    || task.CodexThreadId.StartsWith(sessionId, StringComparison.OrdinalIgnoreCase))
+                && matches.All(session => !session.Id.Equals(task.CodexThreadId, StringComparison.Ordinal)))
+            {
+                matches.Add(ToRemoteSession(task));
+            }
+        }
 
         if (IsRepositoryMode)
         {
@@ -4984,7 +5043,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
 
     private async Task<CodexSessionSummary> ResolveOrCreateChatSessionAsync(TelegramInboundMessage message, CancellationToken cancellationToken)
     {
-        ResolvedSession resolved = await ResolveActiveSessionAsync(message.ConversationScope, cancellationToken).ConfigureAwait(false);
+        ResolvedSession resolved = await ResolveActiveSessionAsync(message.ConversationScope, cancellationToken, message.UserId).ConfigureAwait(false);
         if (resolved.Session is not null)
         {
             return resolved.Session;
@@ -5079,7 +5138,30 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
     }
 
     private bool IsSessionInConfiguredRepository(CodexSessionSummary session)
-        => !IsRepositoryMode || PathsEqual(session.WorkingDirectory, _configuredRepositoryPath);
+        => session.IsRemote || !IsRepositoryMode || PathsEqual(session.WorkingDirectory, _configuredRepositoryPath);
+
+    private async Task<CodexSessionSummary?> GetRemoteSessionAsync(
+        long userId,
+        string sessionId,
+        CancellationToken cancellationToken)
+    {
+        CodexSupervisionTaskSnapshot? task = (await _supervisionLedger.ListTasksAsync(userId, cancellationToken).ConfigureAwait(false))
+            .FirstOrDefault(candidate => string.Equals(candidate.CodexThreadId, sessionId, StringComparison.Ordinal));
+        return task is null ? null : ToRemoteSession(task);
+    }
+
+    private static CodexSessionSummary ToRemoteSession(CodexSupervisionTaskSnapshot task)
+        => new(
+            task.CodexThreadId,
+            task.SessionName,
+            CodexSessionStatus.Exited,
+            null,
+            task.CreatedAt,
+            task.UpdatedAt,
+            null,
+            null,
+            null,
+            true);
 
     private string BuildRepositorySessionRejectedMessage()
         => IsRepositoryMode

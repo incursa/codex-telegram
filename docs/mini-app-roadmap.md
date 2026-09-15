@@ -55,7 +55,9 @@ The v1.0.38 R3.5 slice adds the coordinator lease-handoff protocol. Workers adve
 
 The v1.0.39 R5.3 slice adds authenticated external-installer completion evidence. A staged update becomes active only after the restarted worker reports matching version/digest, ready worker state, and a positive health result. Failed verification is persisted as `HealthFailed`, and rollback remains an explicit drain-aware operation.
 
-The v1.0.40 R3.6 slice uses the coordinator lease handoff for explicit remote task provisioning. `/task remote` chooses one registered worker, and the worker re-checks its identity, admitted repository root, recipe version, readiness, and local lease before creating its own worktree and Codex session. The coordinator retains only bounded task ownership/resource metadata; it does not receive private paths, credentials, prompts, or transcripts, and provisioning does not claim to provide prompt/session relay.
+The v1.0.40 R3.6 slice uses the coordinator lease handoff for explicit remote task provisioning. `/task remote` chooses one registered worker, and the worker re-checks its identity, admitted repository root, recipe version, readiness, and local lease before creating its own worktree and Codex session. The coordinator retains only bounded task ownership/resource metadata; it does not receive private paths, credentials, prompts, or transcripts.
+
+The v1.0.41 R3.7 slice adds authenticated Telegram text and Plan mode relay for a selected remote task. The coordinator sends a bounded command with the durable CommandId and an exact callback URL; the worker re-checks task ownership, local readiness, callback configuration, and command idempotency before invoking its local Codex session. Worker timeline events are forwarded to the coordinator over the authenticated callback and projected to Telegram, while terminal events reconcile the coordinator's supervision run. Attachments, remote steering/stopping, model/goal controls, and file/review actions remain separate capabilities.
 
 ## Identity and state vocabulary
 
@@ -75,7 +77,8 @@ Initial display states are `queued`, `running`, `waiting`, `failed`, `completed`
 
 ## Later slices
 
-1. Add remote task/session relay and cross-worker task ownership to the combined Mini App worker/attention projection.
-2. Add fleet-wide staged rollout coordination, compatibility gates, and safe rollback finalization.
+1. Complete remote session/control relay as separately authorized operations, including steering, stop, attachments, model/goal controls, and task status/release where worker-owned.
+2. Add combined Mini App task detail, attention, review-packet, artifact, and worker views backed by the coordinator's bounded projections.
+3. Add fleet-wide staged rollout coordination, compatibility gates, and safe rollback finalization.
 
 Full IDE behavior, arbitrary terminal/file-manager access, autonomous merge/push/deploy, public multi-tenant hosting, and blind replay of side-effecting work are out of scope.
