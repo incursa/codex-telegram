@@ -6,5 +6,6 @@ Canonical entry point:
 
 - [`SPEC-CTG-TEST.json`](./SPEC-CTG-TEST.json) - replaceable Codex seam, scripted turn behaviors, and validation coverage expectations
 - [`SPEC-CTG-PLAN.json`](./SPEC-CTG-PLAN.json) - Telegram plan-mode bridge, runtime-client propagation, and goal-mode separation
+- [`SPEC-CTG-SUPERVISION.json`](./SPEC-CTG-SUPERVISION.json) - supervision workspace authority, identity, recovery, and staged worker contracts
 
 This index is a navigation aid only. The JSON SPEC artifact is authoritative.

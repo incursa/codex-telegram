@@ -11,6 +11,44 @@ namespace Incursa.Codex.Telegram.Tests;
 public sealed class TelegramHostedServiceUpdateAdapterTests
 {
     [Fact]
+    public async Task HandleUpdateAsync_DeduplicatesCompletedUpdateAcrossCalls()
+    {
+        using Harness harness = Harness.Create();
+        Update update = new()
+        {
+            Id = 1001,
+            Message = CreateMessage(text: "run this", messageId: 42),
+        };
+
+        await harness.Service.HandleUpdateAsync(harness.FileClient, update, harness.Sender, CancellationToken.None);
+        await harness.Service.HandleUpdateAsync(harness.FileClient, update, harness.Sender, CancellationToken.None);
+
+        TelegramInboundMessage message = Assert.Single(harness.Handler.Messages);
+        Assert.Equal(1001, message.UpdateId);
+        Assert.Single(harness.Sender.Acknowledgements);
+    }
+
+    [Fact]
+    public async Task HandleUpdateAsync_AllowsRetryWhenHandlerFails()
+    {
+        using Harness harness = Harness.Create();
+        harness.Handler.FailuresRemaining = 1;
+        Update update = new()
+        {
+            Id = 1002,
+            Message = CreateMessage(text: "retry this", messageId: 43),
+        };
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            harness.Service.HandleUpdateAsync(harness.FileClient, update, harness.Sender, CancellationToken.None));
+
+        await harness.Service.HandleUpdateAsync(harness.FileClient, update, harness.Sender, CancellationToken.None);
+
+        Assert.Single(harness.Handler.Messages);
+        Assert.Equal(1002, Assert.Single(harness.Handler.Messages).UpdateId);
+    }
+
+    [Fact]
     public async Task HandleUpdateAsync_DownloadsPhotoDocumentAndCaptionBeforeForwarding()
     {
         using Harness harness = Harness.Create();
@@ -662,6 +700,30 @@ public sealed class TelegramHostedServiceUpdateAdapterTests
         Assert.Equal("model:thread-1", callback.Data);
         Assert.Equal(77, callback.MessageThreadId);
         Assert.Equal(42, callback.SourceMessageId);
+        Assert.Equal(12, callback.UpdateId);
+    }
+
+    [Fact]
+    public async Task HandleUpdateAsync_DeduplicatesCompletedCallbackAcrossCalls()
+    {
+        using Harness harness = Harness.Create();
+        Update update = new()
+        {
+            Id = 1003,
+            CallbackQuery = new CallbackQuery
+            {
+                Id = "callback-replay",
+                From = CreateUser(1234),
+                Data = "status:thread-1",
+                Message = CreateMessage(messageId: 44),
+            },
+        };
+
+        await harness.Service.HandleUpdateAsync(harness.FileClient, update, harness.Sender, CancellationToken.None);
+        await harness.Service.HandleUpdateAsync(harness.FileClient, update, harness.Sender, CancellationToken.None);
+
+        TelegramInboundCallback callback = Assert.Single(harness.Handler.Callbacks);
+        Assert.Equal(1003, callback.UpdateId);
     }
 
     [Fact]
@@ -1011,6 +1073,8 @@ public sealed class TelegramHostedServiceUpdateAdapterTests
 
         public List<TelegramInboundCallback> Callbacks { get; } = [];
 
+        public int FailuresRemaining { get; set; }
+
         public bool AudioPathExistedDuringHandle { get; private set; }
 
         public Task HandleMessageAsync(
@@ -1018,6 +1082,12 @@ public sealed class TelegramHostedServiceUpdateAdapterTests
             ITelegramBotMessageSender sender,
             CancellationToken cancellationToken)
         {
+            if (FailuresRemaining > 0)
+            {
+                FailuresRemaining--;
+                throw new InvalidOperationException("handler failure");
+            }
+
             if (!string.IsNullOrWhiteSpace(message.AudioFilePath))
             {
                 AudioPathExistedDuringHandle = File.Exists(message.AudioFilePath);

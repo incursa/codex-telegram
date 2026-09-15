@@ -7,6 +7,87 @@ namespace Incursa.Codex.Telegram.Tests;
 public sealed class TelegramBotStateStoreTests
 {
     [Fact]
+    public async Task UpdateReceiptsPersistCompletionAndRejectReplays()
+    {
+        using TemporaryDirectory temp = TemporaryDirectory.Create();
+        TelegramBotStateStore store = CreateStore(temp.Path);
+
+        Assert.True(await store.TryBeginUpdateAsync(42, CancellationToken.None));
+        Assert.False(await store.TryBeginUpdateAsync(42, CancellationToken.None));
+
+        await store.CompleteUpdateAsync(42, CancellationToken.None);
+        store.Dispose();
+
+        TelegramBotStateStore reloaded = CreateStore(temp.Path);
+        Assert.False(await reloaded.TryBeginUpdateAsync(42, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task AbandonedUpdateReceiptCanBeClaimedAgain()
+    {
+        using TemporaryDirectory temp = TemporaryDirectory.Create();
+        TelegramBotStateStore store = CreateStore(temp.Path);
+
+        Assert.True(await store.TryBeginUpdateAsync(43, CancellationToken.None));
+        await store.AbandonUpdateAsync(43, CancellationToken.None);
+
+        Assert.True(await store.TryBeginUpdateAsync(43, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task ConcurrentClaimsAllowOnlyOneOwner()
+    {
+        using TemporaryDirectory temp = TemporaryDirectory.Create();
+        TelegramBotStateStore store = CreateStore(temp.Path);
+
+        bool[] results = await Task.WhenAll(Enumerable.Range(0, 8)
+            .Select(_ => store.TryBeginUpdateAsync(44, CancellationToken.None)));
+
+        Assert.Single(results, result => result);
+    }
+
+    [Fact]
+    public async Task ExpiredInFlightReceiptCanBeReclaimed()
+    {
+        using TemporaryDirectory temp = TemporaryDirectory.Create();
+        ManualTimeProvider clock = new(DateTimeOffset.Parse("2026-09-14T12:00:00Z"));
+        TelegramBotStateStore store = CreateStore(temp.Path, clock);
+
+        Assert.True(await store.TryBeginUpdateAsync(45, CancellationToken.None));
+        clock.Advance(TimeSpan.FromMinutes(16));
+
+        Assert.True(await store.TryBeginUpdateAsync(45, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task CompletedReceiptIsPrunedAfterRetentionWindow()
+    {
+        using TemporaryDirectory temp = TemporaryDirectory.Create();
+        ManualTimeProvider clock = new(DateTimeOffset.Parse("2026-09-14T12:00:00Z"));
+        TelegramBotStateStore store = CreateStore(temp.Path, clock);
+
+        Assert.True(await store.TryBeginUpdateAsync(46, CancellationToken.None));
+        await store.CompleteUpdateAsync(46, CancellationToken.None);
+        clock.Advance(TimeSpan.FromDays(8));
+
+        Assert.True(await store.TryBeginUpdateAsync(46, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task LegacyStateWithoutReceiptsRemainsReadable()
+    {
+        using TemporaryDirectory temp = TemporaryDirectory.Create();
+        await File.WriteAllTextAsync(
+            Path.Combine(temp.Path, "telegram-state.json"),
+            "{\"TrackedSessionIds\":[\"thread-legacy\"]}",
+            CancellationToken.None);
+        TelegramBotStateStore store = CreateStore(temp.Path);
+
+        Assert.True(await store.TryBeginUpdateAsync(47, CancellationToken.None));
+        Assert.Contains("thread-legacy", await store.GetTrackedSessionIdsAsync(CancellationToken.None));
+    }
+
+    [Fact]
     public async Task StatePersistsActiveSessionAndProjectByConversationScope()
     {
         using TemporaryDirectory temp = TemporaryDirectory.Create();
@@ -179,12 +260,21 @@ public sealed class TelegramBotStateStoreTests
             conversation.MessageThreadId,
             null);
 
-    private static TelegramBotStateStore CreateStore(string dataRoot)
+    private static TelegramBotStateStore CreateStore(string dataRoot, TimeProvider? timeProvider = null)
         => new(Microsoft.Extensions.Options.Options.Create(new CodexTelegramOptions
         {
             Workspace = new CodexWorkspaceOptions
             {
                 DataRoot = dataRoot,
             },
-        }));
+        }), timeProvider ?? TimeProvider.System);
+
+    private sealed class ManualTimeProvider(DateTimeOffset utcNow) : TimeProvider
+    {
+        private DateTimeOffset _utcNow = utcNow;
+
+        public override DateTimeOffset GetUtcNow() => _utcNow;
+
+        public void Advance(TimeSpan amount) => _utcNow += amount;
+    }
 }

@@ -129,7 +129,8 @@ internal sealed record TelegramInboundMessage(
     TelegramReplyContext? ReplyContext = null,
     bool ReplyContextWasOperationalBotCard = false,
     string? TraceId = null,
-    IReadOnlyList<int>? SourceMessageIds = null)
+    IReadOnlyList<int>? SourceMessageIds = null,
+    long? UpdateId = null)
 {
     public TelegramConversationScope ConversationScope => new(ChatId, MessageThreadId);
 }
@@ -142,7 +143,8 @@ internal sealed record TelegramInboundCallback(
     string? Data,
     int? MessageThreadId = null,
     int? SourceMessageId = null,
-    string? TraceId = null)
+    string? TraceId = null,
+    long? UpdateId = null)
 {
     public TelegramConversationScope ConversationScope => new(ChatId, MessageThreadId);
 }
@@ -6569,7 +6571,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
     }
 
     private static TelegramInboundMessage ToMessage(TelegramInboundCallback callback)
-        => new(callback.UserId, callback.ChatId, callback.ChatType, null, callback.MessageThreadId, SourceMessageId: callback.SourceMessageId, TraceId: callback.TraceId);
+        => new(callback.UserId, callback.ChatId, callback.ChatType, null, callback.MessageThreadId, SourceMessageId: callback.SourceMessageId, TraceId: callback.TraceId, UpdateId: callback.UpdateId);
 
     private static bool IsLive(CodexSessionStatus status)
         => status is CodexSessionStatus.Running or CodexSessionStatus.Starting;

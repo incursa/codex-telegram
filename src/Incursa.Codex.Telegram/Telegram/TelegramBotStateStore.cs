@@ -10,6 +10,12 @@ namespace Incursa.Codex.Telegram.Telegram;
 
 internal interface ITelegramBotStateStore
 {
+    Task<bool> TryBeginUpdateAsync(long updateId, CancellationToken cancellationToken);
+
+    Task CompleteUpdateAsync(long updateId, CancellationToken cancellationToken);
+
+    Task AbandonUpdateAsync(long updateId, CancellationToken cancellationToken);
+
     Task<string?> GetActiveSessionIdAsync(TelegramConversationScope conversation, CancellationToken cancellationToken);
 
     Task SetActiveSessionIdAsync(TelegramConversationScope conversation, string sessionId, CancellationToken cancellationToken);
@@ -118,8 +124,18 @@ internal sealed record TelegramConversationState(
     int QueuedPromptCount,
     DateTimeOffset? OldestQueuedPromptAt);
 
+internal sealed record TelegramUpdateReceipt(
+    long UpdateId,
+    DateTimeOffset StartedAt,
+    DateTimeOffset? CompletedAt,
+    int AttemptCount);
+
 internal sealed class TelegramBotStateStore : ITelegramBotStateStore, IDisposable
 {
+    private static readonly TimeSpan UpdateReceiptLease = TimeSpan.FromMinutes(15);
+    private static readonly TimeSpan CompletedUpdateRetention = TimeSpan.FromDays(7);
+    private const int MaxUpdateReceipts = 2_000;
+
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly JsonSerializerOptions _jsonOptions = new(JsonSerializerDefaults.Web)
     {
@@ -128,10 +144,17 @@ internal sealed class TelegramBotStateStore : ITelegramBotStateStore, IDisposabl
     private readonly IOptions<CodexTelegramOptions> _options;
     private readonly string _dataRoot;
     private readonly Mutex? _instanceLock;
+    private readonly TimeProvider _timeProvider;
 
     public TelegramBotStateStore(IOptions<CodexTelegramOptions> options)
+        : this(options, TimeProvider.System)
+    {
+    }
+
+    internal TelegramBotStateStore(IOptions<CodexTelegramOptions> options, TimeProvider timeProvider)
     {
         _options = options;
+        _timeProvider = timeProvider;
         _dataRoot = GetDataRoot();
         _instanceLock = null;
         if (OperatingSystem.IsWindows())
@@ -180,6 +203,98 @@ internal sealed class TelegramBotStateStore : ITelegramBotStateStore, IDisposabl
     }
 
     internal string DataRoot => _dataRoot;
+
+    public async Task<bool> TryBeginUpdateAsync(long updateId, CancellationToken cancellationToken)
+    {
+        if (updateId <= 0)
+        {
+            return true;
+        }
+
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            TelegramBotState state = await LoadStateCoreAsync(cancellationToken).ConfigureAwait(false);
+            DateTimeOffset now = _timeProvider.GetUtcNow();
+            EnsureUpdateReceipts(state);
+            PruneUpdateReceipts(state, now);
+            TelegramUpdateReceipt? existing = state.UpdateReceipts.FirstOrDefault(receipt => receipt.UpdateId == updateId);
+            if (existing is not null)
+            {
+                if (existing.CompletedAt.HasValue || now - existing.StartedAt < UpdateReceiptLease)
+                {
+                    return false;
+                }
+
+                state.UpdateReceipts.Remove(existing);
+            }
+
+            state.UpdateReceipts.Add(new TelegramUpdateReceipt(updateId, now, null, (existing?.AttemptCount ?? 0) + 1));
+            TrimUpdateReceipts(state);
+            await SaveStateCoreAsync(state, cancellationToken).ConfigureAwait(false);
+            return true;
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    public async Task CompleteUpdateAsync(long updateId, CancellationToken cancellationToken)
+    {
+        if (updateId <= 0)
+        {
+            return;
+        }
+
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            TelegramBotState state = await LoadStateCoreAsync(cancellationToken).ConfigureAwait(false);
+            DateTimeOffset now = _timeProvider.GetUtcNow();
+            EnsureUpdateReceipts(state);
+            PruneUpdateReceipts(state, now);
+            int index = state.UpdateReceipts.FindIndex(receipt => receipt.UpdateId == updateId);
+            if (index < 0)
+            {
+                return;
+            }
+
+            TelegramUpdateReceipt receipt = state.UpdateReceipts[index];
+            if (!receipt.CompletedAt.HasValue)
+            {
+                state.UpdateReceipts[index] = receipt with { CompletedAt = now };
+                await SaveStateCoreAsync(state, cancellationToken).ConfigureAwait(false);
+            }
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    public async Task AbandonUpdateAsync(long updateId, CancellationToken cancellationToken)
+    {
+        if (updateId <= 0)
+        {
+            return;
+        }
+
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            TelegramBotState state = await LoadStateCoreAsync(cancellationToken).ConfigureAwait(false);
+            EnsureUpdateReceipts(state);
+            if (state.UpdateReceipts.RemoveAll(receipt => receipt.UpdateId == updateId) > 0)
+            {
+                await SaveStateCoreAsync(state, cancellationToken).ConfigureAwait(false);
+            }
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
 
     public void Dispose()
     {
@@ -581,7 +696,9 @@ internal sealed class TelegramBotStateStore : ITelegramBotStateStore, IDisposabl
 
         await using FileStream stream = File.OpenRead(statePath);
         TelegramBotState? state = await JsonSerializer.DeserializeAsync<TelegramBotState>(stream, _jsonOptions, cancellationToken).ConfigureAwait(false);
-        return state ?? new TelegramBotState();
+        state ??= new TelegramBotState();
+        EnsureUpdateReceipts(state);
+        return state;
     }
 
     private async Task SaveStateCoreAsync(TelegramBotState state, CancellationToken cancellationToken)
@@ -715,6 +832,8 @@ internal sealed class TelegramBotStateStore : ITelegramBotStateStore, IDisposabl
 
     private sealed class TelegramBotState
     {
+        public int SchemaVersion { get; set; } = 2;
+
         [JsonPropertyName("ActiveSessionsByUserId")]
         public Dictionary<string, string> ActiveSessionsByScope { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
@@ -728,5 +847,30 @@ internal sealed class TelegramBotStateStore : ITelegramBotStateStore, IDisposabl
         public List<long> TrustedChatIds { get; set; } = [];
 
         public List<TelegramQueuedPrompt> QueuedPrompts { get; set; } = [];
+
+        public List<TelegramUpdateReceipt> UpdateReceipts { get; set; } = [];
+    }
+
+    private static void PruneUpdateReceipts(TelegramBotState state, DateTimeOffset now)
+    {
+        state.UpdateReceipts.RemoveAll(receipt =>
+            receipt.CompletedAt.HasValue
+                ? now - receipt.CompletedAt.Value > CompletedUpdateRetention
+                : now - receipt.StartedAt > UpdateReceiptLease);
+    }
+
+    private static void EnsureUpdateReceipts(TelegramBotState state)
+        => state.UpdateReceipts ??= [];
+
+    private static void TrimUpdateReceipts(TelegramBotState state)
+    {
+        if (state.UpdateReceipts.Count <= MaxUpdateReceipts)
+        {
+            return;
+        }
+
+        state.UpdateReceipts.Sort(static (left, right) =>
+            (left.CompletedAt ?? left.StartedAt).CompareTo(right.CompletedAt ?? right.StartedAt));
+        state.UpdateReceipts.RemoveRange(0, state.UpdateReceipts.Count - MaxUpdateReceipts);
     }
 }

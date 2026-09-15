@@ -186,6 +186,30 @@ internal sealed class TelegramCodexBotHostedService : BackgroundService
         ITelegramBotMessageSender sender,
         CancellationToken cancellationToken)
     {
+        if (!await _stateStore.TryBeginUpdateAsync(update.Id, cancellationToken).ConfigureAwait(false))
+        {
+            _logger.LogDebug("Ignoring replayed or concurrently processing Telegram update {UpdateId}.", update.Id);
+            return;
+        }
+
+        try
+        {
+            await HandleUpdateCoreAsync(client, update, sender, cancellationToken).ConfigureAwait(false);
+            await _stateStore.CompleteUpdateAsync(update.Id, cancellationToken).ConfigureAwait(false);
+        }
+        catch
+        {
+            await _stateStore.AbandonUpdateAsync(update.Id, CancellationToken.None).ConfigureAwait(false);
+            throw;
+        }
+    }
+
+    private async Task HandleUpdateCoreAsync(
+        ITelegramUpdateFileClient client,
+        Update update,
+        ITelegramBotMessageSender sender,
+        CancellationToken cancellationToken)
+    {
         Message? message = update.Message ?? update.BusinessMessage;
         if (message is not null)
         {
@@ -331,7 +355,8 @@ internal sealed class TelegramCodexBotHostedService : BackgroundService
                 SourceMessageId: message.MessageId,
                 ReplyContext: replyContext,
                 ReplyContextWasOperationalBotCard: replyContextWasOperationalBotCard,
-                TraceId: traceId);
+                TraceId: traceId,
+                UpdateId: update.Id);
 
             if (attachments is { Count: > 0 })
             {
@@ -367,7 +392,8 @@ internal sealed class TelegramCodexBotHostedService : BackgroundService
             callback.Data,
             callback.Message.MessageThreadId,
             callback.Message.MessageId,
-            callbackTraceId);
+            callbackTraceId,
+            update.Id);
 
         await _handler.HandleCallbackAsync(inboundCallback, sender, cancellationToken).ConfigureAwait(false);
     }

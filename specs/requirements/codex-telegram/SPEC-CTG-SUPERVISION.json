@@ -1,0 +1,59 @@
+{
+  "artifact_id": "SPEC-CTG-SUPERVISION",
+  "artifact_type": "specification",
+  "title": "Codex Telegram Supervision Workspace",
+  "domain": "codex-telegram",
+  "capability": "supervision-workspace",
+  "status": "draft",
+  "owner": "codex-telegram-maintainers",
+  "tags": ["codex", "telegram", "supervision", "recovery", "workers", "mini-app"],
+  "purpose": "Define the authority, identity, recovery, isolation, review, browser, recipe, and release contracts for supervising Codex work across private self-hosted workers.",
+  "scope": "This specification covers the staged supervision workspace roadmap. It establishes the boundaries for the first durable Telegram update receipt slice while keeping the later Task, Run, Worker, Workspace, browser pairing, recipe, and update contracts explicit before their implementation.",
+  "authority": {
+    "telegram": "authentication, operator control, and consequential approval",
+    "codex": "thread and turn execution plus execution provenance",
+    "local_persistence": "supervision metadata, command receipts, acknowledgements, claims, leases, and recovery evidence; never a replacement for Codex history",
+    "mini_app_and_browser": "authenticated, user-scoped, read-only projection"
+  },
+  "requirements": [
+    {
+      "id": "REQ-CTG-SUP-0001",
+      "title": "Preserve authority boundaries",
+      "statement": "The host MUST keep Telegram as the authentication, operator-control, and consequential-approval authority; Codex MUST remain the execution and execution-provenance authority; and the Mini App and browser surfaces MUST remain read-only until a separately approved authorization contract exists.",
+      "trace": {"upstream_refs": ["`docs/mini-app-roadmap.md`", "`SECURITY.md`", "`src/Incursa.Codex.Telegram/MiniApp/TelegramMiniAppEndpoints.cs`", "`src/Incursa.Codex.Telegram/Services/CodexGateway.cs`"]}
+    },
+    {
+      "id": "REQ-CTG-SUP-0002",
+      "title": "Separate application identity from Codex provenance",
+      "statement": "The durable supervision model MUST distinguish ConversationId, TaskId, RunId, CommandId, ApprovalId, WorkerId, WorkspaceId, LeaseId, and RecipeVersion from Codex thread and turn identifiers; Codex identifiers MUST be retained as provenance and MUST NOT be treated as substitutes for application identity.",
+      "trace": {"upstream_refs": ["`docs/mini-app-roadmap.md`", "`src/Incursa.Codex.Telegram/Telegram/TelegramConversationScope.cs`", "`src/Incursa.Codex.Telegram/Services/CodexThreadManifestStore.cs`"]}
+    },
+    {
+      "id": "REQ-CTG-SUP-0003",
+      "title": "Record Telegram update delivery idempotency",
+      "statement": "The Telegram update boundary MUST atomically persist a bounded receipt for each positive Telegram update ID, reject completed or non-expired in-flight replays, reclaim expired in-flight receipts, and remain backward compatible with state files that predate the receipt collection.",
+      "coverage": {"positive": "required", "negative": "required", "edge": "required", "restart": "required"},
+      "trace": {"upstream_refs": ["`src/Incursa.Codex.Telegram/Telegram/TelegramBotStateStore.cs`", "`src/Incursa.Codex.Telegram/Telegram/TelegramCodexBotHostedService.cs`", "`tests/Incursa.Codex.Telegram.Tests/TelegramBotStateStoreTests.cs`", "`tests/Incursa.Codex.Telegram.Tests/TelegramHostedServiceUpdateAdapterTests.cs`"]},
+      "notes": ["Telegram UpdateId is a transport receipt key, not the future application-owned CommandId.", "A handler failure abandons the receipt for retry; an unclean process termination leaves a lease that can be reclaimed after expiry."]
+    },
+    {
+      "id": "REQ-CTG-SUP-0004",
+      "title": "Separate execution and delivery lifecycle",
+      "statement": "Durable supervision records MUST represent execution lifecycle, approval state, claim or recovery state, and Telegram delivery state as separate dimensions so a failed notification cannot turn a completed Codex run into a failed run and an ambiguous execution cannot be blindly replayed.",
+      "trace": {"upstream_refs": ["`docs/mini-app-roadmap.md`", "`src/Incursa.Codex.Telegram/Services/CodexSessionRuntimeRegistry.cs`", "`src/Incursa.Codex.Telegram/Telegram/OutboundTelegramQueue.cs`"]}
+    },
+    {
+      "id": "REQ-CTG-SUP-0005",
+      "title": "Fail closed on unsafe scope or approval",
+      "statement": "Unknown, malformed, stale, replayed, cross-user, cross-chat, cross-topic, or ambiguous control and approval actions MUST fail closed; recovery MUST preserve evidence and MUST NOT blindly resend a side-effecting Codex command.",
+      "trace": {"upstream_refs": ["`SECURITY.md`", "`src/Incursa.Codex.Telegram/Telegram/TelegramAuthorization.cs`", "`src/Incursa.Codex.Telegram/Telegram/TelegramPlanInputCoordinator.cs`", "`src/Incursa.Codex.Telegram/Services/CodexSessionRuntimeRegistry.cs`"]}
+    },
+    {
+      "id": "REQ-CTG-SUP-0006",
+      "title": "Keep later worker and review contracts inspectable",
+      "statement": "Review packets, task workspaces, worker routing, browser pairing, recipes, and worker updates MUST carry bounded provenance, explicit ownership, compatibility and lifecycle state, and operator-visible evidence before they are exposed as a user-visible capability.",
+      "trace": {"upstream_refs": ["`docs/mini-app-roadmap.md`", "`docs/testing.md`", "`docs/operations.md`"]}
+    }
+  ],
+  "non_goals": ["A competing task database or replacement for Codex history", "Browser prompts, approvals, steering, retries, cancellation, file writes, uploads, commits, merges, or deployments", "Blind replay of side-effecting work after a crash or timeout", "Autonomous merge, push, deploy, or release", "Public multi-tenant hosting or broad implicit Telegram authorization", "Bundling or synchronizing Codex authentication"]
+}

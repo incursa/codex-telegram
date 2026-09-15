@@ -71,6 +71,8 @@ When documenting a verification result, label it as `automated`, `synthetic`, `l
 
 For workspace-mode changes, cover both `CodexTelegram:Mode=GeneralPurpose` (workspace-root browsing/project selection) and `CodexTelegram:Mode=Repository` (explicit `RepositoryRoot` boundary). For two-instance tests, use distinct Telegram tokens and `DataRoot` values so one process cannot consume the other's updates or state.
 
+For Telegram update-boundary changes, automated coverage must prove atomic duplicate exclusion, completed replay suppression after state reload, stale in-flight lease reclamation, bounded retention, compatibility with legacy state files, retry after handler failure, and propagation of the transport `UpdateId` without treating it as an application `CommandId`.
+
 For Mini App changes, keep these evidence categories separate:
 
 - `automated`: projection, authorization, bounded payload, and no-manifest-write tests.

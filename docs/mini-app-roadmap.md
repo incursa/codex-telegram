@@ -29,6 +29,10 @@ The current Mini App foundation is the first R2/R4-compatible read-only slice:
 - Opening task detail does not create a missing local manifest or state directory.
 - The surface has no Mini App mutation endpoints. Prompts, steering, approvals, retries, cancellation, file edits, uploads, commits, merges, and deployment remain in Telegram or their existing operator authority. Codex command and file-change approvals fail closed when no explicit Telegram decision exists.
 
+The v1.0.28 R1.0 slice is the update-boundary foundation. Its contract is recorded in [`SPEC-CTG-SUPERVISION`](../specs/requirements/codex-telegram/SPEC-CTG-SUPERVISION.json) and [`ARC-CTG-SUPERVISION-0001`](../specs/architecture/codex-telegram/ARC-CTG-SUPERVISION-0001.md). Telegram `UpdateId` receipts provide bounded replay protection at the transport boundary; this is not yet the application-owned `CommandId` or full Task/Run lifecycle. Handler failures remain retryable, stale in-flight receipts are reclaimable, and completed receipts are retained only for the documented window.
+
+The next R1 slice is application-owned Task/Run/Command identity and persisted approval, claim, recovery, and delivery state.
+
 ## Identity and state vocabulary
 
 Until R1 introduces durable application records, a Mini App task is a Codex thread and its turns are the run history. The implementation must not imply stronger guarantees than the underlying thread state provides.

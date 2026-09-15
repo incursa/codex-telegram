@@ -89,6 +89,8 @@ The important local files are under `CodexTelegram:Workspace:DataRoot`:
 2. `telegram-state.json`
 3. Per-thread manifest files
 
+`telegram-state.json` also contains a bounded Telegram update-receipt ledger. It is transport replay protection, not proof that a Codex command executed. A completed receipt is retained for seven days; an interrupted in-flight receipt can be reclaimed after fifteen minutes. Do not edit the JSON state file while the service is running.
+
 Back up that folder before moving machines or changing the data root.
 
 Transient Telegram audio, downloaded attachments, and outbound media use an instance-specific temporary directory when `DataRoot` or `InstanceId` is configured. The legacy shared temporary location is retained only when neither selector is supplied.

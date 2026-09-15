@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+## 1.0.28 - 2026-09-14
+
+- Added durable, bounded Telegram update receipts with atomic duplicate suppression, stale in-flight lease recovery, retention pruning, legacy-state compatibility, and retry after handler failure.
+- Propagated Telegram transport update IDs into inbound message and callback context without treating them as application-owned command IDs.
+- Added the supervision workspace authority, identity, recovery, isolation, review, browser, recipe, worker-update, and release contracts in the canonical draft SPEC and architecture artifacts.
+
+## 1.0.27 - 2026-09-14
+
+- Hardened read-only Mini App projections with deterministic ordering, bounded changes and artifacts, safe artifact metadata redaction, and non-path project labels.
+
+## 1.0.26 - 2026-09-14
+
+- Added the authenticated read-only supervision surface for needs-attention items, recent activity, task detail, bounded Codex changes, and safe artifact metadata.
+- Added stale/unavailable live states and explicit preview mode while keeping Telegram as the control and approval surface.
+
 ## 1.0.25 - 2026-09-14
 
 - Made the read-only Mini App responsive across compact, full-height, and true fullscreen Telegram webviews.
