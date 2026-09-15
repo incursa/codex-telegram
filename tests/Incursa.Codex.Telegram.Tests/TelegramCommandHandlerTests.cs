@@ -1687,6 +1687,12 @@ public sealed class TelegramCommandHandlerTests
             harness.Sender.Sent,
             sent => Assert.Contains("Here's what I transcribed:", sent.Text),
             sent => Assert.Contains("could not be resumed", sent.Text));
+        IReadOnlyList<CodexSupervisionRecoverySnapshot> recoveries =
+            await harness.SupervisionLedger.ListRecoveryActionsAsync(1234, CancellationToken.None);
+        Assert.Equal(2, recoveries.Count);
+        Assert.All(recoveries, recovery => Assert.Equal("replace_unreadable_thread", recovery.ActionKind));
+        Assert.Contains(recoveries, recovery => recovery.State == CodexSupervisionRecoveryState.Requested);
+        Assert.Contains(recoveries, recovery => recovery.State == CodexSupervisionRecoveryState.Applied);
     }
 
     [Fact]

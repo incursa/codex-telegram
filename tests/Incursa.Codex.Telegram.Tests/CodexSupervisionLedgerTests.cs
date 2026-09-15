@@ -150,6 +150,123 @@ public sealed class CodexSupervisionLedgerTests
         Assert.Equal(CodexSupervisionRunState.Unknown, Assert.Single((await ledger.ListTasksAsync(1234, CancellationToken.None))).LatestRun!.State);
     }
 
+    [Fact]
+    public async Task RestartReconciliationMarksInFlightRunsUnknownWithoutClaimingCompletion()
+    {
+        using TemporaryDirectory temp = TemporaryDirectory.Create();
+        using (CodexSupervisionLedger ledger = CreateLedger(temp.Path))
+        {
+            CodexSupervisionCommandStart started = await StartAsync(ledger, "command:restart");
+            await ledger.UpdateRunAsync(
+                started.Run!.RunId,
+                CodexSupervisionRunState.Running,
+                "thread-restart",
+                "turn-restart",
+                null,
+                CancellationToken.None);
+        }
+
+        using CodexSupervisionLedger reloaded = CreateLedger(temp.Path);
+        Assert.Equal(1, await reloaded.ReconcileAfterRestartAsync(CancellationToken.None));
+
+        CodexSupervisionRunSnapshot run = Assert.Single((await reloaded.ListTasksAsync(1234, CancellationToken.None))).LatestRun!;
+        Assert.Equal(CodexSupervisionRunState.Unknown, run.State);
+        Assert.Equal("process_restart_reconciliation", run.OutcomeCode);
+        Assert.Null(run.CompletedAt);
+        Assert.Equal(0, await reloaded.ReconcileAfterRestartAsync(CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task DeliveryStateIsSeparateFromRunCompletionAndScopedToOwner()
+    {
+        using TemporaryDirectory temp = TemporaryDirectory.Create();
+        using CodexSupervisionLedger ledger = CreateLedger(temp.Path);
+        CodexSupervisionCommandStart started = await StartAsync(ledger, "command:delivery");
+
+        CodexSupervisionDeliveryRecord? delivery = await ledger.StartDeliveryAsync(
+            started.Run!.RunId,
+            "queue:item-1",
+            new TelegramConversationScope(1234, 9),
+            "completion",
+            CancellationToken.None);
+        Assert.NotNull(delivery);
+        Assert.Equal(CodexSupervisionDeliveryState.Queued, delivery.State);
+
+        CodexSupervisionDeliveryRecord? sending = await ledger.UpdateDeliveryAsync(
+            delivery.DeliveryId,
+            CodexSupervisionDeliveryState.Sending,
+            null,
+            CancellationToken.None);
+        Assert.NotNull(sending);
+        CodexSupervisionDeliveryRecord? delivered = await ledger.UpdateDeliveryAsync(
+            sending.DeliveryId,
+            CodexSupervisionDeliveryState.Delivered,
+            "telegram_accepted",
+            CancellationToken.None);
+        Assert.NotNull(delivered);
+
+        Assert.Equal(1, delivered.AttemptCount);
+        Assert.Equal(CodexSupervisionDeliveryState.Delivered, delivered.State);
+        Assert.Single(await ledger.ListDeliveriesAsync(1234, CancellationToken.None));
+        Assert.Empty(await ledger.ListDeliveriesAsync(9876, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task ApprovalClaimAndRecoveryRecordsAreBoundedAndFailClosed()
+    {
+        using TemporaryDirectory temp = TemporaryDirectory.Create();
+        using CodexSupervisionLedger ledger = CreateLedger(temp.Path);
+        CodexSupervisionCommandStart started = await StartAsync(ledger, "command:actions");
+        await ledger.UpdateRunAsync(
+            started.Run!.RunId,
+            CodexSupervisionRunState.Running,
+            "thread-1",
+            "turn-actions",
+            null,
+            CancellationToken.None);
+
+        CodexSupervisionApprovalRecord? requested = await ledger.RecordApprovalRequestAsync(
+            "turn-actions",
+            "thread-1",
+            "item/commandExecution/requestApproval",
+            TimeSpan.FromMinutes(30),
+            CancellationToken.None);
+        Assert.NotNull(requested);
+        CodexSupervisionApprovalRecord? denied = await ledger.RecordApprovalDecisionAsync(
+            "turn-actions",
+            "thread-1",
+            "item/commandExecution/requestApproval",
+            "denied_by_default",
+            1234,
+            CancellationToken.None);
+        Assert.NotNull(denied);
+        Assert.Equal(CodexSupervisionApprovalState.Denied, denied.State);
+        Assert.Equal("denied_by_default", denied.OutcomeCode);
+
+        CodexSupervisionClaimRecord? claim = await ledger.ClaimTaskAsync(
+            started.Task!.TaskId,
+            1234,
+            TimeSpan.FromMinutes(10),
+            CancellationToken.None);
+        Assert.NotNull(claim);
+        Assert.Null(await ledger.ClaimTaskAsync(started.Task.TaskId, 9876, TimeSpan.FromMinutes(10), CancellationToken.None));
+
+        CodexSupervisionRecoveryRecord? recovery = await ledger.RecordRecoveryActionAsync(
+            started.Run.RunId,
+            "replace_unreadable_thread",
+            CodexSupervisionRecoveryState.Applied,
+            "child_command_created",
+            CancellationToken.None);
+        Assert.NotNull(recovery);
+        Assert.Equal(CodexSupervisionRecoveryState.Applied, recovery.State);
+        Assert.Single(await ledger.ListApprovalsAsync(1234, CancellationToken.None));
+        Assert.Single(await ledger.ListClaimsAsync(1234, CancellationToken.None));
+        Assert.Single(await ledger.ListRecoveryActionsAsync(1234, CancellationToken.None));
+
+        Assert.True(await ledger.ReleaseTaskClaimAsync(started.Task.TaskId, 1234, CancellationToken.None));
+        Assert.False(await ledger.ReleaseTaskClaimAsync(started.Task.TaskId, 1234, CancellationToken.None));
+    }
+
     private static async Task<CodexSupervisionCommandStart> StartAsync(
         CodexSupervisionLedger ledger,
         string commandId)

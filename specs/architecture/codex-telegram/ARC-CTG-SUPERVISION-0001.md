@@ -23,7 +23,7 @@ related_artifacts:
 
 Build the supervision workspace as a local control-plane projection around the existing Telegram state and Codex thread-manifest boundaries. Keep Telegram and Codex authoritative for their existing responsibilities. Introduce durable application-owned identity only through versioned, bounded records that reference Codex provenance; do not create a competing transcript or task database.
 
-The first implementation slice persists Telegram `UpdateId` receipts in `telegram-state.json`. The next slice adds a separate, bounded supervision ledger for application-owned `TaskId`, `RunId`, and `CommandId` records. It protects the command boundary without treating a transport ID as the application-owned `CommandId`.
+The first implementation slice persists Telegram `UpdateId` receipts in `telegram-state.json`. The next slice adds a separate, bounded supervision ledger for application-owned `TaskId`, `RunId`, and `CommandId` records. It protects the command boundary without treating a transport ID as the application-owned `CommandId`. The following R1 slice adds independent delivery, approval/input, claim, recovery-action, and restart-reconciliation records to that same bounded projection.
 
 ## Boundaries
 
@@ -69,7 +69,9 @@ The current Telegram prompt path creates a stable command identity in a distinct
 
 Run state is projected as `Accepted`, `Queued`, `Running`, `WaitingForInput`, `ReadyForReview`, `Completed`, `Failed`, `Interrupted`, or `Unknown`. `Unknown` is intentionally non-terminal: it records that an external Codex outcome could not be confirmed and requires explicit reconciliation. `CodexThreadId` and `CodexTurnId` remain provenance fields and are never replaced by `TaskId`, `RunId`, or `CommandId`.
 
-The ledger records bounded labels, IDs, timestamps, and outcome codes only. It does not persist prompt bodies, response bodies, attachment paths, credentials, or authorization headers. Terminal Codex events update the matching run by `CodexTurnId`; Telegram delivery remains a separate future dimension and is not inferred from run state.
+The ledger records bounded labels, IDs, timestamps, and outcome codes only. It does not persist prompt bodies, response bodies, attachment paths, credentials, or authorization headers. Terminal Codex events update the matching run by `CodexTurnId`; Telegram delivery is represented by an independent delivery record and is not inferred from run state. A delivery record spans all chunks of one queued item and reaches `Delivered` only after the final chunk is accepted. Approval/input decisions remain records at the existing Telegram-controlled Codex approval seam. Claims are lease-bound and fail closed for another owner. Recovery actions record requested/applied/unknown outcomes and replacement dispatch uses a child command identity.
+
+On startup, accepted or in-flight runs are reconciled atomically to non-terminal `Unknown` with a restart outcome code. This records the process boundary without claiming Codex completion or replaying an uncertain side effect. The same distinction applies to Telegram delivery when a timeout leaves acceptance unknown.
 
 ## Lifecycle and recovery invariants
 
@@ -83,12 +85,10 @@ The ledger records bounded labels, IDs, timestamps, and outcome codes only. It d
 
 ## Later dependency sequence
 
-1. Add persisted approval, claim, recovery, and delivery state with independent transitions and migration tests.
-2. Add atomic restart reconciliation and explicit recovery actions; no automatic side-effect replay for `Unknown` runs.
-3. Add deterministic review packets and Telegram handoffs using those records.
-4. Add task-owned worktrees, ports, database namespaces, worker registration, authenticated routing, leases, readiness, draining, and cleanup.
-5. Add the combined Mini App worker/attention projection and revocable Telegram-approved browser pairing as read-only surfaces.
-6. Add immutable task recipes and staged, drain-aware, health-verified worker updates with rollback evidence.
+1. Add deterministic review packets and Telegram handoffs using the durable records.
+2. Add task-owned worktrees, ports, database namespaces, worker registration, authenticated routing, leases, readiness, draining, and cleanup.
+3. Add the combined Mini App worker/attention projection and revocable Telegram-approved browser pairing as read-only surfaces.
+4. Add immutable task recipes and staged, drain-aware, health-verified worker updates with rollback evidence.
 
 Each step requires focused automated tests plus the repository release floor. Browser and Telegram-live checks remain separate evidence categories.
 

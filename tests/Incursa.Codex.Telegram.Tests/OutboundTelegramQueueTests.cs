@@ -1,6 +1,8 @@
 using System.Text.Json;
 using System.Threading.Channels;
+using Incursa.Codex.Telegram.Configuration;
 using Incursa.Codex.Telegram.Options;
+using Incursa.Codex.Telegram.Services;
 using Incursa.Codex.Telegram.Telegram;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -77,6 +79,63 @@ public sealed class OutboundTelegramQueueTests
         Assert.Equal("codex.png", sent.File.FileName);
         Assert.Equal("shown screenshot", sent.File.Caption);
         Assert.Empty(sender.Sent);
+    }
+
+    [Fact]
+    public async Task ProcessNextAsync_TracksDeliveryOnlyAfterAllChunksAreAccepted()
+    {
+        using TemporaryDirectory temp = TemporaryDirectory.Create();
+        using CodexSupervisionLedger ledger = new(
+            Microsoft.Extensions.Options.Options.Create(new CodexTelegramOptions
+            {
+                Workspace = new CodexWorkspaceOptions
+                {
+                    DataRoot = temp.Path,
+                },
+            }),
+            TimeProvider.System,
+            temp.Path);
+        CodexSupervisionCommandStart started = await ledger.StartCommandAsync(
+            "command:delivery-queue",
+            "thread-delivery",
+            "Delivery test",
+            new TelegramConversationScope(1234, null),
+            1234,
+            "prompt",
+            CancellationToken.None);
+        await ledger.UpdateRunAsync(
+            started.Run!.RunId,
+            CodexSupervisionRunState.Running,
+            "thread-delivery",
+            "turn-delivery",
+            null,
+            CancellationToken.None);
+
+        TestTelegramSender sender = new();
+        OutboundTelegramScheduler scheduler = CreateScheduler(sender, new TelegramOutboundOptions
+        {
+            BatchWindowSeconds = 0,
+            PrivateMinimumSendIntervalSeconds = 0,
+            MaxMessageChars = 500,
+        }, supervisionLedger: ledger);
+        OutboundTelegramMessage message = CreateMessage(
+            CodexOutboundMessageKind.Completion,
+            new string('x', 1400),
+            sessionId: "thread-delivery",
+            turnId: "turn-delivery") with
+        {
+            MessageId = "queue-item-delivery",
+        };
+
+        await scheduler.EnqueueAsync(message, CancellationToken.None);
+        while (await scheduler.ProcessNextAsync(CancellationToken.None))
+        {
+        }
+
+        CodexSupervisionDeliverySnapshot delivery = Assert.Single(await ledger.ListDeliveriesAsync(1234, CancellationToken.None));
+        Assert.Equal(CodexSupervisionDeliveryState.Delivered, delivery.State);
+        Assert.Equal(3, delivery.AttemptCount);
+        Assert.Equal(3, sender.Sent.Count);
     }
 
     [Fact]
@@ -1153,27 +1212,31 @@ public sealed class OutboundTelegramQueueTests
         TestTelegramSender sender,
         TelegramOutboundOptions options,
         TimeProvider? timeProvider = null,
-        ITelegramDebugTraceStore? traceStore = null)
+        ITelegramDebugTraceStore? traceStore = null,
+        ICodexSupervisionLedger? supervisionLedger = null)
         => new(
             sender,
             new TelegramMessageChunker(),
             timeProvider ?? TimeProvider.System,
             new StaticOptionsMonitor<TelegramOutboundOptions>(options),
             NullLogger<OutboundTelegramScheduler>.Instance,
-            traceStore);
+            traceStore,
+            supervisionLedger);
 
     private static OutboundTelegramScheduler CreateScheduler(
         TestTelegramSender sender,
         IOptionsMonitor<TelegramOutboundOptions> options,
         TimeProvider? timeProvider = null,
-        ITelegramDebugTraceStore? traceStore = null)
+        ITelegramDebugTraceStore? traceStore = null,
+        ICodexSupervisionLedger? supervisionLedger = null)
         => new(
             sender,
             new TelegramMessageChunker(),
             timeProvider ?? TimeProvider.System,
             options,
             NullLogger<OutboundTelegramScheduler>.Instance,
-            traceStore);
+            traceStore,
+            supervisionLedger);
 
     private static TelegramDebugTraceStore CreateTraceStore(string dataRoot)
         => new(

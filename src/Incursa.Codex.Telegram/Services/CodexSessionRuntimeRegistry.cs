@@ -67,10 +67,15 @@ internal sealed class CodexSessionRuntimeRegistry : ICodexTurnExecutionCoordinat
     public bool HasActiveTurn
         => EnumerateSlots().Any(slot => slot.TurnCoordinator.HasActiveTurn);
 
-    public Task StartAsync(CancellationToken cancellationToken)
+    public async Task StartAsync(CancellationToken cancellationToken)
     {
-        _ = cancellationToken;
-        return Task.CompletedTask;
+        int reconciled = await _supervisionLedger.ReconcileAfterRestartAsync(cancellationToken).ConfigureAwait(false);
+        if (reconciled > 0)
+        {
+            _logger.LogWarning(
+                "Marked {RunCount} non-terminal supervision run(s) as unknown after process restart; explicit reconciliation is required.",
+                reconciled);
+        }
     }
 
     public async Task StopAsync(CancellationToken cancellationToken)
@@ -414,13 +419,91 @@ internal sealed class CodexSessionRuntimeRegistry : ICodexTurnExecutionCoordinat
             ClientName = source.ClientName,
             ClientTitle = source.ClientTitle,
             ClientVersion = source.ClientVersion,
-            ApprovalHandler = (action, request) => _planInputCoordinator.HandleApprovalRequest(action, request)
-                ?? configuredHandler?.Invoke(action, request)
-                ?? CreateDefaultApprovalDenialResponse(action),
+            ApprovalHandler = (action, request) => HandleApprovalRequest(action, request, configuredHandler),
         };
 
         CodexClientOptionsPlanModeBridge.CopyPlanMode(source, destination);
         return destination;
+    }
+
+    private JsonObject? HandleApprovalRequest(
+        string action,
+        JsonObject? request,
+        CodexApprovalHandler? configuredHandler)
+    {
+        JsonObject? response = _planInputCoordinator.HandleApprovalRequest(action, request)
+            ?? configuredHandler?.Invoke(action, request)
+            ?? CreateDefaultApprovalDenialResponse(action);
+        if (!IsApprovalAction(action))
+        {
+            return response;
+        }
+
+        string? turnId = GetRequestString(request, "turnId", "turn_id");
+        if (string.IsNullOrWhiteSpace(turnId))
+        {
+            return response;
+        }
+
+        try
+        {
+            _supervisionLedger.RecordApprovalDecisionAsync(
+                    turnId,
+                    GetRequestString(request, "threadId", "thread_id"),
+                    action,
+                    GetResponseDecision(response) ?? "denied_by_default",
+                    null,
+                    CancellationToken.None)
+                .GetAwaiter()
+                .GetResult();
+        }
+        catch (Exception exception)
+        {
+            _logger.LogWarning(exception, "Failed to persist Codex approval decision for turn {TurnId}.", turnId);
+        }
+
+        return response;
+    }
+
+    private static bool IsApprovalAction(string action)
+        => action.Contains("requestApproval", StringComparison.OrdinalIgnoreCase)
+            || action.Contains("approval.required", StringComparison.OrdinalIgnoreCase);
+
+    private static string? GetRequestString(JsonObject? request, params string[] names)
+    {
+        JsonObject? payload = request?["params"] as JsonObject ?? request;
+        if (payload is null)
+        {
+            return null;
+        }
+
+        foreach (string name in names)
+        {
+            if (payload[name] is JsonValue value && value.TryGetValue<string>(out string? result) && !string.IsNullOrWhiteSpace(result))
+            {
+                return result;
+            }
+        }
+
+        return null;
+    }
+
+    private static string? GetResponseDecision(JsonObject? response)
+    {
+        if (response is null)
+        {
+            return null;
+        }
+
+        foreach (string name in new[] { "decision", "approval", "result" })
+        {
+            if (response[name] is JsonValue value && value.TryGetValue<string>(out string? result) && !string.IsNullOrWhiteSpace(result))
+            {
+                return result;
+            }
+        }
+
+        return null;
     }
 
     // A missing Telegram approval is a safety failure, never consent. Plan-mode

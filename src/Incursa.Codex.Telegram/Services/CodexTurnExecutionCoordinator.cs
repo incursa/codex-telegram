@@ -796,6 +796,7 @@ internal sealed class CodexTurnExecutionCoordinator
         RecordEvent(entry);
         if (IsOperatorInputRequest(entry) && !string.IsNullOrWhiteSpace(entry.TurnId))
         {
+            await RecordApprovalRequestAsync(entry).ConfigureAwait(false);
             await UpdateSupervisionRunsAsync(
                 entry.TurnId,
                 CodexSupervisionRunState.WaitingForInput,
@@ -983,6 +984,23 @@ internal sealed class CodexTurnExecutionCoordinator
         catch (Exception exception)
         {
             _logger.LogWarning(exception, "Failed to persist supervision state {State} for turn {TurnId}.", state, turnId);
+        }
+    }
+
+    private async Task RecordApprovalRequestAsync(CodexTimelineEntryVm entry)
+    {
+        try
+        {
+            await _supervisionLedger.RecordApprovalRequestAsync(
+                entry.TurnId!,
+                entry.ThreadId,
+                entry.Type,
+                TimeSpan.FromMinutes(30),
+                CancellationToken.None).ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            _logger.LogWarning(exception, "Failed to persist supervision approval request for turn {TurnId}.", entry.TurnId);
         }
     }
 

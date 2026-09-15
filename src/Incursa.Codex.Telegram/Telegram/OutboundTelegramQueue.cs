@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using Incursa.Codex.Telegram.Options;
+using Incursa.Codex.Telegram.Services;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -99,6 +100,16 @@ internal sealed record OutboundTelegramMessage
     public string? TraceId { get; init; }
 
     /// <summary>
+    /// Gets the application-owned supervision run associated with this delivery.
+    /// </summary>
+    public string? RunId { get; init; }
+
+    /// <summary>
+    /// Gets the durable delivery record identifier, when one has been created.
+    /// </summary>
+    public string? DeliveryId { get; init; }
+
+    /// <summary>
     /// Gets the message kind used for filtering and compaction.
     /// </summary>
     public required CodexOutboundMessageKind Kind { get; init; }
@@ -144,6 +155,8 @@ internal sealed class OutboundTelegramDelivery
         string? traceId,
         string? sessionId,
         string? turnId,
+        string? runId,
+        string? deliveryId,
         TelegramOutboundOptions options)
     {
         Destination = destination;
@@ -154,6 +167,8 @@ internal sealed class OutboundTelegramDelivery
         TraceId = traceId;
         SessionId = sessionId;
         TurnId = turnId;
+        RunId = runId;
+        DeliveryId = deliveryId;
         Options = options;
     }
 
@@ -192,6 +207,10 @@ internal sealed class OutboundTelegramDelivery
     internal string? SessionId { get; }
 
     internal string? TurnId { get; }
+
+    internal string? RunId { get; }
+
+    internal string? DeliveryId { get; }
 
     internal TelegramOutboundOptions Options { get; }
 
@@ -443,6 +462,7 @@ internal sealed class OutboundTelegramScheduler : BackgroundService, IOutboundTe
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<OutboundTelegramScheduler> _logger;
     private readonly ITelegramDebugTraceStore _traceStore;
+    private readonly ICodexSupervisionLedger _supervisionLedger;
     private TelegramOutboundOptions _options;
     private TaskCompletionSource<bool> _workAvailableSignal = CreateWorkAvailableSignal();
     private DateTimeOffset? _globalBackoffUntilUtc;
@@ -457,19 +477,22 @@ internal sealed class OutboundTelegramScheduler : BackgroundService, IOutboundTe
     /// <param name="options">Live outbound scheduler options.</param>
     /// <param name="logger">Logger for send failures and compaction.</param>
     /// <param name="traceStore">Optional trace store for delivery diagnostics.</param>
+    /// <param name="supervisionLedger">Optional durable supervision projection for delivery acknowledgements.</param>
     public OutboundTelegramScheduler(
         IOutboundTelegramMessageSender sender,
         TelegramMessageChunker chunker,
         TimeProvider timeProvider,
         IOptionsMonitor<TelegramOutboundOptions> options,
         ILogger<OutboundTelegramScheduler> logger,
-        ITelegramDebugTraceStore? traceStore = null)
+        ITelegramDebugTraceStore? traceStore = null,
+        ICodexSupervisionLedger? supervisionLedger = null)
     {
         _sender = sender;
         _chunker = chunker;
         _timeProvider = timeProvider;
         _logger = logger;
         _traceStore = traceStore ?? NullTelegramDebugTraceStore.Instance;
+        _supervisionLedger = supervisionLedger ?? new NullCodexSupervisionLedger();
         _options = options.CurrentValue;
         options.OnChange(updated => _options = updated);
     }
@@ -490,6 +513,37 @@ internal sealed class OutboundTelegramScheduler : BackgroundService, IOutboundTe
         }
 
         DateTimeOffset now = _timeProvider.GetUtcNow();
+        string? runId = message.RunId;
+        if (string.IsNullOrWhiteSpace(runId) && !string.IsNullOrWhiteSpace(message.TurnId))
+        {
+            try
+            {
+                runId = await _supervisionLedger.FindRunIdForTurnAsync(message.TurnId, cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            {
+                _logger.LogWarning(exception, "Could not resolve supervision run for outbound Telegram turn {TurnId}.", message.TurnId);
+            }
+        }
+
+        string? deliveryId = message.DeliveryId;
+        if (string.IsNullOrWhiteSpace(deliveryId) && !string.IsNullOrWhiteSpace(runId))
+        {
+            try
+            {
+                deliveryId = (await _supervisionLedger.StartDeliveryAsync(
+                    runId,
+                    message.MessageId,
+                    new TelegramConversationScope(message.ChatId, message.MessageThreadId),
+                    message.Kind.ToString(),
+                    cancellationToken).ConfigureAwait(false))?.DeliveryId;
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            {
+                _logger.LogWarning(exception, "Could not persist supervision delivery for outbound Telegram item {MessageId}.", message.MessageId);
+            }
+        }
+
         OutboundTelegramMessage normalized = message with
         {
             CreatedUtc = message.CreatedUtc == default ? now : message.CreatedUtc,
@@ -498,6 +552,8 @@ internal sealed class OutboundTelegramScheduler : BackgroundService, IOutboundTe
             TraceId = string.IsNullOrWhiteSpace(message.TraceId)
                 ? _traceStore.TryGetTraceIdForTurn(message.SessionId, message.TurnId)
                 : message.TraceId,
+            RunId = runId,
+            DeliveryId = deliveryId,
         };
 
         TelegramDestinationKey destination = new(normalized.ChatId, normalized.MessageThreadId);
@@ -597,6 +653,7 @@ internal sealed class OutboundTelegramScheduler : BackgroundService, IOutboundTe
             return false;
         }
 
+        await MarkSupervisionSendingAsync(delivery, cancellationToken).ConfigureAwait(false);
         OutboundTelegramDeliveryResult result = await SendDeliveryAsync(delivery, cancellationToken).ConfigureAwait(false);
         return await CompleteDeliveryAsync(delivery, result, cancellationToken).ConfigureAwait(false);
     }
@@ -683,6 +740,8 @@ internal sealed class OutboundTelegramScheduler : BackgroundService, IOutboundTe
                 chunk.TraceId,
                 chunk.SessionId,
                 chunk.TurnId,
+                chunk.RunId,
+                chunk.DeliveryId,
                 options);
         }
     }
@@ -710,6 +769,17 @@ internal sealed class OutboundTelegramScheduler : BackgroundService, IOutboundTe
         if (!result.Succeeded)
         {
             Exception exception = result.Exception ?? new InvalidOperationException("Telegram outbound delivery failed without an exception.");
+            await UpdateSupervisionDeliveryAsync(
+                delivery,
+                exception is TelegramOutboundSendTimeoutException
+                    || exception is OperationCanceledException
+                    ? CodexSupervisionDeliveryState.Unknown
+                    : CodexSupervisionDeliveryState.Failed,
+                exception is TelegramOutboundSendTimeoutException
+                    || exception is OperationCanceledException
+                    ? "telegram_acceptance_unknown"
+                    : "telegram_send_failed",
+                cancellationToken).ConfigureAwait(false);
             if (exception is TelegramOutboundRateLimitException rateLimitException)
             {
                 ApplyBackoff(delivery.Destination.ChatId, rateLimitException.RetryAfter, global: false);
@@ -749,11 +819,12 @@ internal sealed class OutboundTelegramScheduler : BackgroundService, IOutboundTe
             return false;
         }
 
+        string? completedDeliveryId;
         lock (_gate)
         {
             DateTimeOffset sentAt = _timeProvider.GetUtcNow();
             DestinationBuffer? buffer = _buffers.TryGetValue(delivery.Destination, out DestinationBuffer? current) ? current : null;
-            buffer?.CompleteCurrentChunk(sentAt);
+            completedDeliveryId = buffer?.CompleteCurrentChunk(sentAt);
             if (buffer is not null && !buffer.HasPending)
             {
                 _buffers.TryRemove(buffer.Destination, out _);
@@ -765,8 +836,62 @@ internal sealed class OutboundTelegramScheduler : BackgroundService, IOutboundTe
             TrimGlobalSendTimestamps(sentAt);
         }
 
+        if (!string.IsNullOrWhiteSpace(completedDeliveryId))
+        {
+            await UpdateSupervisionDeliveryAsync(
+                delivery,
+                CodexSupervisionDeliveryState.Delivered,
+                "telegram_accepted",
+                cancellationToken,
+                completedDeliveryId).ConfigureAwait(false);
+        }
+
         await RecordOutboundTraceAsync(delivery, "telegram.outbound.sent", null, cancellationToken).ConfigureAwait(false);
         return true;
+    }
+
+    private async Task UpdateSupervisionDeliveryAsync(
+        OutboundTelegramDelivery delivery,
+        CodexSupervisionDeliveryState state,
+        string outcomeCode,
+        CancellationToken cancellationToken,
+        string? deliveryIdOverride = null)
+    {
+        string? deliveryId = deliveryIdOverride ?? delivery.DeliveryId;
+        if (string.IsNullOrWhiteSpace(deliveryId))
+        {
+            return;
+        }
+
+        try
+        {
+            await _supervisionLedger.UpdateDeliveryAsync(deliveryId, state, outcomeCode, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            _logger.LogWarning(exception, "Could not persist supervision delivery {DeliveryId} as {State}.", deliveryId, state);
+        }
+    }
+
+    private async Task MarkSupervisionSendingAsync(OutboundTelegramDelivery delivery, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(delivery.DeliveryId))
+        {
+            return;
+        }
+
+        try
+        {
+            await _supervisionLedger.UpdateDeliveryAsync(
+                delivery.DeliveryId,
+                CodexSupervisionDeliveryState.Sending,
+                null,
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            _logger.LogWarning(exception, "Could not persist supervision delivery {DeliveryId} as sending.", delivery.DeliveryId);
+        }
     }
 
     private async Task SendWithTimeoutAsync(OutboundTelegramDelivery pending, TelegramOutboundOptions options, CancellationToken cancellationToken)
@@ -862,6 +987,7 @@ internal sealed class OutboundTelegramScheduler : BackgroundService, IOutboundTe
                     continue;
                 }
 
+                await MarkSupervisionSendingAsync(delivery, cancellationToken).ConfigureAwait(false);
                 observer.OnNext(delivery);
                 OutboundTelegramDeliveryResult result = await WaitForDeliveryCompletionAsync(delivery, cancellationToken).ConfigureAwait(false);
                 await CompleteDeliveryAsync(delivery, result, cancellationToken).ConfigureAwait(false);
@@ -1259,6 +1385,8 @@ internal sealed class OutboundTelegramScheduler : BackgroundService, IOutboundTe
                 message.SessionId,
                 message.TurnId,
                 message.TraceId,
+                message.RunId,
+                message.DeliveryId,
                 message.Kind,
                 message.Text,
                 message.TextFormat,
@@ -1285,13 +1413,14 @@ internal sealed class OutboundTelegramScheduler : BackgroundService, IOutboundTe
                 PreparedOutboundSend prepared = FormatNextSend();
                 if (prepared.File is not null)
                 {
-                    _chunks.Enqueue(new PreparedOutboundChunk(prepared.Text, prepared.TextFormat, prepared.File, prepared.DebugContext, prepared.TraceId, prepared.SessionId, prepared.TurnId));
+                    _chunks.Enqueue(new PreparedOutboundChunk(prepared.Text, prepared.TextFormat, prepared.File, prepared.DebugContext, prepared.TraceId, prepared.SessionId, prepared.TurnId, prepared.RunId, prepared.DeliveryId));
                 }
                 else
                 {
-                    foreach (TelegramTextChunk chunk in chunker.SplitFormatted(prepared.Text ?? string.Empty, maxMessageChars, prepared.TextFormat))
+                    IReadOnlyList<TelegramTextChunk> chunks = chunker.SplitFormatted(prepared.Text ?? string.Empty, maxMessageChars, prepared.TextFormat);
+                    foreach (TelegramTextChunk chunk in chunks)
                     {
-                        _chunks.Enqueue(new PreparedOutboundChunk(chunk.Text, chunk.Format, null, prepared.DebugContext, prepared.TraceId, prepared.SessionId, prepared.TurnId));
+                        _chunks.Enqueue(new PreparedOutboundChunk(chunk.Text, chunk.Format, null, prepared.DebugContext, prepared.TraceId, prepared.SessionId, prepared.TurnId, prepared.RunId, prepared.DeliveryId));
                     }
                 }
             }
@@ -1303,12 +1432,19 @@ internal sealed class OutboundTelegramScheduler : BackgroundService, IOutboundTe
         /// Marks the current prepared chunk as sent.
         /// </summary>
         /// <param name="sentAt">UTC time of the successful send.</param>
-        public void CompleteCurrentChunk(DateTimeOffset sentAt)
+        public string? CompleteCurrentChunk(DateTimeOffset sentAt)
         {
+            string? completedDeliveryId = null;
             LastSentUtc = sentAt;
             if (_chunks.Count > 0)
             {
+                PreparedOutboundChunk current = _chunks.Peek();
                 _chunks.Dequeue();
+                if (!string.IsNullOrWhiteSpace(current.DeliveryId)
+                    && !_chunks.Any(chunk => string.Equals(chunk.DeliveryId, current.DeliveryId, StringComparison.Ordinal)))
+                {
+                    completedDeliveryId = current.DeliveryId;
+                }
             }
 
             if (!HasPending)
@@ -1316,6 +1452,8 @@ internal sealed class OutboundTelegramScheduler : BackgroundService, IOutboundTe
                 FirstPendingUtc = null;
                 LastEnqueuedUtc = null;
             }
+
+            return completedDeliveryId;
         }
 
         /// <summary>
@@ -1356,6 +1494,8 @@ internal sealed class OutboundTelegramScheduler : BackgroundService, IOutboundTe
                     SessionId,
                     ResolveSingleValue(compactedItems.Select(message => message.TurnId)),
                     ResolveSingleValue(compactedItems.Select(message => message.TraceId)),
+                    null,
+                    null,
                     CodexOutboundMessageKind.System,
                     compactedText,
                     ResolveTextFormat(compactedItems),
@@ -1389,7 +1529,9 @@ internal sealed class OutboundTelegramScheduler : BackgroundService, IOutboundTe
                     CreateDebugContext([message]),
                     message.TraceId,
                     message.SessionId,
-                    message.TurnId);
+                    message.TurnId,
+                    message.RunId,
+                    message.DeliveryId);
             }
 
             return new PreparedOutboundSend(
@@ -1399,7 +1541,9 @@ internal sealed class OutboundTelegramScheduler : BackgroundService, IOutboundTe
                 CreateDebugContext([message]),
                 message.TraceId,
                 message.SessionId,
-                message.TurnId);
+                message.TurnId,
+                message.RunId,
+                message.DeliveryId);
         }
 
         private static TelegramDebugMessageContext CreateDebugContext(IReadOnlyList<PendingOutboundItem> messages)
@@ -1491,6 +1635,8 @@ internal sealed class OutboundTelegramScheduler : BackgroundService, IOutboundTe
     /// <param name="SessionId">Associated Codex session ID.</param>
     /// <param name="TurnId">Associated Codex turn ID.</param>
     /// <param name="TraceId">Associated trace correlation ID.</param>
+    /// <param name="RunId">Application-owned supervision run ID.</param>
+    /// <param name="DeliveryId">Durable supervision delivery ID.</param>
     /// <param name="Kind">Message kind for compaction.</param>
     /// <param name="Text">Text to include in a batch.</param>
     /// <param name="TextFormat">Text format to apply when preparing a delivery.</param>
@@ -1502,6 +1648,8 @@ internal sealed class OutboundTelegramScheduler : BackgroundService, IOutboundTe
         string? SessionId,
         string? TurnId,
         string? TraceId,
+        string? RunId,
+        string? DeliveryId,
         CodexOutboundMessageKind Kind,
         string Text,
         TelegramTextFormat TextFormat,
@@ -1516,7 +1664,9 @@ internal sealed class OutboundTelegramScheduler : BackgroundService, IOutboundTe
         TelegramDebugMessageContext DebugContext,
         string? TraceId,
         string? SessionId,
-        string? TurnId);
+        string? TurnId,
+        string? RunId,
+        string? DeliveryId);
 
     private sealed record PreparedOutboundChunk(
         string? Text,
@@ -1525,7 +1675,9 @@ internal sealed class OutboundTelegramScheduler : BackgroundService, IOutboundTe
         TelegramDebugMessageContext DebugContext,
         string? TraceId,
         string? SessionId,
-        string? TurnId)
+        string? TurnId,
+        string? RunId,
+        string? DeliveryId)
     {
         public bool HasPayload => File is not null || !string.IsNullOrWhiteSpace(Text);
     }

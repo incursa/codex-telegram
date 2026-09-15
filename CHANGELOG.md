@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 1.0.30 - 2026-09-14
+
+- Added bounded durable Telegram delivery records that remain separate from Codex execution state and track multi-chunk sends through accepted, failed, and externally unknown outcomes.
+- Added persisted approval/input decisions, task claims with lease expiry and fail-closed ownership, recovery-action evidence, and startup reconciliation that marks in-flight runs unknown instead of claiming completion.
+- Recorded approval and replacement-session recovery transitions through the existing Telegram/Codex seams without adding Mini App mutations or changing Telegram authorization semantics.
+
 ## 1.0.29 - 2026-09-14
 
 - Added a bounded durable supervision ledger for application-owned task, run, and command identities around Telegram prompt dispatch and queueing.

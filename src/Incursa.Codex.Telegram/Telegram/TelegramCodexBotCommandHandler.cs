@@ -1911,14 +1911,37 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         catch (Exception exception) when (allowUnreadableThreadRecovery && IsUnreadableCodexThreadException(exception))
         {
             await SetSupervisionStateAsync(supervisionRunId, CodexSupervisionRunState.Unknown, session.Id, null, "external_outcome_unknown", CancellationToken.None).ConfigureAwait(false);
-            return await RecoverUnreadableSessionAndRetryAsync(
-                message,
-                session,
-                trimmed,
-                exception,
-                sender,
-                cancellationToken,
-                planMode).ConfigureAwait(false);
+            await RecordRecoveryActionAsync(
+                supervisionRunId,
+                "replace_unreadable_thread",
+                CodexSupervisionRecoveryState.Requested,
+                "external_outcome_unknown").ConfigureAwait(false);
+            try
+            {
+                bool recovered = await RecoverUnreadableSessionAndRetryAsync(
+                    message,
+                    session,
+                    trimmed,
+                    exception,
+                    sender,
+                    cancellationToken,
+                    planMode).ConfigureAwait(false);
+                await RecordRecoveryActionAsync(
+                    supervisionRunId,
+                    "replace_unreadable_thread",
+                    CodexSupervisionRecoveryState.Applied,
+                    "child_command_created").ConfigureAwait(false);
+                return recovered;
+            }
+            catch
+            {
+                await RecordRecoveryActionAsync(
+                    supervisionRunId,
+                    "replace_unreadable_thread",
+                    CodexSupervisionRecoveryState.Unknown,
+                    "recovery_outcome_unknown").ConfigureAwait(false);
+                throw;
+            }
         }
         catch
         {
@@ -2201,6 +2224,32 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         catch (Exception exception)
         {
             _logger.LogWarning(exception, "Failed to persist supervision state {State} for run {RunId}.", state, runId);
+        }
+    }
+
+    private async Task RecordRecoveryActionAsync(
+        string? runId,
+        string actionKind,
+        CodexSupervisionRecoveryState state,
+        string? outcomeCode)
+    {
+        if (string.IsNullOrWhiteSpace(runId))
+        {
+            return;
+        }
+
+        try
+        {
+            await _supervisionLedger.RecordRecoveryActionAsync(
+                runId,
+                actionKind,
+                state,
+                outcomeCode,
+                CancellationToken.None).ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            _logger.LogWarning(exception, "Failed to persist recovery state {State} for run {RunId}.", state, runId);
         }
     }
 

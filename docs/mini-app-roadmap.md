@@ -31,7 +31,9 @@ The current Mini App foundation is the first R2/R4-compatible read-only slice:
 
 The v1.0.28 R1.0 slice is the update-boundary foundation. Its contract is recorded in [`SPEC-CTG-SUPERVISION`](../specs/requirements/codex-telegram/SPEC-CTG-SUPERVISION.json) and [`ARC-CTG-SUPERVISION-0001`](../specs/architecture/codex-telegram/ARC-CTG-SUPERVISION-0001.md). Telegram `UpdateId` receipts provide bounded replay protection at the transport boundary; this is not yet the application-owned `CommandId` or full Task/Run lifecycle. Handler failures remain retryable, stale in-flight receipts are reclaimable, and completed receipts are retained only for the documented window.
 
-The v1.0.29 R1.1 slice adds an application-owned Task/Run/Command projection for prompt dispatch. It stores only bounded, redacted lifecycle metadata in `codex-supervision-state.json`, scopes tasks by Codex thread plus Telegram user/conversation, retains the raw Codex thread/turn IDs as provenance, and exposes the projection to the read-only Mini App. Queueing, direct dispatch, terminal Codex events, shutdown interruption, and explicit replacement-session recovery update the same run identity. An `Unknown` result remains open for reconciliation and is never treated as success or silently replayed. Approval, claim, recovery-action, and Telegram delivery acknowledgement records remain the next R1 slice.
+The v1.0.29 R1.1 slice adds an application-owned Task/Run/Command projection for prompt dispatch. It stores only bounded, redacted lifecycle metadata in `codex-supervision-state.json`, scopes tasks by Codex thread plus Telegram user/conversation, retains the raw Codex thread/turn IDs as provenance, and exposes the projection to the read-only Mini App. Queueing, direct dispatch, terminal Codex events, shutdown interruption, and explicit replacement-session recovery update the same run identity. An `Unknown` result remains open for reconciliation and is never treated as success or silently replayed.
+
+The v1.0.30 R1.2 slice adds bounded delivery, approval/input, claim, and recovery-action records to the same supervision projection. Delivery state is tracked independently through multi-chunk Telegram sends. Approval/input decisions are recorded at the existing Telegram-controlled Codex approval seam; claims are lease-bound and fail closed for another owner; unreadable-thread replacement records requested/applied/unknown transitions; and startup reconciliation marks in-flight runs unknown. These records are evidence and projection only: the Mini App remains read-only, Telegram remains the control/approval authority, and no ambiguous Codex side effect is replayed automatically.
 
 ## Identity and state vocabulary
 
@@ -51,8 +53,7 @@ Initial display states are `queued`, `running`, `waiting`, `failed`, `completed`
 
 ## Later slices
 
-1. Add durable task/run records, command IDs, persisted acknowledgements, claim ownership, safe-denial approval records, expiry, restart reconciliation, and recovery evidence.
-2. Add deterministic Codex file-change projections, bounded diffs, binary/rename/unsupported handling, safe artifact inventory, review packets, and explicit Telegram handoff messages.
+1. Add deterministic Codex file-change projections, bounded diffs, binary/rename/unsupported handling, safe artifact inventory, review packets, and explicit Telegram handoff messages.
 3. Add task-owned worktrees or branches, cleanup ownership, assigned development ports, explicit database settings, worker registration, outbound authenticated coordinator connections, and drain-aware scheduling.
 4. Add the combined worker/attention view and short-lived browser pairing approved through Telegram. Browser access remains read-only until a separate authorization contract exists.
 5. Add inspectable recipes and controlled worker updates with capability checks, staged rollout, drain, health/version verification, rollback, and provenance evidence.
