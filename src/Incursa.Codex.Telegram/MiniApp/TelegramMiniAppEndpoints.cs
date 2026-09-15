@@ -186,19 +186,23 @@ internal static class TelegramMiniAppEndpoints
                 detail,
                 turnCoordinator.TryGetActiveTurnState(threadId),
                 DateTimeOffset.UtcNow);
+            TelegramMiniAppSupervisionTaskVm? supervision = null;
             try
             {
-                projected = projected with
-                {
-                    Supervision = (await supervisionLedger.GetTaskForSessionAsync(identity.UserId, threadId, cancellationToken).ConfigureAwait(false)) is { } task
-                        ? ToSupervisionTaskViewModel(task)
-                        : null,
-                };
+                supervision = (await supervisionLedger.GetTaskForSessionAsync(identity.UserId, threadId, cancellationToken).ConfigureAwait(false)) is { } task
+                    ? ToSupervisionTaskViewModel(task)
+                    : null;
             }
             catch (Exception exception) when (exception is not OperationCanceledException)
             {
                 // Thread detail remains useful when the optional durable projection is unavailable.
             }
+
+            projected = projected with
+            {
+                Supervision = supervision,
+                ReviewPacket = TelegramMiniAppProjection.BuildReviewPacket(detail, supervision, projected.RetrievedAtUtc),
+            };
 
             return Results.Ok(projected);
         }

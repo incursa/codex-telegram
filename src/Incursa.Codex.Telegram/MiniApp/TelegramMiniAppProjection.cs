@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using Incursa.Codex.Telegram.Models;
 using Incursa.Codex.Telegram.Services;
 
@@ -167,35 +169,8 @@ internal static class TelegramMiniAppProjection
                 item.Timestamp))
             .ToArray();
 
-        IReadOnlyList<TelegramMiniAppChangeVm> changes = detail.Turns
-            .SelectMany(turn => turn.Changes)
-            .Select(change => new TelegramMiniAppChangeVm(
-                change.Path,
-                change.Kind,
-                Limit(change.Diff, 16000) ?? string.Empty))
-            .OrderBy(change => change.Path, StringComparer.Ordinal)
-            .ThenBy(change => change.Kind, StringComparer.Ordinal)
-            .ThenBy(change => change.Diff, StringComparer.Ordinal)
-            .Take(200)
-            .ToArray();
-
-        IReadOnlyList<TelegramMiniAppArtifactVm> artifacts = detail.Turns
-            .SelectMany(turn => turn.Items)
-            .Where(item => item.Metadata.ContainsKey("explicitMediaKind"))
-            .Select(item => new TelegramMiniAppArtifactVm(
-                item.Metadata.TryGetValue("itemId", out string? itemId) && !string.IsNullOrWhiteSpace(itemId)
-                    ? itemId
-                    : $"{item.Type}:{item.Timestamp:O}",
-                item.Metadata.TryGetValue("explicitMediaKind", out string? kind) ? kind ?? "artifact" : "artifact",
-                Limit(item.Title, 240) ?? "Artifact",
-                item.Metadata.TryGetValue("status", out string? status) ? Limit(status, 80) : null,
-                item.Timestamp))
-            .OrderByDescending(artifact => artifact.Timestamp)
-            .ThenBy(artifact => artifact.Id, StringComparer.Ordinal)
-            .ThenBy(artifact => artifact.Kind, StringComparer.Ordinal)
-            .ThenBy(artifact => artifact.Title, StringComparer.Ordinal)
-            .Take(100)
-            .ToArray();
+        IReadOnlyList<TelegramMiniAppChangeVm> changes = BuildChanges(detail.Turns);
+        IReadOnlyList<TelegramMiniAppArtifactVm> artifacts = BuildArtifacts(detail.Turns);
 
         return new TelegramMiniAppThreadDetailVm(
             thread,
@@ -207,8 +182,143 @@ internal static class TelegramMiniAppProjection
             DirectoryLabel(detail.ThreadWorkingDirectory),
             changes,
             artifacts,
-            retrievedAtUtc);
+            retrievedAtUtc)
+        {
+            ReviewPacket = BuildReviewPacket(detail, null, retrievedAtUtc),
+        };
     }
+
+    public static TelegramMiniAppReviewPacketVm BuildReviewPacket(
+        CodexThreadDetailVm detail,
+        TelegramMiniAppSupervisionTaskVm? supervision,
+        DateTimeOffset retrievedAtUtc)
+    {
+        ArgumentNullException.ThrowIfNull(detail);
+
+        TelegramMiniAppReviewChangeVm[] changes = detail.Turns
+            .SelectMany(turn => turn.Changes.Select(change => ToReviewChange(turn, change)))
+            .OrderBy(change => change.Path, StringComparer.Ordinal)
+            .ThenBy(change => change.Kind, StringComparer.Ordinal)
+            .ThenBy(change => change.TurnId, StringComparer.Ordinal)
+            .ThenBy(change => change.Diff, StringComparer.Ordinal)
+            .Take(200)
+            .ToArray();
+        TelegramMiniAppArtifactVm[] artifacts = BuildArtifacts(detail.Turns).ToArray();
+        string? turnId = detail.Turns.LastOrDefault()?.Id;
+        string canonical = string.Join(
+            "\n",
+            detail.Summary.Id,
+            supervision?.TaskId,
+            supervision?.RunId,
+            turnId,
+            string.Join("\n", changes.Select(change => string.Join("|", change.TurnId, change.Path, change.Kind, change.EvidenceState, change.Diff))),
+            string.Join("\n", artifacts.Select(artifact => string.Join("|", artifact.Id, artifact.Kind, artifact.Title, artifact.Status, artifact.Timestamp.ToString("O")))));
+        string packetId = "review:" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(canonical))).ToLowerInvariant()[..16];
+        bool hasUnsupportedEvidence = changes.Any(change => change.EvidenceState is "binary" or "unsupported");
+        string reviewStatus = changes.Length == 0 && artifacts.Length == 0
+            ? "no-reviewable-evidence"
+            : hasUnsupportedEvidence
+                ? "partial"
+                : "ready";
+
+        return new TelegramMiniAppReviewPacketVm(
+            packetId,
+            supervision?.TaskId,
+            supervision?.RunId,
+            detail.Summary.Id,
+            turnId,
+            supervision?.State ?? detail.Summary.Status,
+            reviewStatus,
+            retrievedAtUtc,
+            changes,
+            artifacts);
+    }
+
+    private static IReadOnlyList<TelegramMiniAppChangeVm> BuildChanges(IReadOnlyList<CodexTurnVm> turns)
+        => turns
+            .SelectMany(turn => turn.Changes)
+            .Select(change => new TelegramMiniAppChangeVm(
+                NormalizeReviewPath(change.Path),
+                Limit(change.Kind, 80) ?? "change",
+                Limit(change.Diff, 16000) ?? string.Empty))
+            .OrderBy(change => change.Path, StringComparer.Ordinal)
+            .ThenBy(change => change.Kind, StringComparer.Ordinal)
+            .ThenBy(change => change.Diff, StringComparer.Ordinal)
+            .Take(200)
+            .ToArray();
+
+    private static IReadOnlyList<TelegramMiniAppArtifactVm> BuildArtifacts(IReadOnlyList<CodexTurnVm> turns)
+        => turns
+            .SelectMany(turn => turn.Items)
+            .Where(item => item.Metadata.ContainsKey("explicitMediaKind"))
+            .Select(item => new TelegramMiniAppArtifactVm(
+                item.Metadata.TryGetValue("itemId", out string? itemId) && !string.IsNullOrWhiteSpace(itemId)
+                    ? Limit(itemId, 160) ?? "artifact"
+                    : $"{item.Type}:{item.Timestamp:O}",
+                item.Metadata.TryGetValue("explicitMediaKind", out string? kind) ? Limit(kind, 80) ?? "artifact" : "artifact",
+                Limit(item.Title, 240) ?? "Artifact",
+                item.Metadata.TryGetValue("status", out string? status) ? Limit(status, 80) : null,
+                item.Timestamp))
+            .OrderByDescending(artifact => artifact.Timestamp)
+            .ThenBy(artifact => artifact.Id, StringComparer.Ordinal)
+            .ThenBy(artifact => artifact.Kind, StringComparer.Ordinal)
+            .ThenBy(artifact => artifact.Title, StringComparer.Ordinal)
+            .Take(100)
+            .ToArray();
+
+    private static TelegramMiniAppReviewChangeVm ToReviewChange(CodexTurnVm turn, CodexFileChangePreviewVm change)
+    {
+        string diff = change.Diff ?? string.Empty;
+        bool truncated = diff.Length > 16000;
+        string evidenceState = IsBinaryOrUnsupportedDiff(diff)
+            ? "binary"
+            : string.IsNullOrWhiteSpace(diff)
+                ? "unsupported"
+                : "text";
+        string displayDiff = evidenceState switch
+        {
+            "binary" => "Binary change reported by Codex; text diff is not available.",
+            "unsupported" => "Codex reported this change without a text diff.",
+            _ => Limit(diff, 16000) ?? string.Empty,
+        };
+
+        return new TelegramMiniAppReviewChangeVm(
+            turn.Id,
+            NormalizeReviewPath(change.Path),
+            NormalizeChangeKind(change.Kind),
+            evidenceState,
+            displayDiff,
+            truncated);
+    }
+
+    private static string NormalizeChangeKind(string? kind)
+        => kind?.Trim().ToLowerInvariant() switch
+        {
+            "add" => "added",
+            "delete" => "deleted",
+            "update" => "updated",
+            _ => "unsupported",
+        };
+
+    private static string NormalizeReviewPath(string? path)
+    {
+        string normalized = string.IsNullOrWhiteSpace(path) ? "[unnamed file]" : path.Trim().Replace('\\', '/');
+        bool absolute = normalized.StartsWith("/", StringComparison.Ordinal)
+            || normalized.StartsWith("//", StringComparison.Ordinal)
+            || (normalized.Length >= 2 && char.IsLetter(normalized[0]) && normalized[1] == ':');
+        if (absolute || normalized.Split('/', StringSplitOptions.RemoveEmptyEntries).Any(segment => segment == ".."))
+        {
+            string leaf = normalized.Split('/', StringSplitOptions.RemoveEmptyEntries).LastOrDefault() ?? string.Empty;
+            return string.IsNullOrWhiteSpace(leaf) ? "[external file]" : $"…/{Limit(leaf, 120)}";
+        }
+
+        return Limit(normalized, 240) ?? "[unnamed file]";
+    }
+
+    private static bool IsBinaryOrUnsupportedDiff(string diff)
+        => diff.Contains("Binary files", StringComparison.OrdinalIgnoreCase)
+            || diff.Contains("GIT binary patch", StringComparison.OrdinalIgnoreCase)
+            || diff.Contains('\0');
 
     private static string ResolveLifecycleState(
         CodexThreadListItemVm thread,
@@ -407,6 +517,8 @@ internal sealed record TelegramMiniAppThreadDetailVm(
     DateTimeOffset RetrievedAtUtc)
 {
     public TelegramMiniAppSupervisionTaskVm? Supervision { get; init; }
+
+    public TelegramMiniAppReviewPacketVm? ReviewPacket { get; init; }
 }
 
 internal sealed record TelegramMiniAppTurnVm(
@@ -429,6 +541,31 @@ internal sealed record TelegramMiniAppArtifactVm(
     string Title,
     string? Status,
     DateTimeOffset Timestamp);
+
+internal sealed record TelegramMiniAppReviewPacketVm(
+    string PacketId,
+    string? TaskId,
+    string? RunId,
+    string CodexThreadId,
+    string? CodexTurnId,
+    string State,
+    string ReviewStatus,
+    DateTimeOffset GeneratedAtUtc,
+    IReadOnlyList<TelegramMiniAppReviewChangeVm> Changes,
+    IReadOnlyList<TelegramMiniAppArtifactVm> Artifacts)
+{
+    public bool ReadOnly { get; init; } = true;
+
+    public bool RequiresTelegramApproval { get; init; } = true;
+}
+
+internal sealed record TelegramMiniAppReviewChangeVm(
+    string TurnId,
+    string Path,
+    string Kind,
+    string EvidenceState,
+    string Diff,
+    bool DiffTruncated);
 
 internal sealed record TelegramMiniAppTimelineEntryVm(
     string Type,

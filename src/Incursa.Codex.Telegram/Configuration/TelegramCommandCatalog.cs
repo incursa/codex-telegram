@@ -42,6 +42,7 @@ internal static class TelegramCommandCatalog
         Definition("thinking", "Show or change thinking effort", includeInPicker: false),
         Definition("goal", "Show or change the session goal", includeInPicker: false),
         Definition("tail", "Show recent session output", includeInPicker: false),
+        Definition("handoff", "Emit a bounded task and review handoff"),
         Definition("usage", "Show five-hour and weekly Codex usage", includeInPicker: false),
         Definition("debug", "Toggle diagnostic message preambles", includeInPicker: false),
         Definition("outbound", "Show outbound Telegram queue status", includeInPicker: false),

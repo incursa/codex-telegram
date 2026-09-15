@@ -75,7 +75,7 @@ For Telegram update-boundary changes, automated coverage must prove atomic dupli
 
 For supervision-ledger changes, automated coverage must prove distinct Task/Run/Command identities, task scoping by Telegram user and conversation, replay rejection without a second Codex send, queue-to-running identity preservation, terminal Codex transition projection, explicit non-terminal `Unknown` outcomes, restart reconciliation of in-flight runs, bounded redacted persistence, and unchanged legacy Telegram state behavior. The ledger must preserve `CodexThreadId` and `CodexTurnId` as provenance rather than overwriting them with application IDs. Delivery coverage must prove one acknowledgement across a multi-chunk message and independent failure/unknown states; approval coverage must prove explicit grant/deny decisions and safe defaults; claim coverage must prove lease ownership and cross-user exclusion; recovery coverage must prove requested/applied/unknown transitions and child-command identity for replacement sessions.
 
-For Mini App changes, keep these evidence categories separate:
+For Mini App changes, keep these evidence categories separate. Review-packet checks must also prove deterministic packet IDs, Codex thread/turn provenance, bounded change/artifact counts, sanitized paths, binary/unsupported evidence labels, and the `/handoff` identity boundary.
 
 - `automated`: projection, authorization, bounded payload, and no-manifest-write tests.
 - `synthetic`: scripted Codex runtime and signed-init-data fixtures; these do not prove a real Telegram account or Codex authentication.

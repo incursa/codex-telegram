@@ -570,6 +570,7 @@ For a complete parameter-by-parameter reference, see [command-reference.md](comm
 | `/goal [objective|clear|pause|resume|complete]` | Shows or changes the selected session goal. | Use when you want Codex to track an explicit objective for the thread. |
 | `/tail [count]` | Shows recent output and keeps following the session. | Use while waiting on a live turn. |
 | `/status [sessionId]` | Shows session status and compact Codex usage when available. | Use when you want a quick health check. |
+| `/handoff [sessionId]` | Emits bounded task, run, command, and review context into Telegram. | Use when you want a reviewable handoff without transferring a workspace. |
 | `/usage` | Shows five-hour and weekly Codex usage and reset times. | Use when planning around Codex usage blocks. |
 | `/doctor` | Explains authorization, routing, active project/session, workspace roots, outbound queue state, and the next best action. | Use when setup, group routing, or output delivery feels unclear. |
 | `/outbound` | Shows outbound Telegram queue status. | Use when messages seem delayed or missing. |

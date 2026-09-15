@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 1.0.31 - 2026-09-15
+
+- Added deterministic, bounded read-only review packets that preserve Codex thread/turn provenance while redacting absolute and unsupported file evidence.
+- Added a Mini App review-packet detail surface with explicit evidence status and a Telegram-only decision boundary.
+- Added `/handoff [sessionId]` to emit a bounded task, run, command, and review-evidence handoff without transferring a workspace or replaying an uncertain command.
+
 ## 1.0.30 - 2026-09-14
 
 - Added bounded durable Telegram delivery records that remain separate from Codex execution state and track multi-chunk sends through accepted, failed, and externally unknown outcomes.

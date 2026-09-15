@@ -83,12 +83,17 @@ On startup, accepted or in-flight runs are reconciled atomically to non-terminal
 - `Needs attention` remains a derived display category, not a persisted lifecycle.
 - Mini App and browser endpoints remain GET-only and read-only.
 
+## R2.1 review packet and handoff
+
+Review packets are deterministic, bounded projections of Codex-reported file changes and safe artifact metadata. Each packet retains the application Task/Run identity plus the Codex thread and last-turn identifiers. Absolute local paths are reduced to a safe leaf representation; binary and unsupported evidence is labeled rather than rendered as an actionable diff. Packet identity is derived from canonical bounded fields so refreshes are stable without persisting a second review database.
+
+The Mini App renders the packet read-only and states that decisions remain in Telegram. `/handoff [sessionId]` emits the same bounded task/run/command/review identity through the already authorized Telegram conversation. It does not transfer a workspace, replay a command, approve a Codex action, or create a new side-effecting route.
+
 ## Later dependency sequence
 
-1. Add deterministic review packets and Telegram handoffs using the durable records.
-2. Add task-owned worktrees, ports, database namespaces, worker registration, authenticated routing, leases, readiness, draining, and cleanup.
-3. Add the combined Mini App worker/attention projection and revocable Telegram-approved browser pairing as read-only surfaces.
-4. Add immutable task recipes and staged, drain-aware, health-verified worker updates with rollback evidence.
+1. Add task-owned worktrees, ports, database namespaces, worker registration, authenticated routing, leases, readiness, draining, and cleanup.
+2. Add the combined Mini App worker/attention projection and revocable Telegram-approved browser pairing as read-only surfaces.
+3. Add immutable task recipes and staged, drain-aware, health-verified worker updates with rollback evidence.
 
 Each step requires focused automated tests plus the repository release floor. Browser and Telegram-live checks remain separate evidence categories.
 

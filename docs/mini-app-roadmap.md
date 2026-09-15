@@ -35,6 +35,8 @@ The v1.0.29 R1.1 slice adds an application-owned Task/Run/Command projection for
 
 The v1.0.30 R1.2 slice adds bounded delivery, approval/input, claim, and recovery-action records to the same supervision projection. Delivery state is tracked independently through multi-chunk Telegram sends. Approval/input decisions are recorded at the existing Telegram-controlled Codex approval seam; claims are lease-bound and fail closed for another owner; unreadable-thread replacement records requested/applied/unknown transitions; and startup reconciliation marks in-flight runs unknown. These records are evidence and projection only: the Mini App remains read-only, Telegram remains the control/approval authority, and no ambiguous Codex side effect is replayed automatically.
 
+The v1.0.31 R2.1 slice adds deterministic review packets and the explicit `/handoff [sessionId]` Telegram projection. Review packets are bounded to Codex-reported changes and safe artifact metadata, sanitize absolute paths, label binary or unsupported evidence, and retain thread/turn/task/run provenance. The Mini App renders them as read-only evidence; `/handoff` carries the same bounded context into the authorized Telegram conversation without transferring a workspace, replaying a command, or changing authorization semantics.
+
 ## Identity and state vocabulary
 
 Until R1 introduces durable application records, a Mini App task is a Codex thread and its turns are the run history. The implementation must not imply stronger guarantees than the underlying thread state provides.
@@ -53,9 +55,8 @@ Initial display states are `queued`, `running`, `waiting`, `failed`, `completed`
 
 ## Later slices
 
-1. Add deterministic Codex file-change projections, bounded diffs, binary/rename/unsupported handling, safe artifact inventory, review packets, and explicit Telegram handoff messages.
-3. Add task-owned worktrees or branches, cleanup ownership, assigned development ports, explicit database settings, worker registration, outbound authenticated coordinator connections, and drain-aware scheduling.
-4. Add the combined worker/attention view and short-lived browser pairing approved through Telegram. Browser access remains read-only until a separate authorization contract exists.
-5. Add inspectable recipes and controlled worker updates with capability checks, staged rollout, drain, health/version verification, rollback, and provenance evidence.
+1. Add task-owned worktrees or branches, cleanup ownership, assigned development ports, explicit database settings, worker registration, outbound authenticated coordinator connections, and drain-aware scheduling.
+2. Add the combined worker/attention view and short-lived browser pairing approved through Telegram. Browser access remains read-only until a separate authorization contract exists.
+3. Add inspectable recipes and controlled worker updates with capability checks, staged rollout, drain, health/version verification, rollback, and provenance evidence.
 
 Full IDE behavior, arbitrary terminal/file-manager access, autonomous merge/push/deploy, public multi-tenant hosting, and blind replay of side-effecting work are out of scope.

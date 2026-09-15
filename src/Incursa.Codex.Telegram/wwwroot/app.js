@@ -358,6 +358,9 @@
     byId("detail-status").textContent = "Loading";
     byId("detail-status").setAttribute("variant", "neutral");
     byId("detail-summary").replaceChildren();
+    byId("detail-review-packet").replaceChildren();
+    byId("review-packet-status").textContent = "Loading";
+    byId("review-packet-status").setAttribute("variant", "neutral");
     byId("detail-timeline").replaceChildren();
     byId("detail-changes").replaceChildren();
     byId("detail-artifacts").replaceChildren();
@@ -387,6 +390,45 @@
     list.append(item);
   }
 
+  function renderReviewPacket(packet) {
+    const list = byId("detail-review-packet");
+    const badge = byId("review-packet-status");
+    list.replaceChildren();
+    if (!packet) {
+      badge.textContent = "Unavailable";
+      badge.setAttribute("variant", "warning");
+      const empty = document.createElement("div");
+      empty.className = "detail-empty";
+      empty.textContent = "No review packet is available for this task.";
+      list.append(empty);
+      return;
+    }
+
+    const status = packet.reviewStatus || "unknown";
+    badge.textContent = status === "ready" ? "Ready" : status === "partial" ? "Partial" : "No evidence";
+    badge.setAttribute("variant", status === "ready" ? "success" : status === "partial" ? "warning" : "neutral");
+    const summary = document.createElement("div");
+    summary.className = "review-packet-summary";
+    const packetId = document.createElement("code");
+    packetId.textContent = packet.packetId || "review:unknown";
+    const counts = document.createElement("span");
+    counts.textContent = `${packet.changes?.length || 0} changes · ${packet.artifacts?.length || 0} artifacts`;
+    summary.append(packetId, counts);
+    list.append(summary);
+
+    const provenance = document.createElement("div");
+    provenance.className = "review-packet-provenance";
+    provenance.textContent = `Codex thread ${packet.codexThreadId || "unknown"}${packet.codexTurnId ? ` · turn ${packet.codexTurnId}` : ""}`;
+    list.append(provenance);
+
+    const boundary = document.createElement("div");
+    boundary.className = "review-packet-boundary";
+    boundary.textContent = packet.requiresTelegramApproval === false
+      ? "This packet is informational."
+      : "Read-only evidence. Send decisions and follow-up instructions in Telegram.";
+    list.append(boundary);
+  }
+
   function renderThreadDetail(detail) {
     const thread = detail.thread;
     byId("detail-card").hidden = false;
@@ -407,6 +449,7 @@
       appendSummaryItem(summary, "Run state", detail.supervision.state);
       appendSummaryItem(summary, "Run", detail.supervision.runId || "None");
     }
+    renderReviewPacket(detail.reviewPacket);
 
     const timeline = byId("detail-timeline");
     timeline.replaceChildren();

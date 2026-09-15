@@ -646,6 +646,25 @@ Expected behavior:
 5. Shows the last turn closeout when the current process has observed one, including missing-final-response warnings for streamed assistant text.
 6. Includes buttons for Send/Add Input, Steer, Queue, Refresh, Tail/History, Debug/Trace, Model, Thinking, and Stop/Cancel.
 
+### `/handoff [sessionId]`
+
+Emits a bounded context handoff for the selected session.
+
+Syntax:
+
+```text
+/handoff
+/handoff <sessionId>
+```
+
+Expected behavior:
+
+1. Defaults to the active session.
+2. Includes the application-owned task, run, command, Codex thread, and Codex turn identifiers when available.
+3. Includes a deterministic review-packet identifier and counts for Codex-reported changes and safe artifact metadata when the runtime is available.
+4. Does not transfer a workspace, replay a prompt, or approve an action. Continue consequential work in this Telegram conversation.
+5. Rejects sessions that are not selected or not owned by the requesting Telegram user.
+
 ### `/usage`
 
 Shows Codex account usage reported by the local Codex app-server.

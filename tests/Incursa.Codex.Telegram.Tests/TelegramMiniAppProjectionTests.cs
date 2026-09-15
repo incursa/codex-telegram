@@ -203,6 +203,59 @@ public sealed class TelegramMiniAppProjectionTests
         Assert.DoesNotContain("C:\\private\\secret.png", System.Text.Json.JsonSerializer.Serialize(result.Artifacts), StringComparison.Ordinal);
         Assert.DoesNotContain("base64-secret", System.Text.Json.JsonSerializer.Serialize(result.Artifacts), StringComparison.Ordinal);
         Assert.Equal("private-repo", result.ThreadWorkingDirectory);
+        Assert.NotNull(result.ReviewPacket);
+        Assert.Equal(200, result.ReviewPacket.Changes.Count);
+        Assert.Equal(100, result.ReviewPacket.Artifacts.Count);
+        Assert.Equal("ready", result.ReviewPacket.ReviewStatus);
+        Assert.Equal(
+            result.ReviewPacket.PacketId,
+            TelegramMiniAppProjection.BuildReviewPacket(detail, null, now).PacketId);
+    }
+
+    [Fact]
+    public void ReviewPacketRedactsAbsolutePathsAndLabelsBinaryOrUnsupportedEvidence()
+    {
+        DateTimeOffset now = DateTimeOffset.Parse("2026-09-14T12:00:00Z");
+        CodexThreadListItemVm summary = CreateThread("review-safety", "idle", now);
+        CodexTurnVm turn = new(
+            "turn-safety",
+            "Completed",
+            null,
+            "Done",
+            null,
+            [])
+        {
+            Changes =
+            [
+                new CodexFileChangePreviewVm(
+                    @"C:\private\secrets.txt",
+                    "Update",
+                    "Binary files a/secrets.txt and b/secrets.txt differ"),
+                new CodexFileChangePreviewVm("../outside.txt", "Unknown", string.Empty),
+            ],
+        };
+        CodexThreadDetailVm detail = new(
+            summary,
+            [turn],
+            [],
+            [],
+            [],
+            CreateRuntime(),
+            null,
+            null,
+            @"C:\Users\Samuel\private-repo",
+            null,
+            null,
+            []);
+
+        TelegramMiniAppReviewPacketVm packet = TelegramMiniAppProjection.BuildReviewPacket(detail, null, now);
+
+        Assert.Equal("partial", packet.ReviewStatus);
+        TelegramMiniAppReviewChangeVm binary = Assert.Single(packet.Changes, change => change.Path == "…/secrets.txt");
+        Assert.Equal("binary", binary.EvidenceState);
+        TelegramMiniAppReviewChangeVm unsupported = Assert.Single(packet.Changes, change => change.Path == "…/outside.txt");
+        Assert.Equal("unsupported", unsupported.Kind);
+        Assert.Equal("unsupported", unsupported.EvidenceState);
     }
 
     private static CodexThreadListItemVm CreateThread(

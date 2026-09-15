@@ -47,7 +47,7 @@ Without `--run`, an interactive terminal opens the bootstrap/admin menu.
 
 ## Mini App Companion Surface
 
-The optional Mini App host listens on `http://127.0.0.1:5287` by default. The static page is available locally, while its live API is disabled for Telegram use until `TelegramMiniApp:Enabled` is set to `true`. It is a read-only supervision dashboard for attention, recent sessions, task detail, bounded Codex-reported changes, safe artifact metadata, runtime state, usage, and saved projects; message and Codex control actions remain in Telegram. Local sample data requires the explicit `?preview=1` query string.
+The optional Mini App host listens on `http://127.0.0.1:5287` by default. The static page is available locally, while its live API is disabled for Telegram use until `TelegramMiniApp:Enabled` is set to `true`. It is a read-only supervision dashboard for attention, recent sessions, task detail, bounded Codex-reported changes, review packets, safe artifact metadata, runtime state, usage, and saved projects; message and Codex control actions remain in Telegram. `/handoff [sessionId]` emits bounded task/review context in the authorized Telegram conversation without transferring a workspace or replaying an uncertain command. Local sample data requires the explicit `?preview=1` query string.
 
 For a Telegram test, set `TelegramMiniApp:ListenUrl` to the local listener and place it behind an HTTPS Cloudflare Tunnel. With the bot running, a temporary test tunnel is:
 

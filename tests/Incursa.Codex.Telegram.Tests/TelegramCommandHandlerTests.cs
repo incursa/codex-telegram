@@ -36,6 +36,32 @@ public sealed class TelegramCommandHandlerTests
     }
 
     [Fact]
+    public async Task HandleMessageAsync_HandoffReportsDurableTaskAndProvenance()
+    {
+        using CommandHandlerHarness harness = CommandHandlerHarness.Create();
+        harness.SessionManager.Sessions.Add(CreateSession("thread-1", "Demo session", harness.Temp.Path));
+        TelegramConversationScope conversation = new(5555, null);
+        await harness.StateStore.SetActiveSessionIdAsync(conversation, "thread-1", CancellationToken.None);
+
+        await harness.Handler.HandleMessageAsync(
+            new TelegramInboundMessage(1234, conversation.ChatId, "private", "send this", CommandId: "command:handoff-test"),
+            harness.Sender,
+            CancellationToken.None);
+        await harness.Handler.HandleMessageAsync(
+            new TelegramInboundMessage(1234, conversation.ChatId, "private", "/handoff"),
+            harness.Sender,
+            CancellationToken.None);
+
+        SentTelegramMessage handoff = Assert.Single(harness.Sender.Sent);
+        Assert.Contains("Codex handoff", handoff.Text);
+        Assert.Contains("Task: task:", handoff.Text);
+        Assert.Contains("Run state: Running", handoff.Text);
+        Assert.Contains("Codex thread: thread-1", handoff.Text);
+        Assert.Contains("Command: command:handoff-test", handoff.Text);
+        Assert.Contains("bounded context handoff", handoff.Text);
+    }
+
+    [Fact]
     public async Task HandleMessageAsync_IgnoresUnauthorizedNonWhoamiMessages()
     {
         using CommandHandlerHarness harness = CommandHandlerHarness.Create(new TelegramBotOptions

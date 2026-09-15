@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text;
 using Incursa.OpenAI.Codex;
 using Incursa.Codex.Telegram.Configuration;
+using Incursa.Codex.Telegram.MiniApp;
 using Incursa.Codex.Telegram.Models;
 using Incursa.Codex.Telegram.Options;
 using Incursa.Codex.Telegram.Services;
@@ -197,6 +198,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
     private readonly ITelegramDebugTraceStore _traceStore;
     private readonly ICodexSessionEventLog _eventLog;
     private readonly ICodexSupervisionLedger _supervisionLedger;
+    private readonly ICodexGateway? _gateway;
     private readonly TelegramBotOptions _options;
     private readonly TelegramInputOptions _inputOptions;
     private readonly ILogger<TelegramCodexBotCommandHandler> _logger;
@@ -240,7 +242,8 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         TimeSpan? steerStartTimeout = null,
         RepositorySummaryService? repositorySummaryService = null,
         IOptions<CodexTelegramOptions>? codexOptions = null,
-        ICodexSupervisionLedger? supervisionLedger = null)
+        ICodexSupervisionLedger? supervisionLedger = null,
+        ICodexGateway? gateway = null)
     {
         _parser = parser;
         _chunker = chunker;
@@ -278,6 +281,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         _repositorySummaryService = repositorySummaryService ?? new RepositorySummaryService();
         _steerStartTimeout = steerStartTimeout ?? TelegramSteerStartTimeout;
         _supervisionLedger = supervisionLedger ?? new NullCodexSupervisionLedger();
+        _gateway = gateway;
     }
 
     public async Task HandleMessageAsync(
@@ -447,6 +451,9 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
                     break;
                 case "status":
                     await HandleStatusAsync(message, command.Arguments, sender, cancellationToken).ConfigureAwait(false);
+                    break;
+                case "handoff":
+                    await HandleHandoffAsync(message, command.Arguments, sender, cancellationToken).ConfigureAwait(false);
                     break;
                 case "usage":
                     await HandleUsageAsync(message, sender, cancellationToken).ConfigureAwait(false);
@@ -2757,6 +2764,88 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         await ReplyAsync(sender, message, statusCard.Text, statusCard.Buttons, cancellationToken, includeNavigationButtons: false).ConfigureAwait(false);
     }
 
+    private async Task HandleHandoffAsync(
+        TelegramInboundMessage message,
+        string arguments,
+        ITelegramBotMessageSender sender,
+        CancellationToken cancellationToken)
+    {
+        ResolvedSession resolved = string.IsNullOrWhiteSpace(arguments)
+            ? await ResolveActiveSessionAsync(message.ConversationScope, cancellationToken).ConfigureAwait(false)
+            : await ResolveSessionAsync(message.ConversationScope, arguments, cancellationToken).ConfigureAwait(false);
+        if (resolved.Session is null)
+        {
+            await ReplyAsync(sender, message, resolved.Message, null, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        CodexSupervisionTaskSnapshot? task = await _supervisionLedger.GetTaskForSessionAsync(
+            message.UserId,
+            resolved.Session.Id,
+            cancellationToken).ConfigureAwait(false);
+        if (task is null)
+        {
+            await ReplyAsync(
+                sender,
+                message,
+                "No durable supervision task is recorded for this session yet. Send a prompt first, then use /handoff.",
+                null,
+                cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        CodexSupervisionRunSnapshot? run = task.LatestRun;
+        TelegramMiniAppReviewPacketVm? packet = null;
+        if (_gateway is not null)
+        {
+            try
+            {
+                CodexThreadDetailVm detail = await _gateway.GetThreadAsync(
+                    task.CodexThreadId,
+                    cancellationToken: cancellationToken).ConfigureAwait(false);
+                TelegramMiniAppSupervisionTaskVm supervision = new(
+                    task.TaskId,
+                    task.CodexThreadId,
+                    task.SessionName,
+                    run?.State.ToString().ToLowerInvariant() ?? "not_started",
+                    run?.RunId,
+                    run?.CommandId,
+                    run?.TurnId,
+                    task.CreatedAt,
+                    task.UpdatedAt,
+                    run?.UpdatedAt ?? task.UpdatedAt);
+                packet = TelegramMiniAppProjection.BuildReviewPacket(detail, supervision, DateTimeOffset.UtcNow);
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            {
+                _logger.LogDebug(exception, "Could not include Codex review evidence in handoff for task {TaskId}.", task.TaskId);
+            }
+        }
+
+        List<string> lines =
+        [
+            "Codex handoff",
+            $"Session: {task.SessionName}",
+            $"Task: {task.TaskId}",
+            $"Run state: {run?.State.ToString() ?? "not_started"}",
+            $"Codex thread: {task.CodexThreadId}",
+            $"Codex turn: {run?.TurnId ?? "(none)"}",
+            $"Command: {run?.CommandId ?? "(none)"}",
+            $"Review packet: {packet?.PacketId ?? "not available"}",
+        ];
+        if (packet is not null)
+        {
+            lines.Add($"Review evidence: {packet.Changes.Count} changed-file preview(s), {packet.Artifacts.Count} artifact record(s), {packet.ReviewStatus}.");
+        }
+        else
+        {
+            lines.Add("Review evidence: unavailable from the current Codex runtime.");
+        }
+
+        lines.Add("This is a bounded context handoff, not a workspace transfer. Continue, approve, or correct the work in this Telegram conversation.");
+        await ReplyAsync(sender, message, string.Join(Environment.NewLine, lines), null, cancellationToken).ConfigureAwait(false);
+    }
+
     private async Task HandleSessionInputActionCallbackAsync(
         TelegramInboundMessage message,
         string callbackQueryId,
@@ -4681,6 +4770,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             "/goal [objective|set <objective>|clear|pause|resume|complete] - show or change the selected session goal",
             "/tail [count] - show recent output and keep following the session live",
             "/status [sessionId] - show session status",
+            "/handoff [sessionId] - emit a bounded task/review context handoff",
             "/usage - show Codex account usage remaining and reset times",
             "/doctor - explain authorization, routing, active project/session, workspace roots, and queue state",
             "/debug [status|on|off|reset] - show or change diagnostic message preambles",
