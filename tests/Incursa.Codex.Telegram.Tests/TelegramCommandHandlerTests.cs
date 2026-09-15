@@ -174,6 +174,45 @@ public sealed class TelegramCommandHandlerTests
     }
 
     [Fact]
+    public async Task HandleMessageAsync_TaskRecipeIsSnapshottedAndAppliedToSessionContext()
+    {
+        CodexTaskRecipeSnapshot recipe = new(
+            "review-branch",
+            "7",
+            "Review branch",
+            "Review the branch and report evidence.",
+            "base policy",
+            "developer policy",
+            "model-x",
+            "high",
+            ["Findings"],
+            ["task-workspaces"]);
+        using TemporaryDirectory workspaceTemp = TemporaryDirectory.Create();
+        using CommandHandlerHarness harness = CommandHandlerHarness.Create(
+            taskWorkspaceManager: new FakeCodexTaskWorkspaceManager(workspaceTemp.CreateDirectory("worktrees")),
+            recipeCatalog: new FakeRecipeCatalog(recipe));
+        string projectPath = harness.Temp.CreateDirectory("repo");
+        harness.ProjectCatalog.Projects.Add(new CodexProjectCatalogRecord
+        {
+            WorkingDirectory = projectPath,
+            AddedAt = DateTimeOffset.Parse("2026-05-04T00:00:00Z", CultureInfo.InvariantCulture),
+        });
+        TelegramConversationScope conversation = new(5555, null);
+        await harness.StateStore.SetActiveProjectWorkingDirectoryAsync(conversation, projectPath, CancellationToken.None);
+
+        await harness.Handler.HandleMessageAsync(
+            new TelegramInboundMessage(1234, conversation.ChatId, "private", "/task new Review | main | review-branch"),
+            harness.Sender,
+            CancellationToken.None);
+
+        CreateCodexSessionRequest sessionRequest = Assert.Single(harness.SessionManager.CreateRequests);
+        Assert.Equal(recipe, sessionRequest.Recipe);
+        CodexSupervisionTaskSnapshot task = Assert.Single(await harness.SupervisionLedger.ListTasksAsync(1234, CancellationToken.None));
+        Assert.Equal("review-branch", task.RecipeId);
+        Assert.Equal("7", task.RecipeVersion);
+    }
+
+    [Fact]
     public async Task HandleMessageAsync_IgnoresUnauthorizedNonWhoamiMessages()
     {
         using CommandHandlerHarness harness = CommandHandlerHarness.Create(new TelegramBotOptions
@@ -3043,6 +3082,7 @@ public sealed class TelegramCommandHandlerTests
             CodexSupervisionLedger supervisionLedger,
             FakeCodexTaskWorkspaceManager? taskWorkspaceManager,
             ITelegramMiniAppBrowserPairingStore? browserPairingStore,
+            ICodexTaskRecipeCatalog? recipeCatalog,
             FakeTelegramForumTopicService topicService,
             FakeAudioTranscriptionService audioTranscription,
             TestTelegramBotMessageSender sender,
@@ -3066,6 +3106,7 @@ public sealed class TelegramCommandHandlerTests
             SupervisionLedger = supervisionLedger;
             TaskWorkspaceManager = taskWorkspaceManager;
             BrowserPairingStore = browserPairingStore;
+            RecipeCatalog = recipeCatalog;
             TopicService = topicService;
             AudioTranscription = audioTranscription;
             Sender = sender;
@@ -3108,6 +3149,8 @@ public sealed class TelegramCommandHandlerTests
 
         public ITelegramMiniAppBrowserPairingStore? BrowserPairingStore { get; }
 
+        public ICodexTaskRecipeCatalog? RecipeCatalog { get; }
+
         public FakeTelegramForumTopicService TopicService { get; }
 
         public FakeAudioTranscriptionService AudioTranscription { get; }
@@ -3122,7 +3165,8 @@ public sealed class TelegramCommandHandlerTests
             TimeSpan? steerStartTimeout = null,
             CodexTelegramOptions? codexOptionsOverride = null,
             FakeCodexTaskWorkspaceManager? taskWorkspaceManager = null,
-            ITelegramMiniAppBrowserPairingStore? browserPairingStore = null)
+            ITelegramMiniAppBrowserPairingStore? browserPairingStore = null,
+            ICodexTaskRecipeCatalog? recipeCatalog = null)
         {
             TemporaryDirectory temp = TemporaryDirectory.Create();
             IOptions<CodexTelegramOptions> codexOptions = Microsoft.Extensions.Options.Options.Create(new CodexTelegramOptions
@@ -3198,9 +3242,10 @@ public sealed class TelegramCommandHandlerTests
                 codexOptions: codexOptions,
                 supervisionLedger: supervisionLedger,
                 taskWorkspaceManager: taskWorkspaceManager,
-                browserPairingStore: browserPairingStore);
+                browserPairingStore: browserPairingStore,
+                recipeCatalog: recipeCatalog);
 
-            return new CommandHandlerHarness(temp, sessionManager, accountUsage, projectCatalog, stateStore, outboundQueue, turnCoordinator, turnOutputRelay, inputBundleStore, typingIndicatorRegistry, turnReactionRegistry, debugPreambleMode, outputModeState, traceStore, eventLog, supervisionLedger, taskWorkspaceManager, browserPairingStore, topicService, audioTranscription, sender, handler);
+            return new CommandHandlerHarness(temp, sessionManager, accountUsage, projectCatalog, stateStore, outboundQueue, turnCoordinator, turnOutputRelay, inputBundleStore, typingIndicatorRegistry, turnReactionRegistry, debugPreambleMode, outputModeState, traceStore, eventLog, supervisionLedger, taskWorkspaceManager, browserPairingStore, recipeCatalog, topicService, audioTranscription, sender, handler);
         }
 
 
@@ -3497,6 +3542,14 @@ public sealed class TelegramCommandHandlerTests
             Records[index] = released;
             return Task.FromResult<CodexTaskWorkspaceRecord?>(released);
         }
+    }
+
+    private sealed class FakeRecipeCatalog(CodexTaskRecipeSnapshot recipe) : ICodexTaskRecipeCatalog
+    {
+        public IReadOnlyList<CodexTaskRecipeSnapshot> List() => [recipe];
+
+        public CodexTaskRecipeSnapshot? Find(string id)
+            => recipe.Id.Equals(id, StringComparison.OrdinalIgnoreCase) ? recipe : null;
     }
 
     private sealed class FakeBrowserPairingStore(string expectedCode) : ITelegramMiniAppBrowserPairingStore

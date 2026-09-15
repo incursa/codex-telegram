@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 1.0.35 - 2026-09-15
+
+- Added persisted local worker identity, readiness, bounded task leases, and drain/resume state for the task-workspace boundary.
+- Added `/worker status`, `/worker drain confirm`, and `/worker resume confirm`; drain/resume is restricted to an authorized private chat and never interrupts existing leases.
+- Added a read-only Mini App Workers card with worker capabilities, readiness, lease capacity, heartbeat, and bounded issue status.
+- Added inspectable built-in or configured task recipes with immutable ID/version snapshots and optional Codex session policy for `/task new`.
+
 ## 1.0.34 - 2026-09-15
 
 - Added opt-in standalone browser pairing for the read-only Mini App using short-lived Telegram-approved codes and revocable sessions.

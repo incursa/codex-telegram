@@ -12,7 +12,7 @@ internal sealed class CodexTelegramOptionsValidator : IValidateOptions<CodexTele
 {
     public ValidateOptionsResult Validate(string? name, CodexTelegramOptions options)
     {
-        IReadOnlyList<string> failures = [.. ValidateRepository(options), .. ValidateTaskWorkspace(options)];
+        IReadOnlyList<string> failures = [.. ValidateRepository(options), .. ValidateTaskWorkspace(options), .. ValidateWorker(options), .. ValidateRecipes(options)];
         return failures.Count == 0
             ? ValidateOptionsResult.Success
             : ValidateOptionsResult.Fail(failures);
@@ -26,6 +26,68 @@ internal sealed class CodexTelegramOptionsValidator : IValidateOptions<CodexTele
             ? [$"CodexTelegram:Workspace task development port range must be within 1024-65535 and start no later than end (received {start}-{end})."]
             : [];
     }
+
+    private static IReadOnlyList<string> ValidateWorker(CodexTelegramOptions options)
+    {
+        CodexWorkerOptions worker = options.Worker;
+        if (worker.MaxConcurrentTasks is < 1 or > 256)
+        {
+            return [$"CodexTelegram:Worker:MaxConcurrentTasks must be between 1 and 256 (received {worker.MaxConcurrentTasks})."];
+        }
+
+        if (!string.IsNullOrWhiteSpace(worker.WorkerId) && (worker.WorkerId.Trim().Length > 120 || worker.WorkerId.Any(char.IsControl)))
+        {
+            return ["CodexTelegram:Worker:WorkerId must be at most 120 characters and cannot contain control characters."];
+        }
+
+        return !string.IsNullOrWhiteSpace(worker.DisplayName) && (worker.DisplayName.Trim().Length > 120 || worker.DisplayName.Any(char.IsControl))
+            ? ["CodexTelegram:Worker:DisplayName must be at most 120 characters and cannot contain control characters."]
+            : [];
+    }
+
+    private static IReadOnlyList<string> ValidateRecipes(CodexTelegramOptions options)
+    {
+        if (options.Recipes.Count > 50)
+        {
+            return ["CodexTelegram:Recipes may contain at most 50 definitions."];
+        }
+
+        HashSet<string> ids = new(StringComparer.OrdinalIgnoreCase);
+        foreach (CodexTaskRecipeDefinition recipe in options.Recipes)
+        {
+            if (string.IsNullOrWhiteSpace(recipe.Id) || !ids.Add(recipe.Id.Trim()))
+            {
+                return ["CodexTelegram:Recipes must contain unique, non-empty IDs."];
+            }
+
+            if (!IsSafeRecipeToken(recipe.Id, 80) || !IsSafeRecipeToken(recipe.Version, 40))
+            {
+                return ["CodexTelegram:Recipes IDs and versions must use at most 80/40 safe characters and cannot contain controls."];
+            }
+
+            if (string.IsNullOrWhiteSpace(recipe.DisplayName) || recipe.DisplayName.Trim().Length > 120 || recipe.DisplayName.Any(char.IsControl))
+            {
+                return ["CodexTelegram:Recipes display names are required, limited to 120 characters, and cannot contain controls."];
+            }
+
+            if (string.IsNullOrWhiteSpace(recipe.Objective) || recipe.Objective.Length > 4_000 || recipe.Objective.Any(char.IsControl))
+            {
+                return ["CodexTelegram:Recipes objectives are required, limited to 4000 characters, and cannot contain controls."];
+            }
+
+            if (recipe.ExpectedOutputs.Count > 12 || recipe.RequiredCapabilities.Count > 12)
+            {
+                return ["CodexTelegram:Recipes may contain at most 12 expected outputs and required capabilities."];
+            }
+        }
+
+        return [];
+    }
+
+    private static bool IsSafeRecipeToken(string? value, int maxLength)
+        => !string.IsNullOrWhiteSpace(value)
+            && value.Trim().Length <= maxLength
+            && value.All(character => char.IsLetterOrDigit(character) || character is '-' or '_' or '.');
 
     internal static IReadOnlyList<string> ValidateRepository(CodexTelegramOptions options)
     {

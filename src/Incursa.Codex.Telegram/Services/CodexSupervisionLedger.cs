@@ -20,7 +20,8 @@ internal interface ICodexSupervisionLedger
         string sessionName,
         TelegramConversationScope conversation,
         long userId,
-        CancellationToken cancellationToken);
+        CancellationToken cancellationToken,
+        CodexTaskRecipeSnapshot? recipe = null);
 
     Task<CodexSupervisionCommandStart> StartCommandAsync(
         string? commandId,
@@ -175,7 +176,10 @@ internal sealed record CodexSupervisionTaskRecord(
     TelegramConversationScope Conversation,
     long OwnerUserId,
     DateTimeOffset CreatedAt,
-    DateTimeOffset UpdatedAt);
+    DateTimeOffset UpdatedAt,
+    string? RecipeId = null,
+    string? RecipeVersion = null,
+    string? RecipeDisplayName = null);
 
 internal sealed record CodexSupervisionRunRecord(
     string RunId,
@@ -283,7 +287,10 @@ internal sealed record CodexSupervisionTaskSnapshot(
     TelegramConversationScope Conversation,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt,
-    CodexSupervisionRunSnapshot? LatestRun);
+    CodexSupervisionRunSnapshot? LatestRun,
+    string? RecipeId = null,
+    string? RecipeVersion = null,
+    string? RecipeDisplayName = null);
 
 internal sealed record CodexSupervisionRunSnapshot(
     string RunId,
@@ -341,7 +348,8 @@ internal sealed class CodexSupervisionLedger : ICodexSupervisionLedger, IDisposa
         string sessionName,
         TelegramConversationScope conversation,
         long userId,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        CodexTaskRecipeSnapshot? recipe = null)
     {
         if (string.IsNullOrWhiteSpace(taskId) || string.IsNullOrWhiteSpace(codexThreadId))
         {
@@ -372,7 +380,10 @@ internal sealed class CodexSupervisionLedger : ICodexSupervisionLedger, IDisposa
                 conversationKey,
                 userId,
                 now,
-                now);
+                now,
+                recipe?.Id,
+                recipe?.Version,
+                recipe?.DisplayName);
             state.Tasks.Add(taskRecord);
             Trim(state);
             await SaveAsync(state, cancellationToken).ConfigureAwait(false);
@@ -1224,7 +1235,10 @@ internal sealed class CodexSupervisionLedger : ICodexSupervisionLedger, IDisposa
                     .Where(run => string.Equals(run.TaskId, task.TaskId, StringComparison.Ordinal))
                     .OrderByDescending(run => run.UpdatedAt)
                     .Select(run => run.ToSnapshot())
-                    .FirstOrDefault()))
+                    .FirstOrDefault(),
+                task.RecipeId,
+                task.RecipeVersion,
+                task.RecipeDisplayName))
             .OrderByDescending(task => task.UpdatedAt)
             .ToArray();
 
@@ -1353,7 +1367,10 @@ internal sealed class CodexSupervisionLedger : ICodexSupervisionLedger, IDisposa
             string conversationKey,
             long ownerUserId,
             DateTimeOffset createdAt,
-            DateTimeOffset updatedAt)
+            DateTimeOffset updatedAt,
+            string? recipeId = null,
+            string? recipeVersion = null,
+            string? recipeDisplayName = null)
         {
             TaskId = taskId;
             CodexThreadId = codexThreadId;
@@ -1362,6 +1379,9 @@ internal sealed class CodexSupervisionLedger : ICodexSupervisionLedger, IDisposa
             OwnerUserId = ownerUserId;
             CreatedAt = createdAt;
             UpdatedAt = updatedAt;
+            RecipeId = recipeId;
+            RecipeVersion = recipeVersion;
+            RecipeDisplayName = recipeDisplayName;
         }
 
         public string TaskId { get; set; } = string.Empty;
@@ -1371,11 +1391,14 @@ internal sealed class CodexSupervisionLedger : ICodexSupervisionLedger, IDisposa
         public long OwnerUserId { get; set; }
         public DateTimeOffset CreatedAt { get; set; }
         public DateTimeOffset UpdatedAt { get; set; }
+        public string? RecipeId { get; set; }
+        public string? RecipeVersion { get; set; }
+        public string? RecipeDisplayName { get; set; }
 
         public CodexSupervisionTaskRecord ToPublicRecord()
             => TelegramConversationScope.TryParseStorageKey(ConversationKey, out TelegramConversationScope conversation)
-                ? new(TaskId, CodexThreadId, SessionName, conversation, OwnerUserId, CreatedAt, UpdatedAt)
-                : new(TaskId, CodexThreadId, SessionName, new TelegramConversationScope(OwnerUserId, null), OwnerUserId, CreatedAt, UpdatedAt);
+                ? new(TaskId, CodexThreadId, SessionName, conversation, OwnerUserId, CreatedAt, UpdatedAt, RecipeId, RecipeVersion, RecipeDisplayName)
+                : new(TaskId, CodexThreadId, SessionName, new TelegramConversationScope(OwnerUserId, null), OwnerUserId, CreatedAt, UpdatedAt, RecipeId, RecipeVersion, RecipeDisplayName);
     }
 
     private sealed class LedgerRunRecord
@@ -1646,7 +1669,8 @@ internal sealed class NullCodexSupervisionLedger : ICodexSupervisionLedger
         string sessionName,
         TelegramConversationScope conversation,
         long userId,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        CodexTaskRecipeSnapshot? recipe = null)
         => Task.FromResult<CodexSupervisionTaskRecord?>(null);
 
     public Task<CodexSupervisionCommandStart> StartCommandAsync(

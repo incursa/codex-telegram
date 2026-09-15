@@ -58,7 +58,10 @@ internal interface ICodexSessionManager
     Task ForgetAsync(string sessionId, CancellationToken cancellationToken);
 }
 
-internal sealed record CreateCodexSessionRequest(string Name, string? WorkingDirectory);
+internal sealed record CreateCodexSessionRequest(
+    string Name,
+    string? WorkingDirectory,
+    CodexTaskRecipeSnapshot? Recipe = null);
 
 internal sealed record CodexSessionModelSettings(
     string SessionId,
@@ -174,6 +177,10 @@ internal sealed class CodexGatewaySessionManager : ICodexSessionManager
             WorkingDirectory = string.IsNullOrWhiteSpace(request.WorkingDirectory)
                 ? _options.DefaultWorkingDirectory
                 : request.WorkingDirectory,
+            BaseInstructions = request.Recipe?.BaseInstructions,
+            DeveloperInstructions = request.Recipe?.DeveloperInstructions,
+            Model = request.Recipe?.Model,
+            ReasoningEffort = request.Recipe?.ReasoningEffort,
         };
 
         CodexThreadListItemVm thread = await _gateway.CreateThreadShellAsync(submission, cancellationToken).ConfigureAwait(false);

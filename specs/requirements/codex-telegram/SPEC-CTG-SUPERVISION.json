@@ -8,7 +8,7 @@
   "owner": "codex-telegram-maintainers",
   "tags": ["codex", "telegram", "supervision", "recovery", "workers", "mini-app"],
   "purpose": "Define the authority, identity, recovery, isolation, review, browser, recipe, and release contracts for supervising Codex work across private self-hosted workers.",
-  "scope": "This specification covers the staged supervision workspace roadmap. It establishes the durable Telegram update receipt and bounded Task/Run/Command, delivery, approval/input, claim, recovery-action, restart-reconciliation, review-packet, Telegram-handoff, task-workspace allocation, explicit Telegram task-flow, and opt-in browser-pairing projection slices while keeping Worker, coordinator routing, recipe, and update contracts explicit before their implementation.",
+  "scope": "This specification covers the staged supervision workspace roadmap. It establishes the durable Telegram update receipt and bounded Task/Run/Command, delivery, approval/input, claim, recovery-action, restart-reconciliation, review-packet, Telegram-handoff, task-workspace allocation, explicit Telegram task-flow, opt-in browser-pairing projection, and local worker-boundary slices while keeping coordinator routing, recipe, and update contracts explicit before their implementation.",
   "authority": {
     "telegram": "authentication, operator control, and consequential approval",
     "codex": "thread and turn execution plus execution provenance",
@@ -53,6 +53,20 @@
       "title": "Keep later worker and review contracts inspectable",
       "statement": "Review packets, task workspaces, worker routing, browser pairing, recipes, and worker updates MUST carry bounded provenance, explicit ownership, compatibility and lifecycle state, and operator-visible evidence before they are exposed as a user-visible capability.",
       "trace": {"upstream_refs": ["`docs/mini-app-roadmap.md`", "`docs/testing.md`", "`docs/operations.md`"]}
+    },
+    {
+      "id": "REQ-CTG-SUP-0007",
+      "title": "Keep worker leases bounded and drain-aware",
+      "statement": "A local worker MUST have a stable persisted WorkerId, bounded concurrent task leases, Codex-backed readiness, and an explicit draining state; lease acquisition MUST be serialized and idempotent by TaskId, reclaim expired leases before capacity checks, reject new leases while draining, and MUST NOT interrupt an existing Codex session when draining begins.",
+      "coverage": {"positive": "required", "negative": "required", "edge": "required", "restart": "required"},
+      "trace": {"upstream_refs": ["`docs/mini-app-roadmap.md`", "`specs/architecture/codex-telegram/ARC-CTG-SUPERVISION-0001.md`", "`src/Incursa.Codex.Telegram/Services/CodexWorkerRegistry.cs`", "`tests/Incursa.Codex.Telegram.Tests/CodexWorkerRegistryTests.cs`"]}
+    },
+    {
+      "id": "REQ-CTG-SUP-0008",
+      "title": "Snapshot task recipes by version",
+      "statement": "A task recipe MUST expose a stable RecipeId and RecipeVersion plus bounded objective, session policy, expected outputs, and required capabilities; selecting a recipe MUST snapshot its identity into the task provenance and MUST NOT rewrite an existing task when configuration changes.",
+      "coverage": {"positive": "required", "negative": "required", "edge": "required", "restart": "required"},
+      "trace": {"upstream_refs": ["`docs/mini-app-roadmap.md`", "`specs/architecture/codex-telegram/ARC-CTG-SUPERVISION-0001.md`", "`src/Incursa.Codex.Telegram/Services/CodexTaskRecipeCatalog.cs`", "`tests/Incursa.Codex.Telegram.Tests/CodexTaskRecipeCatalogTests.cs`"]}
     }
   ],
   "non_goals": ["A competing task database or replacement for Codex history", "Browser prompts, approvals, steering, retries, cancellation, file writes, uploads, commits, merges, or deployments", "Blind replay of side-effecting work after a crash or timeout", "Autonomous merge, push, deploy, or release", "Public multi-tenant hosting or broad implicit Telegram authorization", "Bundling or synchronizing Codex authentication"]

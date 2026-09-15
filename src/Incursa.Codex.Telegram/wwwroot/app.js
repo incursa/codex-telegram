@@ -426,6 +426,50 @@
     });
   }
 
+  function workerVariant(worker) {
+    if (worker.readiness === "ready" && worker.state === "online") return "success";
+    if (worker.state === "draining" || worker.readiness === "starting") return "warning";
+    return "danger";
+  }
+
+  function renderWorkers(data) {
+    const list = byId("workers-list");
+    list.replaceChildren();
+    if (data.workersError) {
+      const unavailable = document.createElement("div");
+      unavailable.className = "empty-row";
+      unavailable.textContent = data.workersError;
+      list.append(unavailable);
+      return;
+    }
+    const workers = data.workers || [];
+    if (!workers.length) {
+      const empty = document.createElement("div");
+      empty.className = "empty-row";
+      empty.textContent = "No worker registration is available.";
+      list.append(empty);
+      return;
+    }
+    workers.forEach((worker) => {
+      const row = document.createElement("div");
+      row.className = "worker-row";
+      const copy = document.createElement("div");
+      copy.className = "worker-copy";
+      const name = document.createElement("div");
+      name.className = "worker-name";
+      name.textContent = worker.displayName || worker.workerId || "Worker";
+      const meta = document.createElement("div");
+      meta.className = "worker-meta";
+      meta.textContent = `${worker.readiness || "unknown"} · ${worker.activeLeaseCount || 0}/${worker.maximumConcurrentTasks || 0} leases · ${worker.version || "unknown"}`;
+      copy.append(name, meta);
+      const badge = document.createElement("inc-badge");
+      badge.setAttribute("variant", workerVariant(worker));
+      badge.textContent = worker.state || "unknown";
+      row.append(copy, badge);
+      list.append(row);
+    });
+  }
+
   function setDetailLoading(message) {
     byId("detail-card").hidden = false;
     byId("detail-title").textContent = "Task details";
@@ -680,6 +724,7 @@
     renderSessions({ threads: [] });
     renderWorkspace({ projects: [] });
     renderSupervision({ supervisionTasks: [] });
+    renderWorkers({ workers: [] });
   }
 
   function render(data) {
@@ -689,6 +734,7 @@
     renderSessions(data);
     renderWorkspace(data);
     renderSupervision(data);
+    renderWorkers(data);
   }
 
   function authHeaders() {

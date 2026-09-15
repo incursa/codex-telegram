@@ -63,6 +63,24 @@ public sealed class TelegramMiniAppAuthTests
         Assert.Contains("expired", failureReason, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public void RechecksCurrentAllowlistForBrowserSessions()
+    {
+        TelegramBotOptions options = new()
+        {
+            Token = "secret-token",
+            AllowedUserIds = [12345L],
+        };
+        TelegramMiniAppAuth auth = new(
+            Microsoft.Extensions.Options.Options.Create(options),
+            Microsoft.Extensions.Options.Options.Create(new TelegramMiniAppOptions { Enabled = true }),
+            new FixedTimeProvider(DateTimeOffset.UtcNow));
+
+        Assert.True(auth.IsAllowlisted(12345));
+        options.AllowedUserIds = [];
+        Assert.False(auth.IsAllowlisted(12345));
+    }
+
     private static TelegramMiniAppAuth CreateAuth(DateTimeOffset now)
         => new(
             Microsoft.Extensions.Options.Options.Create(new TelegramBotOptions

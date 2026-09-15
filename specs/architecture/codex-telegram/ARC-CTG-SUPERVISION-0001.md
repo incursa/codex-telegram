@@ -103,10 +103,21 @@ The Telegram `/task new [name] [| baseRef]` command resolves the already-authori
 
 When `TelegramMiniApp:BrowserPairingEnabled` is enabled, an anonymous browser may request a one-time high-entropy pairing challenge. The challenge displays a short-lived code and is approved only by `/pair <code>` from an allowlisted private Telegram chat. The state file stores hashes of the code and token, never their plaintext values. After approval, the browser presents the high-entropy token as a session header; the session is time-limited and `/pair revoke` records revocation for all sessions belonging to that Telegram user. Browser-authenticated requests use the same read-only Mini App projections as Telegram-authenticated requests; no browser mutation or approval endpoint is introduced.
 
+## R3.3 local worker boundary
+
+The host owns one local worker identity persisted in `codex-worker-state.json`. The identity is stable across restarts, carries only operator-selected or generated display metadata, and is separate from Telegram and Codex identifiers. Task workspace allocations may claim a bounded lease on this worker. Lease acquisition is serialized and idempotent by TaskId, removes expired leases before capacity checks, and fails closed while the worker is draining. Drain and resume are explicit private-chat Telegram operations; draining does not interrupt active Codex sessions. Readiness is projected from the local Codex runtime and exposes bounded capabilities, lease capacity, heartbeat, and non-sensitive issues to the Mini App.
+
+This slice is intentionally single-host. It does not accept arbitrary worker registration, expose a public coordinator endpoint, share credentials between containers, or route a task across processes. Authenticated outbound coordinator connections and cross-worker routing require a later contract with worker identity binding, endpoint authentication, lease ownership, and isolation enforcement.
+
+## R5.1 inspectable task recipes
+
+Recipes are configuration-owned definitions with a stable `RecipeId` and `RecipeVersion`, bounded objective and expected-output text, optional Codex session instructions, and required worker capabilities. `/recipe` is read-only. Selecting a recipe during `/task new` passes only its session-policy fields to the new Codex thread and records the ID, version, and display name in the application-owned task record. The selected snapshot is immutable for that task; later configuration reloads do not rewrite its provenance. Recipe text does not authorize a user, approve a Codex action, or create a browser mutation path.
+
 ## Later dependency sequence
 
-1. Add worker registration, authenticated routing, leases, readiness, draining, and isolation enforcement around the task workspace boundary.
-2. Add the combined Mini App worker/attention projection and revocable Telegram-approved browser pairing as read-only surfaces.
+1. Add authenticated outbound coordinator connections, cross-worker routing, and isolation enforcement around the task workspace boundary.
+2. Add cross-worker task ownership to the combined Mini App worker/attention projection.
+3. Add staged, drain-aware worker updates with capability checks, health/version verification, rollback, and provenance evidence.
 3. Add immutable task recipes and staged, drain-aware, health-verified worker updates with rollback evidence.
 
 Each step requires focused automated tests plus the repository release floor. Browser and Telegram-live checks remain separate evidence categories.

@@ -368,6 +368,9 @@ builder.Services.AddSingleton<ICodexRuntimeClientFactory, CodexRuntimeClientFact
 builder.Services.AddSingleton<ICodexSessionEventLog, CodexSessionEventLog>();
 builder.Services.AddSingleton<ICodexSupervisionLedger, CodexSupervisionLedger>();
 builder.Services.AddSingleton<ICodexTaskWorkspaceManager, CodexTaskWorkspaceManager>();
+builder.Services.AddSingleton<CodexWorkerRegistry>();
+builder.Services.AddSingleton<ICodexWorkerRegistry>(sp => sp.GetRequiredService<CodexWorkerRegistry>());
+builder.Services.AddSingleton<ICodexTaskRecipeCatalog, CodexTaskRecipeCatalog>();
 builder.Services.AddSingleton<CodexSessionRuntimeRegistry>();
 builder.Services.AddSingleton<ICodexTurnExecutionCoordinator>(sp => sp.GetRequiredService<CodexSessionRuntimeRegistry>());
 builder.Services.AddSingleton<ICodexGateway, CodexGateway>();

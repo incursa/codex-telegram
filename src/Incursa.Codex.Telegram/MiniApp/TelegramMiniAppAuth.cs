@@ -134,6 +134,11 @@ internal sealed class TelegramMiniAppAuth
         }
     }
 
+    /// <summary>
+    /// Rechecks the current allowlist for an already-issued browser session.
+    /// </summary>
+    public bool IsAllowlisted(long userId) => _botOptions.AllowedUserIds.Contains(userId);
+
     private bool IsValidHash(string dataCheckString, string suppliedHash)
     {
         if (string.IsNullOrWhiteSpace(_botOptions.Token)

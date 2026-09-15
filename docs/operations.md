@@ -63,6 +63,10 @@ Mini App requests must include Telegram's signed initialization data. The host r
 
 Browser access is opt-in. Set `TelegramMiniApp:BrowserPairingEnabled` to `true`, open the public URL in a normal browser, then send the displayed `/pair <code>` command to the bot from the authorized private chat. Pairing codes expire quickly, browser sessions expire separately, and `/pair revoke` invalidates all browser sessions for that Telegram user. The browser receives only the same read-only projection; prompts, approvals, steering, and other control actions remain in Telegram.
 
+The local worker is registered in `codex-worker-state.json` under `CodexTelegram:Workspace:DataRoot`. It contains a generated or configured stable worker ID, display name, heartbeat, drain state, and bounded task lease metadata; it does not contain prompts, transcripts, credentials, or authorization headers. `/worker status` is a read-only diagnostic. `/worker drain confirm` prevents new task leases while existing sessions continue, and `/worker resume confirm` re-enables claims. Use the private authorized chat for both lifecycle changes. This local registry is intentionally not a coordinator or multi-container routing layer yet.
+
+Task recipes are configured under `CodexTelegram:Recipes`. With no definitions, the host exposes the built-in `investigate-tests`, `review-branch`, and `implement-issue` recipes. Each definition has a required stable `Id`, `Version`, `DisplayName`, and `Objective`, plus optional Codex instruction/model fields and bounded `ExpectedOutputs`/`RequiredCapabilities` lists. `/recipe list` and `/recipe <id>` are inspectable read-only commands. `/task new [name] [| baseRef] [| recipeId]` copies the selected recipe into the new session context and supervision record; a task keeps its original recipe ID/version after configuration changes.
+
 Task workspaces are provisioned below CodexTelegram:Workspace:TaskWorktreeRoot, or below the DataRoot/task-workspaces directory when that setting is empty. The allocator creates a task-specific Git branch/worktree and records one development port plus one database namespace in codex-task-workspaces.json. Configure a dedicated writable root for these worktrees; do not place it below the protected application installation directory. Releasing a clean worktree is safe; discarding changes requires an explicit operator action and is never inferred from a failed cleanup.
 
 Task detail is a Codex-authoritative read projection. Opening a task validates that the thread is present in the current Codex list and does not create a local thread manifest when one is missing. The browser receives bounded timeline and diff data plus redacted artifact metadata; it does not receive artifact payloads, result URLs, or raw artifact paths.
@@ -93,6 +97,7 @@ The important local files are under `CodexTelegram:Workspace:DataRoot`:
 2. `telegram-state.json`
 3. Per-thread manifest files
 4. `codex-supervision-state.json`
+5. `codex-worker-state.json`
 
 `telegram-state.json` also contains a bounded Telegram update-receipt ledger. It is transport replay protection, not proof that a Codex command executed. A completed receipt is retained for seven days; an interrupted in-flight receipt can be reclaimed after fifteen minutes. Do not edit the JSON state file while the service is running.
 

@@ -102,6 +102,73 @@ public sealed class CodexTelegramOptions
     /// Gets or sets local workspace and state-storage options.
     /// </summary>
     public CodexWorkspaceOptions Workspace { get; set; } = new();
+
+    /// <summary>
+    /// Gets or sets the local worker registration and scheduling options.
+    /// </summary>
+    public CodexWorkerOptions Worker { get; set; } = new();
+
+    /// <summary>
+    /// Gets the operator-defined task recipes. Empty configuration uses the built-in recipes.
+    /// </summary>
+    public List<CodexTaskRecipeDefinition> Recipes { get; set; } = [];
+}
+
+/// <summary>
+/// Identity and bounded lease options for the local Codex worker.
+/// </summary>
+public sealed class CodexWorkerOptions
+{
+    /// <summary>
+    /// Gets or sets an optional stable worker identifier. When empty, one is generated and persisted locally.
+    /// </summary>
+    public string? WorkerId { get; set; }
+
+    /// <summary>
+    /// Gets or sets the operator-facing worker name.
+    /// </summary>
+    public string? DisplayName { get; set; }
+
+    /// <summary>
+    /// Gets or sets the maximum number of concurrent task leases this worker may hold.
+    /// </summary>
+    public int MaxConcurrentTasks { get; set; } = 8;
+}
+
+/// <summary>
+/// Declarative, inspectable policy for creating a Codex task session.
+/// </summary>
+public sealed class CodexTaskRecipeDefinition
+{
+    /// <summary>Gets or sets the stable recipe identifier.</summary>
+    public string Id { get; set; } = string.Empty;
+
+    /// <summary>Gets or sets the immutable policy version.</summary>
+    public string Version { get; set; } = "1";
+
+    /// <summary>Gets or sets the operator-facing recipe name.</summary>
+    public string DisplayName { get; set; } = string.Empty;
+
+    /// <summary>Gets or sets the bounded task objective shown to the operator.</summary>
+    public string Objective { get; set; } = string.Empty;
+
+    /// <summary>Gets or sets optional Codex base instructions.</summary>
+    public string? BaseInstructions { get; set; }
+
+    /// <summary>Gets or sets optional Codex developer instructions.</summary>
+    public string? DeveloperInstructions { get; set; }
+
+    /// <summary>Gets or sets an optional Codex model override.</summary>
+    public string? Model { get; set; }
+
+    /// <summary>Gets or sets an optional Codex reasoning-effort override.</summary>
+    public string? ReasoningEffort { get; set; }
+
+    /// <summary>Gets the operator-visible outputs expected from the recipe.</summary>
+    public List<string> ExpectedOutputs { get; set; } = [];
+
+    /// <summary>Gets the worker capabilities required by the recipe.</summary>
+    public List<string> RequiredCapabilities { get; set; } = [];
 }
 
 /// <summary>

@@ -201,6 +201,8 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
     private readonly ICodexGateway? _gateway;
     private readonly ICodexTaskWorkspaceManager? _taskWorkspaceManager;
     private readonly ITelegramMiniAppBrowserPairingStore? _browserPairingStore;
+    private readonly ICodexWorkerRegistry? _workerRegistry;
+    private readonly ICodexTaskRecipeCatalog? _recipeCatalog;
     private readonly bool _browserPairingEnabled;
     private readonly TelegramBotOptions _options;
     private readonly TelegramInputOptions _inputOptions;
@@ -249,7 +251,9 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         ICodexGateway? gateway = null,
         ICodexTaskWorkspaceManager? taskWorkspaceManager = null,
         ITelegramMiniAppBrowserPairingStore? browserPairingStore = null,
-        IOptions<TelegramMiniAppOptions>? miniAppOptions = null)
+        IOptions<TelegramMiniAppOptions>? miniAppOptions = null,
+        ICodexWorkerRegistry? workerRegistry = null,
+        ICodexTaskRecipeCatalog? recipeCatalog = null)
     {
         _parser = parser;
         _chunker = chunker;
@@ -291,6 +295,8 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         _taskWorkspaceManager = taskWorkspaceManager;
         _browserPairingStore = browserPairingStore;
         _browserPairingEnabled = miniAppOptions?.Value.BrowserPairingEnabled ?? true;
+        _workerRegistry = workerRegistry;
+        _recipeCatalog = recipeCatalog;
     }
 
     public async Task HandleMessageAsync(
@@ -425,6 +431,12 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
                     break;
                 case "pair":
                     await HandlePairAsync(message, command.Arguments, sender, cancellationToken).ConfigureAwait(false);
+                    break;
+                case "recipe":
+                    await HandleRecipeAsync(message, command.Arguments, sender, cancellationToken).ConfigureAwait(false);
+                    break;
+                case "worker":
+                    await HandleWorkerAsync(message, command.Arguments, sender, cancellationToken).ConfigureAwait(false);
                     break;
                 case "use":
                 case "resume":
@@ -1186,7 +1198,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
                 await ReplyAsync(
                     sender,
                     message,
-                    "Usage: /task new [name] [| baseRef], /task status [taskId], /task release <taskId> confirm, or /task discard <taskId> confirm",
+                    "Usage: /task new [name] [| baseRef] [| recipeId], /task status [taskId], /task release <taskId> confirm, or /task discard <taskId> confirm",
                     null,
                     cancellationToken).ConfigureAwait(false);
                 return;
@@ -1252,6 +1264,114 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             cancellationToken).ConfigureAwait(false);
     }
 
+    private async Task HandleWorkerAsync(
+        TelegramInboundMessage message,
+        string arguments,
+        ITelegramBotMessageSender sender,
+        CancellationToken cancellationToken)
+    {
+        if (_workerRegistry is null)
+        {
+            await ReplyAsync(sender, message, "Worker registration is not available in this host.", null, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        string[] parts = SplitArguments(arguments, 2);
+        string operation = parts.FirstOrDefault()?.ToLowerInvariant() ?? "status";
+        if (operation is "drain" or "resume")
+        {
+            if (!IsPrivateChat(message))
+            {
+                await ReplyAsync(sender, message, "Worker drain/resume is available only from an authorized private chat.", null, cancellationToken).ConfigureAwait(false);
+                return;
+            }
+
+            if (parts.Length != 2 || !parts[1].Equals("confirm", StringComparison.OrdinalIgnoreCase))
+            {
+                await ReplyAsync(sender, message, $"Usage: /worker {operation} confirm", null, cancellationToken).ConfigureAwait(false);
+                return;
+            }
+
+            bool changed = await _workerRegistry.SetDrainingAsync(operation == "drain", cancellationToken).ConfigureAwait(false);
+            CodexWorkerSnapshot snapshot = await _workerRegistry.GetSnapshotAsync(cancellationToken).ConfigureAwait(false);
+            await ReplyAsync(sender, message, changed ? FormatWorker(snapshot) : $"Worker is already {snapshot.State.ToString().ToLowerInvariant()}.", null, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        if (operation != "status")
+        {
+            await ReplyAsync(sender, message, "Usage: /worker status, /worker drain confirm, or /worker resume confirm", null, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        await ReplyAsync(sender, message, FormatWorker(await _workerRegistry.GetSnapshotAsync(cancellationToken).ConfigureAwait(false)), null, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task HandleRecipeAsync(
+        TelegramInboundMessage message,
+        string arguments,
+        ITelegramBotMessageSender sender,
+        CancellationToken cancellationToken)
+    {
+        if (_recipeCatalog is null)
+        {
+            await ReplyAsync(sender, message, "Task recipes are not available in this host.", null, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        string[] parts = SplitArguments(arguments, 2);
+        string operation = parts.FirstOrDefault()?.ToLowerInvariant() ?? "list";
+        if (operation is "list" or "ls")
+        {
+            IReadOnlyList<CodexTaskRecipeSnapshot> recipes = _recipeCatalog.List();
+            await ReplyAsync(
+                sender,
+                message,
+                recipes.Count == 0
+                    ? "No task recipes are configured."
+                    : string.Join(Environment.NewLine, [
+                        "Task recipes:",
+                        .. recipes.Select(recipe => $"- {recipe.Id}@{recipe.Version}: {recipe.DisplayName}"),
+                    ]),
+                null,
+                cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        string recipeId = (operation is "show" or "get") && parts.Length > 1 ? parts[1] : parts[0];
+        CodexTaskRecipeSnapshot? recipe = _recipeCatalog.Find(recipeId);
+        await ReplyAsync(
+            sender,
+            message,
+            recipe is null
+                ? $"Recipe '{recipeId}' was not found. Use /recipe list."
+                : FormatRecipe(recipe),
+            null,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    private static string FormatRecipe(CodexTaskRecipeSnapshot recipe)
+        => string.Join(Environment.NewLine, [
+            $"Recipe: {recipe.Id}@{recipe.Version}",
+            $"Name: {recipe.DisplayName}",
+            $"Objective: {recipe.Objective}",
+            $"Expected outputs: {(recipe.ExpectedOutputs.Count == 0 ? "(none listed)" : string.Join(", ", recipe.ExpectedOutputs))}",
+            $"Required capabilities: {(recipe.RequiredCapabilities.Count == 0 ? "(none listed)" : string.Join(", ", recipe.RequiredCapabilities))}",
+            "Recipe policy is snapshotted on task creation; changing configuration does not rewrite an existing task.",
+        ]);
+
+    private static string FormatWorker(CodexWorkerSnapshot worker)
+        => string.Join(Environment.NewLine, [
+            $"Worker: {worker.DisplayName} ({worker.WorkerId})",
+            $"State: {worker.State}",
+            $"Readiness: {worker.Readiness}",
+            $"Version: {worker.Version}",
+            $"Leases: {worker.ActiveLeaseCount}/{worker.MaximumConcurrentTasks}",
+            $"Heartbeat: {worker.LastHeartbeatUtc:O}",
+            $"Capabilities: {string.Join(", ", worker.Capabilities)}",
+            worker.Issues.Count == 0 ? "Issues: none" : $"Issues: {string.Join("; ", worker.Issues)}",
+        ]);
+
     private async Task HandleTaskCreateAsync(
         TelegramInboundMessage message,
         string details,
@@ -1265,13 +1385,28 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             return;
         }
 
-        string[] nameAndRef = details.Split('|', 2, StringSplitOptions.TrimEntries);
+        string[] nameAndRef = details.Split('|', StringSplitOptions.TrimEntries);
+        if (nameAndRef.Length > 3)
+        {
+            await ReplyAsync(sender, message, "Usage: /task new [name] [| baseRef] [| recipeId]", null, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
         string sessionName = string.IsNullOrWhiteSpace(nameAndRef.FirstOrDefault())
             ? BuildDefaultSessionName(resolvedProject.Project) + " task"
             : nameAndRef[0].Trim();
         string? baseRef = nameAndRef.Length > 1 && !string.IsNullOrWhiteSpace(nameAndRef[1])
             ? nameAndRef[1].Trim()
             : null;
+        string? recipeId = nameAndRef.Length > 2 && !string.IsNullOrWhiteSpace(nameAndRef[2])
+            ? nameAndRef[2].Trim()
+            : null;
+        CodexTaskRecipeSnapshot? recipe = recipeId is null ? null : _recipeCatalog?.Find(recipeId);
+        if (recipeId is not null && recipe is null)
+        {
+            await ReplyAsync(sender, message, $"Recipe '{recipeId}' was not found. Use /recipe list.", null, cancellationToken).ConfigureAwait(false);
+            return;
+        }
         string taskId = $"task:{Guid.NewGuid():N}";
         CodexTaskWorkspaceRecord workspace = await _taskWorkspaceManager!.CreateAsync(
             taskId,
@@ -1286,14 +1421,16 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
                 message.ConversationScope,
                 sessionName,
                 workspace.WorktreePath,
-                cancellationToken).ConfigureAwait(false);
+                cancellationToken,
+                recipe).ConfigureAwait(false);
             CodexSupervisionTaskRecord? registered = await _supervisionLedger.RegisterTaskAsync(
                 taskId,
                 session.Id,
                 session.Name,
                 message.ConversationScope,
                 message.UserId,
-                cancellationToken).ConfigureAwait(false);
+                cancellationToken,
+                recipe).ConfigureAwait(false);
             if (registered is null)
             {
                 throw new InvalidOperationException("The task could not be registered in the supervision ledger.");
@@ -1313,22 +1450,24 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             throw;
         }
 
-        await ReplyAsync(
-            sender,
-            message,
-            string.Join(Environment.NewLine, [
-                "Task workspace created",
-                $"Task: {taskId}",
-                $"Session: {session.Name} ({session.Id})",
-                $"Worktree: {workspace.WorktreePath}",
-                $"Branch: {workspace.Branch}",
-                $"Development port: {workspace.DevelopmentPort}",
-                $"Database namespace: {workspace.DatabaseNamespace}",
-                $"Base ref: {baseRef ?? "HEAD"}",
-                "The session is selected and ready. Use /send <text> to start Codex in this worktree.",
-            ]),
-            null,
-            cancellationToken).ConfigureAwait(false);
+        List<string> responseLines = [
+            "Task workspace created",
+            $"Task: {taskId}",
+            $"Session: {session.Name} ({session.Id})",
+            $"Worktree: {workspace.WorktreePath}",
+            $"Branch: {workspace.Branch}",
+            $"Development port: {workspace.DevelopmentPort}",
+            $"Database namespace: {workspace.DatabaseNamespace}",
+            $"Base ref: {baseRef ?? "HEAD"}",
+            $"Recipe: {recipe?.RecipeKey ?? "(none)"}",
+        ];
+        if (recipe is not null)
+        {
+            responseLines.Add($"Objective: {recipe.Objective}");
+        }
+
+        responseLines.Add("The session is selected and ready. Use /send <text> to start Codex in this worktree.");
+        await ReplyAsync(sender, message, string.Join(Environment.NewLine, responseLines), null, cancellationToken).ConfigureAwait(false);
     }
 
     private async Task HandleTaskWorkspaceStatusAsync(
@@ -1423,7 +1562,10 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
                 task.Conversation,
                 message.UserId,
                 task.CreatedAt,
-                task.UpdatedAt);
+                task.UpdatedAt,
+                task.RecipeId,
+                task.RecipeVersion,
+                task.RecipeDisplayName);
     }
 
     private static string FormatTaskWorkspace(CodexSupervisionTaskRecord task, CodexTaskWorkspaceRecord? workspace)
@@ -1432,6 +1574,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             : string.Join(Environment.NewLine, [
                 $"Task: {task.TaskId}",
                 $"Session: {task.SessionName}",
+                $"Recipe: {(task.RecipeId is null ? "(none)" : $"{task.RecipeId}@{task.RecipeVersion} ({task.RecipeDisplayName})")}",
                 $"Workspace state: {workspace.State}",
                 $"Worktree: {workspace.WorktreePath}",
                 $"Branch: {workspace.Branch}",
@@ -4666,10 +4809,11 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         TelegramConversationScope conversation,
         string name,
         string? workingDirectory,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        CodexTaskRecipeSnapshot? recipe = null)
     {
         CodexSessionSummary session = await _sessionManager.CreateSessionAsync(
-            new CreateCodexSessionRequest(name, workingDirectory),
+            new CreateCodexSessionRequest(name, workingDirectory, recipe),
             cancellationToken).ConfigureAwait(false);
         await _stateStore.SetActiveSessionIdAsync(conversation, session.Id, cancellationToken).ConfigureAwait(false);
         _followRegistry.FollowThread(conversation, session.Id);

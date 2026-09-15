@@ -685,6 +685,16 @@ Use /task status [taskId] to inspect the allocation. Stop the task session befor
 
 Manages the optional read-only standalone browser session. Open the Mini App URL in a browser and send its displayed pairing code as `/pair <code>` from the authorized private bot chat. `/pair status` lists the current user's browser sessions; `/pair revoke` revokes all of them. Pairing is disabled unless `TelegramMiniApp:BrowserPairingEnabled` is enabled, and it never creates a browser path for prompts, approvals, steering, or other Telegram control actions.
 
+### `/worker status` / `/worker drain confirm` / `/worker resume confirm`
+
+Shows the local worker's readiness, capabilities, heartbeat, and task-lease capacity. `drain` stops new task claims while allowing existing work to finish; `resume` permits new claims again. Drain and resume require an authorized private chat and explicit confirmation. These commands manage only this host; coordinator routing and fleet updates remain separate roadmap capabilities.
+
+### `/recipe list` / `/recipe <id>`
+
+Lists or inspects the configured task recipes. A recipe has a stable ID and version, an operator-visible objective, optional Codex session instructions, expected outputs, and required worker capabilities. Recipe configuration is copied into an immutable snapshot when selected by `/task new`.
+
+Use `/task new [name] [| baseRef] [| recipeId]` to create a task with a recipe. The recipe's Codex session instructions are applied when the session is created; the objective and version are retained in the supervision task record for review and handoff. Editing configuration never rewrites an existing task.
+
 ### `/usage`
 
 Shows Codex account usage reported by the local Codex app-server.

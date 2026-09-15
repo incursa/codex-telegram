@@ -63,6 +63,7 @@ internal static class TelegramMiniAppEndpoints
         ICodexAccountUsageService usageService,
         ICodexSupervisionLedger supervisionLedger,
         ITelegramMiniAppBrowserPairingStore pairingStore,
+        ICodexWorkerRegistry workerRegistry,
         CancellationToken cancellationToken)
     {
         if (!miniAppOptions.Value.Enabled)
@@ -156,6 +157,18 @@ internal static class TelegramMiniAppEndpoints
             supervisionError = "Durable task state is currently unavailable.";
         }
 
+        IReadOnlyList<TelegramMiniAppWorkerVm> workers = Array.Empty<TelegramMiniAppWorkerVm>();
+        string? workersError = null;
+        try
+        {
+            CodexWorkerSnapshot worker = await workerRegistry.GetSnapshotAsync(cancellationToken).ConfigureAwait(false);
+            workers = [ToWorkerViewModel(worker)];
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            workersError = "Worker status is currently unavailable.";
+        }
+
         TelegramMiniAppThreadVm[] projectedThreads = threads
             .Select(thread => TelegramMiniAppProjection.ToThreadViewModel(thread, turnCoordinator.TryGetActiveTurnState(thread.Id)))
             .ToArray();
@@ -179,6 +192,8 @@ internal static class TelegramMiniAppEndpoints
             StateError = stateError,
             SupervisionTasks = supervisionTasks,
             SupervisionError = supervisionError,
+            Workers = workers,
+            WorkersError = workersError,
         });
     }
 
@@ -291,8 +306,24 @@ internal static class TelegramMiniAppEndpoints
             run?.TurnId,
             task.CreatedAt,
             task.UpdatedAt,
-            run?.UpdatedAt ?? task.UpdatedAt);
+            run?.UpdatedAt ?? task.UpdatedAt,
+            task.RecipeId,
+            task.RecipeVersion,
+            task.RecipeDisplayName);
     }
+
+    private static TelegramMiniAppWorkerVm ToWorkerViewModel(CodexWorkerSnapshot worker)
+        => new(
+            worker.WorkerId,
+            worker.DisplayName,
+            worker.State.ToString().ToLowerInvariant(),
+            worker.Readiness,
+            worker.Version,
+            worker.ActiveLeaseCount,
+            worker.MaximumConcurrentTasks,
+            worker.LastHeartbeatUtc,
+            worker.Capabilities,
+            worker.Issues);
 
     private static async Task<TelegramMiniAppIdentity?> TryAuthenticateAsync(
         HttpContext context,
@@ -313,7 +344,9 @@ internal static class TelegramMiniAppEndpoints
 
         string? sessionToken = context.Request.Headers["X-Codex-Browser-Session"].FirstOrDefault();
         long? userId = await pairingStore.AuthenticateSessionAsync(sessionToken ?? string.Empty, cancellationToken).ConfigureAwait(false);
-        return userId.HasValue ? new TelegramMiniAppIdentity(userId.Value, null, null, null) : null;
+        return userId.HasValue && auth.IsAllowlisted(userId.Value)
+            ? new TelegramMiniAppIdentity(userId.Value, null, null, null)
+            : null;
     }
 
 }
@@ -341,6 +374,10 @@ internal sealed record TelegramMiniAppBootstrapVm(
     public IReadOnlyList<TelegramMiniAppSupervisionTaskVm> SupervisionTasks { get; init; } = Array.Empty<TelegramMiniAppSupervisionTaskVm>();
 
     public string? SupervisionError { get; init; }
+
+    public IReadOnlyList<TelegramMiniAppWorkerVm> Workers { get; init; } = Array.Empty<TelegramMiniAppWorkerVm>();
+
+    public string? WorkersError { get; init; }
 }
 
 internal sealed record TelegramMiniAppProjectVm(
@@ -348,6 +385,18 @@ internal sealed record TelegramMiniAppProjectVm(
     string DisplayName,
     bool IsActive,
     DateTimeOffset AddedAt);
+
+internal sealed record TelegramMiniAppWorkerVm(
+    string WorkerId,
+    string DisplayName,
+    string State,
+    string Readiness,
+    string Version,
+    int ActiveLeaseCount,
+    int MaximumConcurrentTasks,
+    DateTimeOffset LastHeartbeatUtc,
+    IReadOnlyList<string> Capabilities,
+    IReadOnlyList<string> Issues);
 
 internal sealed record TelegramMiniAppThreadVm(
     string Id,
@@ -381,4 +430,7 @@ internal sealed record TelegramMiniAppSupervisionTaskVm(
     string? TurnId,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt,
-    DateTimeOffset LastRunUpdatedAt);
+    DateTimeOffset LastRunUpdatedAt,
+    string? RecipeId = null,
+    string? RecipeVersion = null,
+    string? RecipeDisplayName = null);

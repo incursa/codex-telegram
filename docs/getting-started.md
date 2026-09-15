@@ -77,6 +77,10 @@ The current Mini App remains intentionally read-only. Use the Telegram chat for 
 
 To allow the same read-only dashboard in a normal browser, set `BrowserPairingEnabled` to `true`. Open the Mini App URL in that browser, copy its short-lived pairing code, and send `/pair <code>` to the bot in the authorized private Telegram chat. The browser receives a time-limited session without weakening Telegram authorization; use `/pair status` to inspect sessions and `/pair revoke` to revoke all browser sessions for the Telegram user. Pairing is disabled by default.
 
+Each host also has a local worker identity used by task-workspace scheduling. Configure `CodexTelegram:Worker:WorkerId` and `DisplayName` when you want stable operator-facing names; otherwise the host generates and persists an ID in `codex-worker-state.json`. `MaxConcurrentTasks` bounds leases on that worker. Use `/worker status` to inspect readiness and capacity, and use `/worker drain confirm` before maintenance so new task claims stop while current work remains untouched. `/worker resume confirm` re-enables claims. These controls are local to this process; authenticated coordinator routing is a later roadmap slice.
+
+Task recipes are inspectable, versioned configuration under `CodexTelegram:Recipes`. The built-in recipes are `investigate-tests`, `review-branch`, and `implement-issue`; inspect them with `/recipe list` and `/recipe <id>`. Select one while creating an isolated task, for example `/task new Fix login | main | implement-issue`. The selected recipe's session instructions are applied at Codex session creation and its ID/version/objective are retained with the task. Recipes do not grant authorization or bypass Telegram approvals.
+
 ## Before You Start
 
 Have these ready before you touch the config:
