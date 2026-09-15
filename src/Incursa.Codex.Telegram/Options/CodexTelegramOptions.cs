@@ -143,6 +143,11 @@ public sealed class CodexWorkerOptions
     /// Gets or sets the maximum number of concurrent task leases this worker may hold.
     /// </summary>
     public int MaxConcurrentTasks { get; set; } = 8;
+
+    /// <summary>
+    /// Gets or sets the private HTTP(S) endpoint that an authenticated coordinator may use for lease handoff.
+    /// </summary>
+    public string? ControlPlaneUrl { get; set; }
 }
 
 /// <summary>

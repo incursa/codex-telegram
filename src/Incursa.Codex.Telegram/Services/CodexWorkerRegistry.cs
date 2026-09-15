@@ -36,7 +36,8 @@ internal sealed record CodexWorkerSnapshot(
     DateTimeOffset LastHeartbeatUtc,
     IReadOnlyList<string> Capabilities,
     IReadOnlyList<string> Issues,
-    bool IsRemote = false);
+    bool IsRemote = false,
+    string? ControlPlaneUrl = null);
 
 internal sealed record CodexWorkerLease(
     string LeaseId,
@@ -137,7 +138,9 @@ internal sealed class CodexWorkerRegistry : ICodexWorkerRegistry, IDisposable
             state.RegisteredAtUtc,
             state.LastHeartbeatUtc,
             ["telegram-control", "codex-execution", "task-workspaces", "read-only-mini-app"],
-            issues);
+            issues,
+            false,
+            options.ControlPlaneUrl);
     }
 
     public async Task<CodexWorkerLease?> TryAcquireLeaseAsync(

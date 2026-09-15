@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 1.0.38 - 2026-09-15
+
+- Added authenticated coordinator-issued worker lease handoff with fresh-worker selection, capability/capacity checks, five-minute grants, and idempotent task reuse.
+- Added worker-side lease acceptance that re-checks identity, readiness, draining, capabilities, and local lease capacity before acquisition.
+- Persisted bounded coordinator lease outcome evidence and exposed a private worker control-plane URL configuration.
+
 ## 1.0.37 - 2026-09-15
 
 - Added drain-aware, hash- and version-verified worker package staging with persisted outcome evidence.

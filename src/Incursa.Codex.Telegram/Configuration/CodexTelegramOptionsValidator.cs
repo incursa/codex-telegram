@@ -40,9 +40,15 @@ internal sealed class CodexTelegramOptionsValidator : IValidateOptions<CodexTele
             return ["CodexTelegram:Worker:WorkerId must be at most 120 characters and cannot contain control characters."];
         }
 
-        return !string.IsNullOrWhiteSpace(worker.DisplayName) && (worker.DisplayName.Trim().Length > 120 || worker.DisplayName.Any(char.IsControl))
-            ? ["CodexTelegram:Worker:DisplayName must be at most 120 characters and cannot contain control characters."]
-            : [];
+        if (!string.IsNullOrWhiteSpace(worker.DisplayName) && (worker.DisplayName.Trim().Length > 120 || worker.DisplayName.Any(char.IsControl)))
+        {
+            return ["CodexTelegram:Worker:DisplayName must be at most 120 characters and cannot contain control characters."];
+        }
+
+        return string.IsNullOrWhiteSpace(worker.ControlPlaneUrl)
+            || Uri.TryCreate(worker.ControlPlaneUrl, UriKind.Absolute, out Uri? uri) && (uri.Scheme is "http" or "https")
+            ? []
+            : ["CodexTelegram:Worker:ControlPlaneUrl must be an absolute HTTP or HTTPS URL when configured."];
     }
 
     private static IReadOnlyList<string> ValidateRecipes(CodexTelegramOptions options)

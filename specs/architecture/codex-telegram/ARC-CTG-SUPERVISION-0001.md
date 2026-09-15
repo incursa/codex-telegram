@@ -12,6 +12,7 @@ satisfies:
   - REQ-CTG-SUP-0004
   - REQ-CTG-SUP-0005
   - REQ-CTG-SUP-0006
+  - REQ-CTG-SUP-0011
 related_artifacts:
   - SPEC-CTG-SUPERVISION
   - SPEC-CTG-TEST
@@ -125,9 +126,15 @@ When enabled, `CodexWorkerUpdateManager` accepts an operator-configured package 
 
 Staging is not activation. The protected installation is never overwritten by the application, and the running process is not stopped from Telegram. An external service or fleet installer consumes the staged package, performs the stop/start and post-install version/health checks, and decides whether to complete the update or apply the explicitly staged rollback artifact. Until that acknowledgement exists, the application reports the package as staged rather than healthy or active. This preserves rollback and release provenance without weakening `ProtectSystem` or making the coordinator a second execution authority.
 
+## R3.5 coordinator lease handoff
+
+Workers may advertise an operator-configured private `ControlPlaneUrl` in their authenticated heartbeat. A coordinator request identifies a bounded `TaskId`, optional `WorkspaceId`, required capabilities, and optional exact worker. The handoff service chooses only a fresh remote worker that is online, ready, below lease capacity, has the requested capabilities, and exposes a control endpoint. It persists a five-minute `Issued` grant before sending it, and repeated requests for the same active task return the existing grant rather than creating another lease.
+
+The worker-side endpoint requires the same exact bearer token, checks the grant lifetime and worker identity, re-reads local readiness/draining/capability state, and acquires the lease through `ICodexWorkerRegistry`. The coordinator records the worker's accepted lease ID or a bounded rejection outcome. A successful handoff is admission evidence only: workspace provisioning, Codex session creation, prompts, approvals, and execution remain separate worker-owned operations. The coordinator cannot stop or replay a Codex turn.
+
 ## Later dependency sequence
 
-1. Add a coordinator-issued lease handoff and worker-side acceptance/rejection protocol for cross-worker task routing.
+1. Use the lease handoff during remote task provisioning and bind the returned WorkerId/LeaseId to the durable task projection.
 2. Add cross-worker task ownership to the combined Mini App worker/attention projection.
 3. Add external-installer completion acknowledgements, post-install health/version evidence, and safe rollback finalization.
 

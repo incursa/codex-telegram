@@ -51,6 +51,8 @@ The v1.0.36 R3.4 control-plane slice adds authenticated outbound worker heartbea
 
 The v1.0.37 R5.2 slice adds drain-aware worker update staging. An authorized private Telegram command verifies a package's exact digest, release version, and required capabilities while the local worker is drained and idle, then stages the package and a last-known-good executable under an operator-owned writable root. The protected installation is never overwritten by the application; an external service installer owns activation and post-install health. Rollback staging is explicit and persisted as bounded evidence.
 
+The v1.0.38 R3.5 slice adds the coordinator lease-handoff protocol. Workers advertise a private control endpoint, the coordinator selects only fresh ready workers with matching capabilities and spare capacity, persists an idempotent five-minute grant, and authenticates the worker-side acceptance. The worker binds the grant to its own identity and local lease registry; no Codex credentials, prompts, or execution authority move to the coordinator.
+
 ## Identity and state vocabulary
 
 Until R1 introduces durable application records, a Mini App task is a Codex thread and its turns are the run history. The implementation must not imply stronger guarantees than the underlying thread state provides.
