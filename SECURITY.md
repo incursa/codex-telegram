@@ -12,6 +12,9 @@ Incursa.Codex.Telegram runs local Codex work on the same machine as the bot proc
 - Review Codex sandbox and approval settings before using the bot on sensitive repositories.
 - Keep `TelegramMiniApp` disabled unless you intentionally need the companion surface. If enabled, expose it only through an operator-controlled HTTPS proxy or tunnel, keep `TelegramBot:AllowedUserIds` narrow, and do not treat `TelegramMiniApp:PublicUrl` as a secret.
 - Mini App API requests are authorized from Telegram's signed `initData`; the server validates the HMAC, freshness window, and allowlisted user ID. Client-side `initDataUnsafe` is not used as an authorization source.
+- The Mini App currently exposes only authenticated GET projections. Its task detail route validates that the requested thread is present in the Codex-authoritative list and does not create a local manifest when one is missing. It does not accept prompts, approvals, steering, retries, cancellation, file writes, uploads, commits, merges, or deployment actions.
+- Mini App detail data is bounded. Artifact projections expose only safe identifiers, type labels, status, title, and timestamps; raw artifact paths, result URLs, bytes, and payload metadata are not sent to the browser.
+- Codex command and file-change approval requests fail closed when no explicit Telegram decision is available. A missing, malformed, expired, or otherwise unresolved approval is rejected; it is never treated as consent.
 
 ## Voice Notes
 

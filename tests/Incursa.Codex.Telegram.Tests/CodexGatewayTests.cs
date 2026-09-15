@@ -13,6 +13,24 @@ namespace Incursa.Codex.Telegram.Tests;
 
 public sealed class CodexGatewayTests
 {
+    [Theory]
+    [InlineData("item/commandExecution/requestApproval")]
+    [InlineData("item/fileChange/requestApproval")]
+    public void MissingApprovalDefaultsToRejection(string action)
+    {
+        JsonObject? response = CodexSessionRuntimeRegistry.CreateDefaultApprovalDenialResponse(action);
+
+        Assert.Equal("reject", response?["decision"]?.GetValue<string>());
+    }
+
+    [Fact]
+    public void UnknownApprovalDoesNotCreateConsent()
+    {
+        JsonObject? response = CodexSessionRuntimeRegistry.CreateDefaultApprovalDenialResponse("item/unknown/requestApproval");
+
+        Assert.Null(response);
+    }
+
     [Fact]
     public async Task ListThreadsAsync_UsesInjectedRuntimeClientFactory()
     {
@@ -50,6 +68,32 @@ public sealed class CodexGatewayTests
         Assert.Equal("Alpha", thread.Name);
         Assert.Equal("Preview from the scripted client", thread.Preview);
         Assert.Equal("idle", thread.Status);
+    }
+
+    [Fact]
+    public async Task GetThreadAsync_DoesNotCreateManifestForReadOnlyThreadInspection()
+    {
+        using TemporaryDirectory dataRoot = TemporaryDirectory.Create();
+        using TemporaryDirectory workspaceRoot = TemporaryDirectory.Create();
+
+        ScriptedCodexRuntimeClient runtimeClient = new();
+        runtimeClient.QueueReadThreadSnapshot("thread-1", CreateSnapshot("thread-1", "Alpha", workspaceRoot.Path));
+        RecordingRuntimeClientFactory runtimeClientFactory = new(runtimeClient);
+        IOptions<CodexTelegramOptions> telegramOptions = CreateTelegramOptions(dataRoot.Path, workspaceRoot.Path);
+        CodexThreadManifestStore manifestStore = new(telegramOptions, TimeProvider.System);
+
+        await using CodexSessionRuntimeRegistry registry = CreateRegistry(runtimeClientFactory);
+        CodexGateway gateway = new(
+            telegramOptions,
+            manifestStore,
+            new CodexWorkspaceBrowser(telegramOptions),
+            registry);
+
+        CodexThreadDetailVm detail = await gateway.GetThreadAsync("thread-1", cancellationToken: CancellationToken.None);
+
+        Assert.Equal("thread-1", detail.Summary.Id);
+        Assert.False(File.Exists(manifestStore.GetManifestPath("thread-1")));
+        Assert.False(Directory.Exists(manifestStore.GetThreadRoot("thread-1")));
     }
 
     [Fact]

@@ -51,7 +51,7 @@ It does not:
 
 ## Optional Telegram Mini App Preview
 
-The host includes a disabled-by-default, read-only Mini App companion surface. It is intended for at-a-glance runtime, session, usage, and saved-project information while prompts and control actions remain in the Telegram chat.
+The host includes a disabled-by-default, read-only Mini App companion surface. It is intended for at-a-glance attention, recent activity, task detail, bounded changes, safe artifact metadata, runtime, session, usage, and saved-project information while prompts and control actions remain in the Telegram chat. See the staged [supervision workspace roadmap](mini-app-roadmap.md) for the broader coordinator, worker, recovery, isolation, browser, handoff, recipe, and fleet direction.
 
 To try it locally, add the following to `appsettings.Local.json` or user secrets:
 
@@ -70,7 +70,7 @@ Telegram requires the Mini App URL to be HTTPS and reachable from the Telegram c
 
 Telegram can present the same Mini App in different webview modes depending on how it was launched. The bot profile's Main Mini App and the chat menu button are separate Telegram launch paths, so one may appear full-height while another initially appears compact. The dashboard handles compact, full-height, and true fullscreen presentation: it expands to the maximum available height when Telegram permits it, respects dynamic and content safe areas, and exposes a `Fullscreen` action when the Telegram client supports true fullscreen. The `Webview` badge shows the current presentation (`Compact`, `Full height`, or `Full screen`).
 
-The first spike is intentionally read-only. Use the Telegram chat for creating sessions, changing projects, sending prompts, steering turns, and approvals. Do not expose the listener beyond the intended HTTPS proxy or tunnel.
+The current Mini App remains intentionally read-only. Use the Telegram chat for creating sessions, changing projects, sending prompts, steering turns, and approvals. Failed refreshes show unavailable or stale state; sample data is only available with an explicit `?preview=1` query string. Do not expose the listener beyond the intended HTTPS proxy or tunnel.
 
 ## Before You Start
 

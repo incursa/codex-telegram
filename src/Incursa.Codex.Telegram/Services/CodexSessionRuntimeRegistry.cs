@@ -374,18 +374,21 @@ internal sealed class CodexSessionRuntimeRegistry : ICodexTurnExecutionCoordinat
             ClientVersion = source.ClientVersion,
             ApprovalHandler = (action, request) => _planInputCoordinator.HandleApprovalRequest(action, request)
                 ?? configuredHandler?.Invoke(action, request)
-                ?? CreateDefaultApprovalResponse(action),
+                ?? CreateDefaultApprovalDenialResponse(action),
         };
 
         CodexClientOptionsPlanModeBridge.CopyPlanMode(source, destination);
         return destination;
     }
 
-    private static JsonObject? CreateDefaultApprovalResponse(string action)
+    // A missing Telegram approval is a safety failure, never consent. Plan-mode
+    // user input is handled by TelegramPlanInputCoordinator above; command and
+    // file-change approvals must be rejected when no explicit decision exists.
+    internal static JsonObject? CreateDefaultApprovalDenialResponse(string action)
         => action switch
         {
-            "item/commandExecution/requestApproval" => new JsonObject { ["decision"] = "accept" },
-            "item/fileChange/requestApproval" => new JsonObject { ["decision"] = "accept" },
+            "item/commandExecution/requestApproval" => new JsonObject { ["decision"] = "reject" },
+            "item/fileChange/requestApproval" => new JsonObject { ["decision"] = "reject" },
             _ => null,
         };
 

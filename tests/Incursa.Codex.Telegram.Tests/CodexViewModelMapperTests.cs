@@ -103,6 +103,40 @@ public sealed class CodexViewModelMapperTests
     }
 
     [Fact]
+    public void ToTurnVm_ProjectsCodexFileChangesForReadOnlyReview()
+    {
+        CodexTurnRecord turn = new()
+        {
+            Id = "turn-changes",
+            Status = CodexTurnStatus.Completed,
+            Items =
+            [
+                new CodexFileChangeItem
+                {
+                    Id = "file-change",
+                    Status = CodexPatchApplyStatus.Completed,
+                    Changes =
+                    [
+                        new CodexFileUpdateChange
+                        {
+                            Path = "src/app.js",
+                            Kind = CodexPatchChangeKind.Update,
+                            Diff = "@@ -1 +1 @@\n-old\n+new",
+                        },
+                    ],
+                },
+            ],
+        };
+
+        CodexTurnVm vm = CodexViewModelMapper.ToTurnVm(turn);
+
+        CodexFileChangePreviewVm change = Assert.Single(vm.Changes);
+        Assert.Equal("src/app.js", change.Path);
+        Assert.Equal("Update", change.Kind);
+        Assert.Contains("+new", change.Diff, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void ToTimelineEntryVm_MapsUnknownAgentMessageDelta()
     {
         CodexTimelineEntryVm entry = CodexViewModelMapper.ToTimelineEntryVm(

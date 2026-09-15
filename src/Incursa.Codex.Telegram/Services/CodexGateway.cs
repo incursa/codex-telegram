@@ -103,7 +103,11 @@ internal sealed class CodexGateway : ICodexGateway
         CodexRuntimeSlot runtime = await _runtimeRegistry.GetBestForThreadAsync(threadId, cancellationToken).ConfigureAwait(false);
 
         CodexThreadSnapshot snapshot = await runtime.Client.ReadThreadAsync(threadId, new CodexThreadReadOptions { IncludeTurns = true }, cancellationToken).ConfigureAwait(false);
-        CodexThreadManifestRecord manifest = await _manifestStore.GetOrCreateAsync(threadId, cancellationToken).ConfigureAwait(false);
+        // Reading a thread must remain read-only. A thread that has not yet
+        // received local metadata still has a valid Codex snapshot, so use an
+        // in-memory manifest instead of creating a new state directory.
+        CodexThreadManifestRecord manifest = await _manifestStore.ReadAsync(threadId, cancellationToken).ConfigureAwait(false)
+            ?? new CodexThreadManifestRecord { ThreadId = threadId };
         IReadOnlyList<CodexModelVm> models = await ListModelsAsync(cancellationToken).ConfigureAwait(false);
         IReadOnlyList<CodexWorkspaceEntryVm> workspaceEntries = await _workspaceBrowser.SearchAsync(workspaceQuery, cancellationToken).ConfigureAwait(false);
         IReadOnlyList<CodexThreadFileVm> files = manifest.Files

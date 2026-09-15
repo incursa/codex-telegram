@@ -30,15 +30,28 @@
       <inc-page-header>
         <div class="page-heading">
           <div>
-            <p class="eyebrow">Mini App preview</p>
+            <p class="eyebrow">Codex supervision</p>
             <h1>Your Codex control room</h1>
-            <p class="page-summary">Keep the conversation in Telegram. Use this surface to switch context and see what is happening.</p>
+            <p class="page-summary">See what needs you, inspect the latest work, and return to Telegram when a decision belongs in the conversation.</p>
           </div>
           <button id="open-chat-button" class="secondary-button" type="button">Return to chat</button>
         </div>
       </inc-page-header>
 
       <div id="notice" class="notice" role="status" hidden></div>
+
+      <inc-card class="dashboard-card attention-card">
+        <div class="card-heading">
+          <div>
+            <h2>Needs attention</h2>
+            <p>Questions, failures, and unavailable runtime state that may need your decision.</p>
+          </div>
+          <inc-badge id="attention-badge" variant="neutral">Clear</inc-badge>
+        </div>
+        <div id="attention-list" class="attention-list" aria-live="polite">
+          <div class="loading-row">Checking Codex…</div>
+        </div>
+      </inc-card>
 
       <section class="summary-grid" aria-label="Codex overview">
         <inc-card class="summary-card">
@@ -67,8 +80,8 @@
         <inc-card class="dashboard-card sessions-card">
           <div class="card-heading">
             <div>
-              <h2>Recent sessions</h2>
-              <p>Threads available to your allowlisted Telegram account.</p>
+              <h2>Recent activity</h2>
+              <p>Read-only activity from threads available to your allowlisted Telegram account.</p>
             </div>
             <inc-badge variant="info">Read only</inc-badge>
           </div>
@@ -96,9 +109,28 @@
             <h2 id="detail-title">Session details</h2>
             <p id="detail-subtitle"></p>
           </div>
-          <button id="close-detail-button" class="secondary-button" type="button">Close</button>
+          <div class="detail-actions">
+            <inc-badge id="detail-status" variant="neutral">Loading</inc-badge>
+            <button id="close-detail-button" class="secondary-button" type="button">Close</button>
+          </div>
         </div>
-        <pre id="detail-body" class="detail-body"></pre>
+        <div id="detail-summary" class="detail-summary-grid"></div>
+        <div class="detail-section">
+          <h3>Recent timeline</h3>
+          <div id="detail-timeline" class="timeline-list" aria-live="polite"></div>
+        </div>
+        <div class="detail-section">
+          <h3>Changes for review</h3>
+          <div id="detail-changes" class="change-list" aria-live="polite"></div>
+        </div>
+        <div class="detail-section">
+          <h3>Artifacts</h3>
+          <div id="detail-artifacts" class="artifact-list" aria-live="polite"></div>
+        </div>
+        <div class="detail-section">
+          <h3>Turns</h3>
+          <div id="detail-turns" class="turn-list" aria-live="polite"></div>
+        </div>
       </inc-card>
 
       <footer class="app-footer">

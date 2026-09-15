@@ -47,7 +47,7 @@ Without `--run`, an interactive terminal opens the bootstrap/admin menu.
 
 ## Mini App Companion Surface
 
-The optional Mini App host listens on `http://127.0.0.1:5287` by default. The static preview is available locally, while its live API is disabled for Telegram use until `TelegramMiniApp:Enabled` is set to `true`. It is a read-only dashboard for recent sessions, runtime state, usage, and saved projects; message and Codex control actions remain in Telegram.
+The optional Mini App host listens on `http://127.0.0.1:5287` by default. The static page is available locally, while its live API is disabled for Telegram use until `TelegramMiniApp:Enabled` is set to `true`. It is a read-only supervision dashboard for attention, recent sessions, task detail, bounded Codex-reported changes, safe artifact metadata, runtime state, usage, and saved projects; message and Codex control actions remain in Telegram. Local sample data requires the explicit `?preview=1` query string.
 
 For a Telegram test, set `TelegramMiniApp:ListenUrl` to the local listener and place it behind an HTTPS Cloudflare Tunnel. With the bot running, a temporary test tunnel is:
 
@@ -60,6 +60,8 @@ Put the resulting HTTPS URL in `TelegramMiniApp:PublicUrl`, configure the same U
 Never publish the local listener directly, and do not enable the feature without a populated `TelegramBot:AllowedUserIds` allowlist.
 
 Mini App requests must include Telegram's signed initialization data. The host rejects missing, stale, tampered, or non-allowlisted identities. Treat the public URL and all displayed session/workspace data as private operator data.
+
+Task detail is a Codex-authoritative read projection. Opening a task validates that the thread is present in the current Codex list and does not create a local thread manifest when one is missing. The browser receives bounded timeline and diff data plus redacted artifact metadata; it does not receive artifact payloads, result URLs, or raw artifact paths.
 
 Telegram's profile Main Mini App and bot menu button are different launch contracts and may use different initial webview presentation. The shipped dashboard is responsive for compact, full-height, and true fullscreen modes. It reports the current mode in the `Webview` badge, responds to viewport and safe-area changes, and reloads after Telegram activates the app again. Keep the static webroot installed beside the binary; this runtime behavior does not require creating directories or writing under the protected installation path.
 

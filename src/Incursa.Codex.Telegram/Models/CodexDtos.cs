@@ -82,7 +82,13 @@ internal sealed record CodexThreadListItemVm(
     string? GitBranch,
     string? GitSha,
     bool Archived,
-    string? WorkingDirectory);
+    string? WorkingDirectory)
+{
+    /// <summary>
+    /// Gets whether local state recorded an interrupted turn for this thread.
+    /// </summary>
+    public bool Interrupted { get; init; }
+}
 
 /// <summary>
 /// Group of Codex threads that share a working directory.
@@ -221,7 +227,21 @@ internal sealed record CodexTurnVm(
     string? ErrorMessage,
     string? FinalResponse,
     CodexUsageVm? Usage,
-    IReadOnlyList<CodexTimelineEntryVm> Items);
+    IReadOnlyList<CodexTimelineEntryVm> Items)
+{
+    /// <summary>
+    /// Gets the Codex-reported file changes for read-only review projections.
+    /// </summary>
+    public IReadOnlyList<CodexFileChangePreviewVm> Changes { get; init; } = Array.Empty<CodexFileChangePreviewVm>();
+}
+
+/// <summary>
+/// Bounded file-change data used by inspection-only clients.
+/// </summary>
+internal sealed record CodexFileChangePreviewVm(
+    string Path,
+    string Kind,
+    string Diff);
 
 /// <summary>
 /// File attached to a Codex thread.

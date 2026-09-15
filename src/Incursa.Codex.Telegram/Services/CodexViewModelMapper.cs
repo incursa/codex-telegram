@@ -24,7 +24,10 @@ internal static class CodexViewModelMapper
             RepairTextOrNull(summary.GitInfo?.Branch),
             RepairTextOrNull(summary.GitInfo?.Sha),
             manifest?.IsArchived == true,
-            manifest?.WorkingDirectory);
+            manifest?.WorkingDirectory)
+        {
+            Interrupted = manifest?.InterruptedTurn is not null,
+        };
 
     public static CodexProjectCatalogEntryVm ToProjectCatalogEntryVm(CodexProjectCatalogRecord project)
         => new(
@@ -39,7 +42,17 @@ internal static class CodexViewModelMapper
             RepairTextOrNull(turn.Error?.Message),
             SelectFinalResponse(turn.Items),
             turn.Usage is null ? null : ToUsageVm(turn.Usage),
-            turn.Items.Select(ToTurnItemVm).ToArray());
+            turn.Items.Select(ToTurnItemVm).ToArray())
+        {
+            Changes = turn.Items
+            .OfType<CodexFileChangeItem>()
+            .SelectMany(item => item.Changes)
+            .Select(change => new CodexFileChangePreviewVm(
+                RepairText(change.Path),
+                change.Kind.ToString(),
+                RepairText(change.Diff)))
+            .ToArray(),
+        };
 
     public static CodexTimelineEntryVm ToTimelineEntryVm(CodexThreadEvent evt, string? fallbackThreadId = null)
     {

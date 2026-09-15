@@ -6,6 +6,8 @@ Use it when you want to start, steer, and inspect Codex work from your phone wit
 
 An optional, disabled-by-default Telegram Mini App companion provides a read-only Incursa UI Kit dashboard for runtime health, sessions, projects, and usage. It adapts to Telegram's compact, full-height, and true fullscreen webviews, including viewport and safe-area changes when the app is minimized or reopened. Chat remains the control surface for prompts and changes; see [getting started](docs/getting-started.md#optional-telegram-mini-app-preview) before exposing the Mini App through an HTTPS URL.
 
+The broader supervision-workspace direction, authority boundaries, and staged delivery contract are documented in the [Mini App roadmap](docs/mini-app-roadmap.md).
+
 ## Demo
 
 Watch a two-minute private-chat demo showing a local Codex session controlled from Telegram with project selection, text prompts, and voice input.

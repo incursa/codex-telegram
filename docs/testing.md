@@ -71,6 +71,15 @@ When documenting a verification result, label it as `automated`, `synthetic`, `l
 
 For workspace-mode changes, cover both `CodexTelegram:Mode=GeneralPurpose` (workspace-root browsing/project selection) and `CodexTelegram:Mode=Repository` (explicit `RepositoryRoot` boundary). For two-instance tests, use distinct Telegram tokens and `DataRoot` values so one process cannot consume the other's updates or state.
 
+For Mini App changes, keep these evidence categories separate:
+
+- `automated`: projection, authorization, bounded payload, and no-manifest-write tests.
+- `synthetic`: scripted Codex runtime and signed-init-data fixtures; these do not prove a real Telegram account or Codex authentication.
+- `browser`: served-page checks at compact, full-height, and fullscreen-sized viewports, including no horizontal overflow, no framework overlay, console health, task-detail activation, and refresh/reopen behavior.
+- `Telegram-live`: only a real private-chat check with the configured allowlist and HTTPS Mini App URL.
+
+Live refresh failures must render as unavailable or stale data. A failed API call must never be verified by accepting invented preview sessions unless the test explicitly opts into `?preview=1`.
+
 ## Output presentation and formatting coverage
 
 When the output surface changes, keep these checks separate:
