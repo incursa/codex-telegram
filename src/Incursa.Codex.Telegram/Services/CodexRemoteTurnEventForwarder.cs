@@ -13,13 +13,15 @@ internal sealed record CodexRemoteSessionSendRequest(
     string TaskId,
     long OwnerUserId,
     string WorkerId,
+    string LeaseId,
     string CodexThreadId,
     string CommandId,
     long ChatId,
     int? MessageThreadId,
     string Input,
     bool PlanMode,
-    string CallbackUrl);
+    string CallbackUrl,
+    IReadOnlyList<CodexRemoteAttachmentPayload>? Attachments = null);
 
 internal sealed record CodexRemoteTurnEvent(
     string WorkerId,

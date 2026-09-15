@@ -154,11 +154,16 @@ Remote `/task status`, `/task release <taskId> confirm`, and `/task discard <tas
 
 When the Mini App requests a thread whose supervision task is assigned to another worker, the coordinator resolves the user-scoped task and sends only its bounded TaskId, WorkerId, LeaseId, and Codex thread ID to `/api/worker/v1/tasks/detail`. The worker re-checks its identity, ready or draining state, exact task ownership, and thread binding, then reads the local Codex detail and applies the existing Mini App projection before returning it. The response contains bounded turns, timeline, review changes, artifact metadata, and display labels only; raw worker paths, repository paths, and unprojected Codex detail remain on the worker. Local threads continue using the existing gateway path.
 
+## R3.11 remote session settings and attachment transfer
+
+Model/reasoning reads and updates plus goal reads, creation, status changes, and clearing use the authenticated `/api/worker/v1/sessions/settings` endpoint. The coordinator sends the exact owner, TaskId, WorkerId, LeaseId, and Codex thread ID; the worker checks those bindings and its ready or draining state before calling its local session manager. Settings are not applied to a coordinator-local synthetic session.
+
+Normal remote prompts may include up to eight attachments, with a 16 MiB per-file and 32 MiB total decoded-content limit. The coordinator validates filename/content-type metadata, reads the file bytes, and sends bounded base64 content; it never sends a local path. The worker validates and decodes the payload again, writes temporary worker-local files, persists them through the existing attachment store, and builds the same image/mention Codex input items used by local Telegram sends. Temporary transfer files are deleted after persistence. Plan mode with attachments is rejected explicitly. Queued remote prompts use the same relay after dequeue and delete only the coordinator's durable copies once transfer succeeds.
+
 ## Later dependency sequence
 
-1. Complete remote session/control relay as separately authorized operations, including attachments and model/goal controls.
-2. Add combined Mini App task actions for attention, review-packet acknowledgement, artifact handoff, and worker operations backed by coordinator projections.
-3. Add fleet-wide staged rollout coordination, compatibility gates, and safe rollback finalization.
+1. Add combined Mini App task actions for attention, review-packet acknowledgement, artifact handoff, and worker operations backed by coordinator projections.
+2. Add fleet-wide staged rollout coordination, compatibility gates, and safe rollback finalization.
 
 Each step requires focused automated tests plus the repository release floor. Browser and Telegram-live checks remain separate evidence categories.
 

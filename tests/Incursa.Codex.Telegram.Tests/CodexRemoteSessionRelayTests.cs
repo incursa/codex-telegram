@@ -57,6 +57,47 @@ public sealed class CodexRemoteSessionRelayTests
     }
 
     [Fact]
+    public async Task CoordinatorRelayTransfersAttachmentContentWithoutCoordinatorPath()
+    {
+        using TemporaryDirectory sourceRoot = TemporaryDirectory.Create();
+        string sourcePath = Path.Combine(sourceRoot.Path, "operator-photo.png");
+        await File.WriteAllBytesAsync(sourcePath, [1, 2, 3, 4]);
+        CapturingHandler handler = new();
+        using HttpClient client = new(handler);
+        CodexRemoteSessionRelay relay = new(new StaticHttpClientFactory(client), new FakeCoordinatorWorkerStore(), CreateOptions());
+        CodexSupervisionTaskSnapshot task = new(
+            "task:1",
+            "thread:1",
+            "Remote task",
+            new TelegramConversationScope(42, null),
+            DateTimeOffset.UtcNow,
+            DateTimeOffset.UtcNow,
+            null,
+            WorkerId: "worker:remote",
+            LeaseId: "lease:1",
+            WorkspaceId: "workspace:1");
+
+        await relay.SendAsync(
+            task,
+            42,
+            42,
+            null,
+            "command:attachment",
+            "inspect the image",
+            planMode: false,
+            CancellationToken.None,
+            [new TelegramAttachmentDescriptor(sourcePath, "operator-photo.png", "image/png", IsImage: true)]);
+
+        CodexRemoteSessionSendRequest body = JsonSerializer.Deserialize<CodexRemoteSessionSendRequest>(handler.Body, new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
+        CodexRemoteAttachmentPayload attachment = Assert.Single(body.Attachments!);
+        Assert.Equal("operator-photo.png", attachment.FileName);
+        Assert.Equal("image/png", attachment.ContentType);
+        Assert.True(attachment.IsImage);
+        Assert.Equal("AQIDBA==", attachment.ContentBase64);
+        Assert.DoesNotContain(sourcePath, handler.Body, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public async Task WorkerSessionEndpointRequiresCoordinatorAuthentication()
     {
         IOptions<CodexTelegramOptions> options = CreateOptions();
@@ -97,6 +138,7 @@ public sealed class CodexRemoteSessionRelayTests
             "task:1",
             42,
             "worker:remote",
+            "lease:1",
             "thread:1",
             "command:1",
             42,
@@ -131,6 +173,91 @@ public sealed class CodexRemoteSessionRelayTests
         Assert.Equal(StatusCodes.Status200OK, duplicateContext.Response.StatusCode);
         Assert.Single(sessionManager.TextSends);
         Assert.Equal("thread:1", Assert.Single(eventForwarder.Registered).ThreadId);
+    }
+
+    [Fact]
+    public async Task WorkerSessionEndpointMaterializesAttachmentBeforeCodexSend()
+    {
+        using TemporaryDirectory dataRoot = TemporaryDirectory.Create();
+        IOptions<CodexTelegramOptions> options = CreateOptions(dataRoot.Path);
+        FakeWorkerRegistry workerRegistry = new("worker:remote");
+        ScriptedCodexSessionManager sessionManager = new();
+        RecordingEventForwarder eventForwarder = new();
+        RecordingAttachmentStore attachmentStore = new(dataRoot.Path);
+        using CodexSupervisionLedger ledger = new(options, TimeProvider.System, dataRoot.Path);
+        await ledger.RegisterTaskAsync(
+            "task:1",
+            "thread:1",
+            "Remote task",
+            new TelegramConversationScope(42, null),
+            42,
+            CancellationToken.None);
+        await ledger.BindTaskWorkerAsync("task:1", 42, "worker:remote", "lease:1", "workspace:1", CancellationToken.None);
+
+        CodexRemoteSessionSendRequest request = new(
+            "task:1",
+            42,
+            "worker:remote",
+            "lease:1",
+            "thread:1",
+            "command:attachment",
+            42,
+            null,
+            "inspect the image",
+            false,
+            "https://coordinator.example/api/coordinator/v1/worker-events",
+            [new CodexRemoteAttachmentPayload("operator-photo.png", "image/png", true, "AQIDBA==")]);
+        DefaultHttpContext context = CreateContext("Bearer coordinator-token-that-is-long-enough-1234", request);
+
+        IResult result = await CodexRemoteSessionEndpoints.SendAsync(
+            context,
+            options,
+            workerRegistry,
+            ledger,
+            sessionManager,
+            eventForwarder,
+            CancellationToken.None,
+            attachmentStore);
+        await result.ExecuteAsync(context);
+
+        Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
+        (string sessionId, IReadOnlyList<CodexInputItem> input) = Assert.Single(sessionManager.AttachmentSends);
+        Assert.Equal("thread:1", sessionId);
+        CodexLocalImageInput image = Assert.IsType<CodexLocalImageInput>(Assert.Single(input.Skip(1)));
+        Assert.StartsWith(Path.Combine(dataRoot.Path, "worker-attachments"), image.Path, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal([1, 2, 3, 4], await File.ReadAllBytesAsync(image.Path));
+        Assert.Equal("operator-photo.png", Assert.Single(attachmentStore.Persisted).FileName);
+    }
+
+    [Fact]
+    public async Task WorkerSessionEndpointRejectsPlanModeWithAttachments()
+    {
+        CodexRemoteSessionSendRequest request = new(
+            "task:1",
+            42,
+            "worker:remote",
+            "lease:1",
+            "thread:1",
+            "command:plan-attachment",
+            42,
+            null,
+            "inspect the image",
+            true,
+            "https://coordinator.example/api/coordinator/v1/worker-events",
+            [new CodexRemoteAttachmentPayload("operator-photo.png", "image/png", true, "AQIDBA==")]);
+        DefaultHttpContext context = CreateContext("Bearer coordinator-token-that-is-long-enough-1234", request);
+
+        IResult result = await CodexRemoteSessionEndpoints.SendAsync(
+            context,
+            CreateOptions(),
+            workerRegistry: null!,
+            supervisionLedger: null!,
+            sessionManager: null!,
+            eventForwarder: null!,
+            CancellationToken.None);
+        await result.ExecuteAsync(context);
+
+        Assert.Equal(StatusCodes.Status400BadRequest, context.Response.StatusCode);
     }
 
     private static IOptions<CodexTelegramOptions> CreateOptions(string? dataRoot = null)
@@ -238,6 +365,38 @@ public sealed class CodexRemoteSessionRelayTests
             {
                 Content = JsonContent.Create(new CodexThreadExecutionVm("thread:1", "turn:1", "running", null)),
             };
+        }
+    }
+
+    private sealed class RecordingAttachmentStore(string root) : ITelegramAttachmentStore
+    {
+        public List<TelegramAttachmentDescriptor> Persisted { get; } = [];
+
+        public async Task<IReadOnlyList<TelegramAttachmentDescriptor>?> PersistAsync(
+            IReadOnlyList<TelegramAttachmentDescriptor>? attachments,
+            bool deleteSource,
+            CancellationToken cancellationToken)
+        {
+            if (attachments is null)
+            {
+                return null;
+            }
+
+            string destinationRoot = Path.Combine(root, "worker-attachments");
+            Directory.CreateDirectory(destinationRoot);
+            List<TelegramAttachmentDescriptor> persisted = [];
+            foreach (TelegramAttachmentDescriptor attachment in attachments)
+            {
+                string destination = Path.Combine(destinationRoot, attachment.FileName);
+                await using FileStream source = File.OpenRead(attachment.FilePath);
+                await using FileStream target = File.Create(destination);
+                await source.CopyToAsync(target, cancellationToken);
+                TelegramAttachmentDescriptor value = attachment with { FilePath = destination };
+                persisted.Add(value);
+                Persisted.Add(value);
+            }
+
+            return persisted;
         }
     }
 }

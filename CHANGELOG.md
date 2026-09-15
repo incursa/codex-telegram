@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 1.0.45 - 2026-09-15
+
+- Added authenticated remote model and reasoning controls plus goal lifecycle operations for owner-bound tasks.
+- Added bounded remote attachment transfer for normal prompts, with worker-side materialization and no coordinator path leakage.
+- Added queued remote prompt dispatch so attachments remain usable when a task is waiting behind another turn or Telegram delivery.
+- Kept remote Plan mode with attachments explicitly unsupported and preserved worker-local Codex execution and authorization boundaries.
+
 ## 1.0.44 - 2026-09-15
 
 - Added authenticated remote Mini App task detail projection for worker-owned Codex threads.

@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using Incursa.Codex.Telegram.Models;
 using Incursa.Codex.Telegram.Options;
+using Incursa.Codex.Telegram.Telegram;
 using Microsoft.Extensions.Options;
 
 namespace Incursa.Codex.Telegram.Services;
@@ -38,7 +39,8 @@ internal sealed class CodexRemoteSessionRelay
         string commandId,
         string input,
         bool planMode,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        IReadOnlyList<TelegramAttachmentDescriptor>? attachments = null)
     {
         if (!IsSafeToken(task.WorkerId, 120)
             || string.IsNullOrWhiteSpace(task.LeaseId))
@@ -64,18 +66,27 @@ internal sealed class CodexRemoteSessionRelay
             throw new InvalidOperationException("The coordinator callback URL is not configured.");
         }
 
+        if (planMode && attachments is { Count: > 0 })
+        {
+            throw new InvalidOperationException("Remote Plan mode does not support attachments.");
+        }
+
+        IReadOnlyList<CodexRemoteAttachmentPayload>? remoteAttachments = await ReadAttachmentsAsync(attachments, cancellationToken).ConfigureAwait(false);
+
         Uri callback = new(new Uri(coordinator.AbsoluteUri.TrimEnd('/') + "/", UriKind.Absolute), EventPath);
         CodexRemoteSessionSendRequest requestBody = new(
             task.TaskId,
             ownerUserId,
             workerId,
+            task.LeaseId,
             task.CodexThreadId,
             commandId,
             chatId,
             messageThreadId,
             input,
             planMode,
-            callback.AbsoluteUri);
+            callback.AbsoluteUri,
+            remoteAttachments);
         HttpClient client = _httpClientFactory.CreateClient(nameof(CodexRemoteSessionRelay));
         using CancellationTokenSource timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(TimeSpan.FromSeconds(Math.Clamp(_options.Value.Coordinator.RequestTimeoutSeconds, 1, 60)));
@@ -105,4 +116,58 @@ internal sealed class CodexRemoteSessionRelay
         => !string.IsNullOrWhiteSpace(value)
             && value.Length <= maxLength
             && value.All(character => char.IsLetterOrDigit(character) || character is ':' or '-' or '_' or '.');
+
+    private static async Task<IReadOnlyList<CodexRemoteAttachmentPayload>?> ReadAttachmentsAsync(
+        IReadOnlyList<TelegramAttachmentDescriptor>? attachments,
+        CancellationToken cancellationToken)
+    {
+        if (attachments is null or { Count: 0 })
+        {
+            return null;
+        }
+
+        if (attachments.Count > CodexRemoteAttachmentTransfer.MaximumAttachmentCount)
+        {
+            throw new InvalidOperationException("Remote task attachment count exceeds the bounded transfer limit.");
+        }
+
+        List<CodexRemoteAttachmentPayload> payloads = new(attachments.Count);
+        long totalBytes = 0;
+        foreach (TelegramAttachmentDescriptor attachment in attachments)
+        {
+            if (!CodexRemoteAttachmentTransfer.IsValidMetadata(new CodexRemoteAttachmentPayload(
+                    string.IsNullOrWhiteSpace(attachment.FileName) ? Path.GetFileName(attachment.FilePath) : attachment.FileName,
+                    attachment.ContentType,
+                    attachment.IsImage,
+                    "placeholder"))
+                || !File.Exists(attachment.FilePath))
+            {
+                throw new InvalidOperationException("A remote task attachment is missing or has invalid metadata.");
+            }
+
+            FileInfo file = new(attachment.FilePath);
+            if (file.Length > CodexRemoteAttachmentTransfer.MaximumAttachmentBytes
+                || totalBytes > CodexRemoteAttachmentTransfer.MaximumTotalBytes - file.Length)
+            {
+                throw new InvalidOperationException("Remote task attachment size exceeds the bounded transfer limit.");
+            }
+
+            byte[] content = await File.ReadAllBytesAsync(file.FullName, cancellationToken).ConfigureAwait(false);
+            if (content.LongLength > CodexRemoteAttachmentTransfer.MaximumAttachmentBytes
+                || totalBytes > CodexRemoteAttachmentTransfer.MaximumTotalBytes - content.LongLength)
+            {
+                throw new InvalidOperationException("Remote task attachment size exceeds the bounded transfer limit.");
+            }
+
+            totalBytes += content.LongLength;
+            string fileName = string.IsNullOrWhiteSpace(attachment.FileName) ? Path.GetFileName(file.FullName) : attachment.FileName;
+            payloads.Add(new CodexRemoteAttachmentPayload(
+                fileName,
+                attachment.ContentType,
+                attachment.IsImage,
+                Convert.ToBase64String(content)));
+        }
+
+        return payloads;
+    }
 }

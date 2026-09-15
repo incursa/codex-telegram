@@ -33,7 +33,8 @@ internal static class CodexRemoteSessionEndpoints
         ICodexSupervisionLedger supervisionLedger,
         ICodexSessionManager sessionManager,
         ICodexRemoteTurnEventForwarder eventForwarder,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        ITelegramAttachmentStore? attachmentStore = null)
     {
         CodexTelegramOptions hostOptions = options.Value;
         if (!hostOptions.Coordinator.Enabled || !hostOptions.Coordinator.WorkerRegistrationEnabled)
@@ -46,7 +47,7 @@ internal static class CodexRemoteSessionEndpoints
             return Results.Unauthorized();
         }
 
-        if (context.Request.ContentLength is > 64 * 1024)
+        if (context.Request.ContentLength is > CodexRemoteAttachmentTransfer.MaximumEncodedPayloadBytes + 64 * 1024)
         {
             return Results.BadRequest(new { error = "Remote session request is too large." });
         }
@@ -84,6 +85,7 @@ internal static class CodexRemoteSessionEndpoints
 
         CodexSupervisionTaskRecord? task = await supervisionLedger.GetTaskAsync(request.OwnerUserId, request.TaskId, cancellationToken).ConfigureAwait(false);
         if (task is null
+            || !string.Equals(task.LeaseId, request.LeaseId, StringComparison.Ordinal)
             || !string.Equals(task.CodexThreadId, request.CodexThreadId, StringComparison.Ordinal)
             || !string.Equals(task.WorkerId, worker.WorkerId, StringComparison.Ordinal))
         {
@@ -105,12 +107,35 @@ internal static class CodexRemoteSessionEndpoints
                 : Results.Conflict(new { error = "Remote command was already recorded without an execution result." });
         }
 
-        eventForwarder.RegisterPending(request.CodexThreadId, worker.WorkerId, request.CallbackUrl);
         try
         {
+            if (!CodexRemoteAttachmentTransfer.TryDecode(
+                    request.Attachments,
+                    out IReadOnlyList<(CodexRemoteAttachmentPayload Attachment, byte[] Content)> decodedAttachments))
+            {
+                throw new ArgumentException("Remote session attachments are invalid.");
+            }
+
+            if (request.PlanMode && decodedAttachments.Count > 0)
+            {
+                throw new InvalidOperationException("Remote Plan mode does not support attachments.");
+            }
+
+            IReadOnlyList<TelegramAttachmentDescriptor>? attachments = decodedAttachments.Count == 0
+                ? null
+                : await MaterializeAttachmentsAsync(
+                    decodedAttachments,
+                    attachmentStore ?? NullTelegramAttachmentStore.Instance,
+                    cancellationToken).ConfigureAwait(false);
+            eventForwarder.RegisterPending(request.CodexThreadId, worker.WorkerId, request.CallbackUrl);
             CodexThreadExecutionVm execution = request.PlanMode
                 ? await sessionManager.SendPlanAsync(request.CodexThreadId, request.Input, cancellationToken).ConfigureAwait(false)
-                : await sessionManager.SendAsync(request.CodexThreadId, request.Input, cancellationToken).ConfigureAwait(false);
+                : attachments is { Count: > 0 }
+                    ? await sessionManager.SendAsync(
+                        request.CodexThreadId,
+                        TelegramAttachmentInputBuilder.BuildInputItems(request.Input, attachments),
+                        cancellationToken).ConfigureAwait(false)
+                    : await sessionManager.SendAsync(request.CodexThreadId, request.Input, cancellationToken).ConfigureAwait(false);
             await supervisionLedger.UpdateRunAsync(
                 command.Run?.RunId ?? string.Empty,
                 CodexSupervisionRunState.Running,
@@ -120,7 +145,7 @@ internal static class CodexRemoteSessionEndpoints
                 cancellationToken).ConfigureAwait(false);
             return Results.Ok(execution);
         }
-        catch (Exception exception) when (exception is InvalidOperationException or IOException or UnauthorizedAccessException)
+        catch (Exception exception) when (exception is ArgumentException or InvalidOperationException or IOException or UnauthorizedAccessException)
         {
             if (command.Run is not null)
             {
@@ -141,15 +166,59 @@ internal static class CodexRemoteSessionEndpoints
         => IsSafeToken(request.TaskId, 160)
             && request.OwnerUserId != 0
             && IsSafeToken(request.WorkerId, 120)
+            && IsSafeToken(request.LeaseId, 160)
             && IsSafeToken(request.CodexThreadId, 256)
             && IsSafeToken(request.CommandId, 256)
             && request.ChatId != 0
             && (request.MessageThreadId is null or > 0)
-            && !string.IsNullOrWhiteSpace(request.Input)
-            && request.Input.Length <= 16_000
-            && !request.Input.Contains('\0')
+            && (request.Attachments is { Count: > 0 } || !string.IsNullOrWhiteSpace(request.Input))
+            && (request.Input is null || request.Input.Length <= 16_000)
+            && (request.Input is null || !request.Input.Contains('\0'))
+            && (request.Attachments is null || request.Attachments.Count <= CodexRemoteAttachmentTransfer.MaximumAttachmentCount)
+            && (!request.PlanMode || request.Attachments is null or { Count: 0 })
+            && (request.Attachments is null || CodexRemoteAttachmentTransfer.TryDecode(request.Attachments, out _))
             && Uri.TryCreate(request.CallbackUrl, UriKind.Absolute, out Uri? callback)
             && callback.Scheme is "http" or "https";
+
+    private static async Task<IReadOnlyList<TelegramAttachmentDescriptor>> MaterializeAttachmentsAsync(
+        IReadOnlyList<(CodexRemoteAttachmentPayload Attachment, byte[] Content)> decodedAttachments,
+        ITelegramAttachmentStore attachmentStore,
+        CancellationToken cancellationToken)
+    {
+        string root = Path.Combine(Path.GetTempPath(), "codex-telegram-remote-attachments");
+        Directory.CreateDirectory(root);
+        List<TelegramAttachmentDescriptor> temporary = new(decodedAttachments.Count);
+        try
+        {
+            foreach ((CodexRemoteAttachmentPayload attachment, byte[] content) in decodedAttachments)
+            {
+                string path = Path.Combine(root, $"{Guid.NewGuid():N}.bin");
+                await File.WriteAllBytesAsync(path, content, cancellationToken).ConfigureAwait(false);
+                temporary.Add(new TelegramAttachmentDescriptor(path, attachment.FileName, attachment.ContentType, attachment.IsImage));
+            }
+
+            return await attachmentStore.PersistAsync(temporary, deleteSource: true, cancellationToken).ConfigureAwait(false)
+                ?? throw new InvalidOperationException("The worker could not persist remote attachments.");
+        }
+        finally
+        {
+            foreach (TelegramAttachmentDescriptor attachment in temporary)
+            {
+                TryDelete(attachment.FilePath);
+            }
+        }
+    }
+
+    private static void TryDelete(string path)
+    {
+        try
+        {
+            File.Delete(path);
+        }
+        catch
+        {
+        }
+    }
 
     private static bool IsExpectedCallbackUrl(string? configuredCoordinatorUrl, string requestedCallbackUrl)
     {

@@ -21,6 +21,8 @@ internal sealed class TelegramQueuedPromptProcessor : ITelegramQueuedPromptProce
     private readonly ITelegramBotMessageSender _sender;
     private readonly ITelegramDebugTraceStore _traceStore;
     private readonly ICodexSupervisionLedger _supervisionLedger;
+    private readonly ICodexWorkerRegistry? _workerRegistry;
+    private readonly CodexRemoteSessionRelay? _remoteSessionRelay;
     private readonly ILogger<TelegramQueuedPromptProcessor> _logger;
 
     public TelegramQueuedPromptProcessor(
@@ -33,7 +35,9 @@ internal sealed class TelegramQueuedPromptProcessor : ITelegramQueuedPromptProce
         ITelegramBotMessageSender sender,
         ITelegramDebugTraceStore traceStore,
         ILogger<TelegramQueuedPromptProcessor> logger,
-        ICodexSupervisionLedger? supervisionLedger = null)
+        ICodexSupervisionLedger? supervisionLedger = null,
+        ICodexWorkerRegistry? workerRegistry = null,
+        CodexRemoteSessionRelay? remoteSessionRelay = null)
     {
         _stateStore = stateStore;
         _sessionManager = sessionManager;
@@ -45,6 +49,8 @@ internal sealed class TelegramQueuedPromptProcessor : ITelegramQueuedPromptProce
         _traceStore = traceStore;
         _logger = logger;
         _supervisionLedger = supervisionLedger ?? new NullCodexSupervisionLedger();
+        _workerRegistry = workerRegistry;
+        _remoteSessionRelay = remoteSessionRelay;
     }
 
     public async Task<bool> ProcessNextAsync(CancellationToken cancellationToken)
@@ -59,7 +65,23 @@ internal sealed class TelegramQueuedPromptProcessor : ITelegramQueuedPromptProce
             return false;
         }
 
-        CodexSessionSummary? session = await _sessionManager.GetSessionAsync(prompt.SessionId, cancellationToken).ConfigureAwait(false);
+        CodexSupervisionTaskSnapshot? supervisionTask = await _supervisionLedger
+            .GetTaskForSessionAsync(prompt.UserId, prompt.SessionId, cancellationToken)
+            .ConfigureAwait(false);
+        bool isRemote = await IsRemoteTaskAsync(supervisionTask, cancellationToken).ConfigureAwait(false);
+        CodexSessionSummary? session = isRemote
+            ? new CodexSessionSummary(
+                prompt.SessionId,
+                prompt.SessionName,
+                CodexSessionStatus.Exited,
+                null,
+                prompt.EnqueuedAt,
+                prompt.EnqueuedAt,
+                null,
+                null,
+                null,
+                IsRemote: true)
+            : await _sessionManager.GetSessionAsync(prompt.SessionId, cancellationToken).ConfigureAwait(false);
         if (session is null)
         {
             await SetSupervisionStateAsync(prompt.RunId, CodexSupervisionRunState.Failed, prompt.SessionId, null, "session_missing", cancellationToken).ConfigureAwait(false);
@@ -142,14 +164,37 @@ internal sealed class TelegramQueuedPromptProcessor : ITelegramQueuedPromptProce
                     Metadata: BuildQueuedPromptTraceMetadata(prompt.Attachments),
                     TextBody: prompt.Text),
                 cancellationToken).ConfigureAwait(false);
-            CodexThreadExecutionVm execution = prompt.Attachments is { Count: > 0 }
-                ? await _sessionManager.SendAsync(
-                    prompt.SessionId,
-                    attachmentInput!,
-                    cancellationToken).ConfigureAwait(false)
-                : prompt.PlanMode
-                    ? await _sessionManager.SendPlanAsync(prompt.SessionId, prompt.Text, cancellationToken).ConfigureAwait(false)
-                : await _sessionManager.SendAsync(prompt.SessionId, prompt.Text, cancellationToken).ConfigureAwait(false);
+            CodexThreadExecutionVm execution;
+            if (isRemote)
+            {
+                if (supervisionTask is null || _remoteSessionRelay is null)
+                {
+                    throw new InvalidOperationException("Remote task relay is not configured.");
+                }
+
+                execution = await _remoteSessionRelay.SendAsync(
+                    supervisionTask,
+                    prompt.UserId,
+                    prompt.ChatId,
+                    prompt.MessageThreadId,
+                    prompt.CommandId ?? $"command:queued:{prompt.Id}",
+                    prompt.Text,
+                    prompt.PlanMode,
+                    cancellationToken,
+                    prompt.Attachments).ConfigureAwait(false);
+                TryDeleteAttachments(prompt.Attachments);
+            }
+            else
+            {
+                execution = prompt.Attachments is { Count: > 0 }
+                    ? await _sessionManager.SendAsync(
+                        prompt.SessionId,
+                        attachmentInput!,
+                        cancellationToken).ConfigureAwait(false)
+                    : prompt.PlanMode
+                        ? await _sessionManager.SendPlanAsync(prompt.SessionId, prompt.Text, cancellationToken).ConfigureAwait(false)
+                        : await _sessionManager.SendAsync(prompt.SessionId, prompt.Text, cancellationToken).ConfigureAwait(false);
+            }
             await SetSupervisionStateAsync(prompt.RunId, CodexSupervisionRunState.Running, execution.ThreadId, execution.TurnId, null, cancellationToken).ConfigureAwait(false);
             _followRegistry.FollowThread(prompt.ConversationScope, execution.ThreadId);
             await _traceStore.BindTurnAsync(
@@ -310,4 +355,17 @@ internal sealed class TelegramQueuedPromptProcessor : ITelegramQueuedPromptProce
 
     private static bool IsLive(CodexSessionSummary session)
         => session.Status is CodexSessionStatus.Running or CodexSessionStatus.Starting;
+
+    private async Task<bool> IsRemoteTaskAsync(
+        CodexSupervisionTaskSnapshot? task,
+        CancellationToken cancellationToken)
+    {
+        if (task?.WorkerId is null || _workerRegistry is null)
+        {
+            return false;
+        }
+
+        CodexWorkerSnapshot worker = await _workerRegistry.GetSnapshotAsync(cancellationToken).ConfigureAwait(false);
+        return !string.Equals(task.WorkerId, worker.WorkerId, StringComparison.Ordinal);
+    }
 }
