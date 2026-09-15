@@ -89,6 +89,12 @@ Review packets are deterministic, bounded projections of Codex-reported file cha
 
 The Mini App renders the packet read-only and states that decisions remain in Telegram. `/handoff [sessionId]` emits the same bounded task/run/command/review identity through the already authorized Telegram conversation. It does not transfer a workspace, replay a command, approve a Codex action, or create a new side-effecting route.
 
+## R3.1 task workspace allocation
+
+CodexTaskWorkspaceManager owns a bounded codex-task-workspaces.json projection in the operator data root. Given an already-authorized application TaskId, an existing repository root, and an optional explicit base ref, it creates a generated codex/task/... branch and Git worktree under the configured task-worktree root. Git arguments are passed without a shell, the source root is normalized, and the generated path is the only path later eligible for release.
+
+The same record allocates the first currently non-listening development port in the configured range and a safe database namespace. Port reservations are held for provisioned records and released records remain as historical evidence. Creation is idempotent for an active TaskId. Clean release uses git worktree remove; forced discard is a separate explicit operation and is never used automatically after an error. This slice does not imply that Codex has moved an existing thread into the worktree; the session/coordinator integration must use the returned path in a later R3 slice.
+
 ## Later dependency sequence
 
 1. Add task-owned worktrees, ports, database namespaces, worker registration, authenticated routing, leases, readiness, draining, and cleanup.

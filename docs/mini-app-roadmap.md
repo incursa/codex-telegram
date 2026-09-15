@@ -37,6 +37,8 @@ The v1.0.30 R1.2 slice adds bounded delivery, approval/input, claim, and recover
 
 The v1.0.31 R2.1 slice adds deterministic review packets and the explicit `/handoff [sessionId]` Telegram projection. Review packets are bounded to Codex-reported changes and safe artifact metadata, sanitize absolute paths, label binary or unsupported evidence, and retain thread/turn/task/run provenance. The Mini App renders them as read-only evidence; `/handoff` carries the same bounded context into the authorized Telegram conversation without transferring a workspace, replaying a command, or changing authorization semantics.
 
+The v1.0.32 R3.1 slice adds a task workspace allocator. It creates an isolated Git branch/worktree from an explicit repository and base ref, persists the task-to-worktree mapping, allocates a non-listening development port from a configured range, and assigns a bounded database namespace. Repeated creation for the same active task is idempotent; release is recorded only after Git removes the exact recorded worktree. This slice is a provisioning boundary: Codex execution must be explicitly pointed at the returned worktree, and coordinator/worker routing remains a later R3 slice.
+
 ## Identity and state vocabulary
 
 Until R1 introduces durable application records, a Mini App task is a Codex thread and its turns are the run history. The implementation must not imply stronger guarantees than the underlying thread state provides.

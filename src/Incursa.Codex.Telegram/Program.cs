@@ -164,6 +164,10 @@ builder.Services.PostConfigure<CodexTelegramOptions>(options =>
         CodexTurnStreamingDefaults.MinTerminalEventHoldMilliseconds,
         CodexTurnStreamingDefaults.MaxTerminalEventHoldMilliseconds);
     options.Workspace.DataRoot = Path.GetFullPath(options.Workspace.DataRoot);
+    if (!string.IsNullOrWhiteSpace(options.Workspace.TaskWorktreeRoot))
+    {
+        options.Workspace.TaskWorktreeRoot = Path.GetFullPath(options.Workspace.TaskWorktreeRoot);
+    }
     options.Workspace.WorkspaceRoots = NormalizeDistinctPaths(options.Workspace.WorkspaceRoots).ToList();
     options.Context.AdditionalDirectories = NormalizeDistinctPaths(options.Context.AdditionalDirectories).ToList();
 
@@ -361,6 +365,7 @@ builder.Services.AddSingleton<IAudioTranscriptionService>(sp => sp.GetRequiredSe
 builder.Services.AddSingleton<ICodexRuntimeClientFactory, CodexRuntimeClientFactory>();
 builder.Services.AddSingleton<ICodexSessionEventLog, CodexSessionEventLog>();
 builder.Services.AddSingleton<ICodexSupervisionLedger, CodexSupervisionLedger>();
+builder.Services.AddSingleton<ICodexTaskWorkspaceManager, CodexTaskWorkspaceManager>();
 builder.Services.AddSingleton<CodexSessionRuntimeRegistry>();
 builder.Services.AddSingleton<ICodexTurnExecutionCoordinator>(sp => sp.GetRequiredService<CodexSessionRuntimeRegistry>());
 builder.Services.AddSingleton<ICodexGateway, CodexGateway>();

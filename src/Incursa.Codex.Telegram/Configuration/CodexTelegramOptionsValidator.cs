@@ -12,10 +12,19 @@ internal sealed class CodexTelegramOptionsValidator : IValidateOptions<CodexTele
 {
     public ValidateOptionsResult Validate(string? name, CodexTelegramOptions options)
     {
-        IReadOnlyList<string> failures = ValidateRepository(options);
+        IReadOnlyList<string> failures = [.. ValidateRepository(options), .. ValidateTaskWorkspace(options)];
         return failures.Count == 0
             ? ValidateOptionsResult.Success
             : ValidateOptionsResult.Fail(failures);
+    }
+
+    private static IReadOnlyList<string> ValidateTaskWorkspace(CodexTelegramOptions options)
+    {
+        int start = options.Workspace.TaskDevelopmentPortRangeStart;
+        int end = options.Workspace.TaskDevelopmentPortRangeEnd;
+        return start is < 1024 or > 65535 || end is < 1024 or > 65535 || start > end
+            ? [$"CodexTelegram:Workspace task development port range must be within 1024-65535 and start no later than end (received {start}-{end})."]
+            : [];
     }
 
     internal static IReadOnlyList<string> ValidateRepository(CodexTelegramOptions options)

@@ -229,4 +229,20 @@ public sealed class CodexWorkspaceOptions
     /// Gets or sets the directory traversal depth used while discovering workspace entries.
     /// </summary>
     public int WorkspaceSearchDepth { get; set; } = CodexWorkspaceDefaults.WorkspaceSearchDepth;
+
+    /// <summary>
+    /// Gets or sets the operator-owned root where task worktrees are provisioned.
+    /// When empty, a <c>task-workspaces</c> directory below <see cref="DataRoot"/> is used.
+    /// </summary>
+    public string? TaskWorktreeRoot { get; set; }
+
+    /// <summary>
+    /// Gets or sets the first TCP port reserved for task development environments.
+    /// </summary>
+    public int TaskDevelopmentPortRangeStart { get; set; } = 43000;
+
+    /// <summary>
+    /// Gets or sets the inclusive final TCP port reserved for task development environments.
+    /// </summary>
+    public int TaskDevelopmentPortRangeEnd { get; set; } = 43999;
 }

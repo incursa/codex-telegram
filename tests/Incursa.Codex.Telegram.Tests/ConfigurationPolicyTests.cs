@@ -1,5 +1,6 @@
 using Incursa.Codex.Telegram.Configuration;
 using Incursa.Codex.Telegram.Options;
+using Microsoft.Extensions.Options;
 
 namespace Incursa.Codex.Telegram.Tests;
 
@@ -56,6 +57,19 @@ public sealed class ConfigurationPolicyTests
         };
 
         Assert.Empty(CodexTelegramOptionsValidator.ValidateRepository(options));
+    }
+
+    [Fact]
+    public void TaskDevelopmentPortRangeMustBeValid()
+    {
+        CodexTelegramOptions options = new();
+        options.Workspace.TaskDevelopmentPortRangeStart = 45000;
+        options.Workspace.TaskDevelopmentPortRangeEnd = 44999;
+
+        ValidateOptionsResult result = new CodexTelegramOptionsValidator().Validate(null, options);
+
+        Assert.False(result.Succeeded);
+        Assert.Contains("port range", Assert.Single(result.Failures!), StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 1.0.32 - 2026-09-15
+
+- Added a bounded task workspace allocator that provisions Git worktrees and task branches from explicit repositories and base refs.
+- Added persisted per-task development-port reservations and safe database namespace allocation with idempotent active-task creation.
+- Added clean release and explicit discard semantics for task worktrees; no existing Codex session is moved or replayed implicitly.
+
 ## 1.0.31 - 2026-09-15
 
 - Added deterministic, bounded read-only review packets that preserve Codex thread/turn provenance while redacting absolute and unsupported file evidence.
