@@ -157,7 +157,24 @@ internal sealed record CodexThreadGoalVm(
 /// <param name="RateLimits">Reported Codex rate-limit buckets.</param>
 internal sealed record CodexAccountUsageVm(
     DateTimeOffset RetrievedAtUtc,
-    IReadOnlyList<CodexRateLimitSnapshotVm> RateLimits);
+    IReadOnlyList<CodexRateLimitSnapshotVm> RateLimits)
+{
+    /// <summary>
+    /// Gets timestamped samples retained by the host for compact usage charts.
+    /// </summary>
+    public IReadOnlyList<CodexAccountUsageSampleVm> History { get; init; } = Array.Empty<CodexAccountUsageSampleVm>();
+}
+
+/// <summary>
+/// One retained observation for one account quota window.
+/// </summary>
+internal sealed record CodexAccountUsageSampleVm(
+    string? LimitId,
+    string Window,
+    int UsedPercent,
+    DateTimeOffset ObservedAtUtc,
+    DateTimeOffset? ResetsAtUtc,
+    long? WindowDurationMinutes);
 
 /// <summary>
 /// One Codex metering bucket containing short and long window usage.
@@ -420,7 +437,18 @@ internal sealed record CodexActiveTurnStateVm(
     string TurnId,
     DateTimeOffset StartedAt,
     DateTimeOffset UpdatedAt,
-    CodexTimelineEntryVm? LastEvent);
+    CodexTimelineEntryVm? LastEvent)
+{
+    /// <summary>
+    /// Gets the model used by the active turn, when the host recorded it.
+    /// </summary>
+    public string? Model { get; init; }
+
+    /// <summary>
+    /// Gets the thinking effort used by the active turn, when recorded.
+    /// </summary>
+    public string? ReasoningEffort { get; init; }
+}
 
 /// <summary>
 /// Mutable request payload for creating or updating Codex thread context.

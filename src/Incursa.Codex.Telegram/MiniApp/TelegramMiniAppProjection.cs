@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using Incursa.Codex.Telegram.Models;
 using Incursa.Codex.Telegram.Services;
+using Incursa.OpenAI.Codex;
 
 namespace Incursa.Codex.Telegram.MiniApp;
 
@@ -12,6 +13,107 @@ namespace Incursa.Codex.Telegram.MiniApp;
 /// </summary>
 internal static class TelegramMiniAppProjection
 {
+    public static TelegramMiniAppCurrentSessionVm ToCurrentSessionViewModel(
+        TelegramMiniAppThreadVm thread,
+        CodexActiveTurnStateVm? activeTurn,
+        CodexSessionModelSettings? settings,
+        CodexThreadGoalVm? goal,
+        bool disconnected,
+        DateTimeOffset observedAtUtc)
+    {
+        ArgumentNullException.ThrowIfNull(thread);
+
+        string? effectiveModel = ResolveEffectiveModel(settings);
+        string? effectiveEffort = ResolveEffectiveEffort(settings, effectiveModel);
+        (string activityStatus, string? description) = ResolveActivity(thread, activeTurn, disconnected);
+        return new TelegramMiniAppCurrentSessionVm(
+            thread.Id,
+            thread.Name ?? "Unnamed session",
+            DirectoryLabel(thread.WorkingDirectory),
+            thread.WorkingDirectory,
+            thread.LifecycleState,
+            activityStatus,
+            description,
+            activeTurn?.StartedAt,
+            activeTurn is null ? 0 : Math.Max(0, (int)(observedAtUtc - activeTurn.StartedAt).TotalSeconds),
+            activeTurn?.Model ?? effectiveModel,
+            activeTurn?.ReasoningEffort ?? effectiveEffort,
+            effectiveModel,
+            effectiveEffort,
+            settings?.AvailableModels.Select(ToModelOption).ToArray() ?? [],
+            goal);
+    }
+
+    private static (string Status, string? Description) ResolveActivity(
+        TelegramMiniAppThreadVm thread,
+        CodexActiveTurnStateVm? activeTurn,
+        bool disconnected)
+    {
+        if (disconnected)
+        {
+            return ("Disconnected", "Communication with the Codex runtime is unavailable.");
+        }
+
+        CodexTimelineEntryVm? entry = activeTurn?.LastEvent;
+        if (activeTurn is null)
+        {
+            return (thread.AttentionKind == "waiting-for-input" ? "Waiting for you" : "Ready", null);
+        }
+
+        string type = entry?.Type ?? string.Empty;
+        string status = type.Contains("requestUserInput", StringComparison.OrdinalIgnoreCase)
+            ? "Waiting for you"
+            : type.Contains("commandExecution", StringComparison.OrdinalIgnoreCase)
+                || type.Contains("shell", StringComparison.OrdinalIgnoreCase)
+                || type.Contains("terminal", StringComparison.OrdinalIgnoreCase)
+                ? "Running a command"
+                : type.Contains("agentMessage", StringComparison.OrdinalIgnoreCase)
+                    || type.Contains("finalResponse", StringComparison.OrdinalIgnoreCase)
+                    ? "Generating response"
+                    : type.Contains("reasoning", StringComparison.OrdinalIgnoreCase)
+                        ? "Thinking"
+                        : "Working";
+        string? description = entry?.Body ?? entry?.Subtitle ?? entry?.Title;
+        return (status, Limit(description, 240));
+    }
+
+    private static TelegramMiniAppModelOptionVm ToModelOption(CodexModelVm model)
+        => new(
+            model.Id,
+            model.DisplayName,
+            model.Description,
+            model.DefaultReasoningEffort.ToString(),
+            model.SupportedEfforts
+                .Where(effort => effort is not CodexReasoningEffort.None)
+                .Select(effort => effort.ToString())
+                .ToArray(),
+            model.IsDefault,
+            model.Hidden,
+            model.AvailabilityMessage);
+
+    private static string? ResolveEffectiveModel(CodexSessionModelSettings? settings)
+        => settings?.Model
+            ?? settings?.AvailableModels.FirstOrDefault(model => model.IsDefault)?.Id
+            ?? settings?.AvailableModels.FirstOrDefault()?.Id;
+
+    private static string? ResolveEffectiveEffort(CodexSessionModelSettings? settings, string? model)
+    {
+        if (!string.IsNullOrWhiteSpace(settings?.ReasoningEffort))
+        {
+            return settings.ReasoningEffort;
+        }
+
+        CodexModelVm? selected = settings?.AvailableModels.FirstOrDefault(candidate => string.Equals(candidate.Id, model, StringComparison.OrdinalIgnoreCase));
+        if (selected?.DefaultReasoningEffort is { } effort && effort is not CodexReasoningEffort.None)
+        {
+            return effort.ToString();
+        }
+
+        return settings?.AvailableReasoningEfforts.FirstOrDefault() is { } available
+            ? available.ToString()
+            : null;
+    }
+
     public static TelegramMiniAppThreadVm ToThreadViewModel(
         CodexThreadListItemVm thread,
         CodexActiveTurnStateVm? activeTurn)
@@ -618,3 +720,36 @@ internal sealed record TelegramMiniAppTimelineEntryVm(
     string? Body,
     string Severity,
     DateTimeOffset Timestamp);
+
+internal sealed record TelegramMiniAppCurrentSessionVm(
+    string Id,
+    string Name,
+    string? Repository,
+    string? WorkingDirectory,
+    string LifecycleState,
+    string ActivityStatus,
+    string? ActivityDescription,
+    DateTimeOffset? ActivityStartedAtUtc,
+    int ActivityElapsedSeconds,
+    string? CurrentModel,
+    string? CurrentThinkingEffort,
+    string? NextModel,
+    string? NextThinkingEffort,
+    IReadOnlyList<TelegramMiniAppModelOptionVm> Models,
+    CodexThreadGoalVm? Goal);
+
+internal sealed record TelegramMiniAppModelOptionVm(
+    string Id,
+    string DisplayName,
+    string Description,
+    string DefaultThinkingEffort,
+    IReadOnlyList<string> SupportedThinkingEfforts,
+    bool IsDefault,
+    bool Hidden,
+    string? AvailabilityMessage);
+
+internal sealed record TelegramMiniAppGlobalInstructionsVm(
+    string Text,
+    DateTimeOffset? UpdatedAtUtc,
+    bool HasSavedValue,
+    string ApplicationState);

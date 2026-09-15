@@ -1373,7 +1373,11 @@ internal sealed class CodexTurnExecutionCoordinator
                 TurnId,
                 StartedAt,
                 UpdatedAt,
-                LastEvent);
+                LastEvent)
+            {
+                Model = TurnOptions?.Model,
+                ReasoningEffort = TurnOptions?.Effort?.ToString(),
+            };
         }
     }
 

@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#f7f8fb">
-  <title>Codex Telegram</title>
+  <meta name="theme-color" content="#0c141b">
+  <title>Codex session</title>
   <link rel="stylesheet" href="/vendor/incursa-ui-kit/dist/inc-design-language.css">
   <link rel="stylesheet" href="/vendor/incursa-ui-kit/dist/web-components/style.css">
   <link rel="stylesheet" href="/app.css">
@@ -12,203 +12,68 @@
   <script type="module" src="/vendor/incursa-ui-kit/dist/web-components/index.js"></script>
 </head>
 <body>
-  <inc-app-shell>
-    <inc-navbar class="app-navbar">
-      <a class="brand" href="/" aria-label="Codex Telegram home">
-        <span class="brand-mark">C</span>
-        <span>Codex Telegram</span>
-      </a>
-      <div class="navbar-actions">
-        <inc-badge id="connection-badge" variant="neutral">Connecting</inc-badge>
-        <inc-badge id="viewport-badge" variant="info" hidden>Webview</inc-badge>
-        <button id="fullscreen-button" class="secondary-button" type="button" hidden>Fullscreen</button>
-        <button id="refresh-button" class="icon-button" type="button" aria-label="Refresh dashboard" title="Refresh dashboard">↻</button>
+  <div class="app-frame">
+    <header class="topbar">
+      <a class="brand" href="/" aria-label="Codex Telegram home"><span class="brand-mark" aria-hidden="true">C</span><span id="repository-label">Codex session</span></a>
+      <div class="topbar-actions">
+        <span id="connection-badge" class="connection-badge" data-variant="neutral"><span class="connection-dot"></span>Connecting</span>
+        <span id="viewport-badge" class="viewport-badge" hidden>Webview</span>
+        <button id="fullscreen-button" class="quiet-button" type="button" hidden>Fullscreen</button>
+        <button id="global-instructions-button" class="quiet-button" type="button">Global instructions</button>
+        <button id="refresh-button" class="icon-button" type="button" aria-label="Refresh session" title="Refresh session">↻</button>
       </div>
-    </inc-navbar>
+    </header>
 
-    <inc-page>
-      <inc-page-header>
-        <div class="page-heading">
-          <div>
-            <p class="eyebrow">Codex supervision</p>
-            <h1>Your Codex control room</h1>
-            <p class="page-summary">See what needs you, inspect the latest work, and return to Telegram when a decision belongs in the conversation.</p>
-          </div>
-          <button id="open-chat-button" class="secondary-button" type="button">Return to chat</button>
-        </div>
-      </inc-page-header>
-
+    <main class="main-content">
       <div id="notice" class="notice" role="status" hidden></div>
-
-      <inc-card id="browser-pairing-card" class="dashboard-card pairing-card" hidden>
-        <div class="card-heading">
-          <div>
-            <h2>Connect this browser</h2>
-            <p>Approve this short-lived, read-only browser session from the bot's private Telegram chat.</p>
-          </div>
-          <inc-badge variant="warning">Pairing</inc-badge>
-        </div>
+      <section id="browser-pairing-card" class="pairing-panel" hidden>
+        <div><p class="section-kicker">Browser access</p><h2>Connect this browser</h2><p>Approve this short-lived, read-only browser session from the bot's private Telegram chat.</p></div>
         <div class="pairing-code" id="browser-pairing-code">—</div>
-        <p class="pairing-instructions" id="browser-pairing-instructions">Send the code to your bot as <code>/pair …</code>.</p>
+        <p id="browser-pairing-instructions" class="supporting-copy">Send the code to your bot as <code>/pair …</code>.</p>
         <button id="browser-pairing-retry" class="secondary-button" type="button">Get a new code</button>
-      </inc-card>
-
-      <inc-card class="dashboard-card attention-card">
-        <div class="card-heading">
-          <div>
-            <h2>Needs attention</h2>
-            <p>Questions, failures, and unavailable runtime state that may need your decision.</p>
-          </div>
-          <inc-badge id="attention-badge" variant="neutral">Clear</inc-badge>
-        </div>
-        <div id="attention-list" class="attention-list" aria-live="polite">
-          <div class="loading-row">Checking Codex…</div>
-        </div>
-      </inc-card>
-
-      <section class="summary-grid" aria-label="Codex overview">
-        <inc-card class="summary-card">
-          <span class="summary-label">Runtime</span>
-          <strong id="runtime-value" class="summary-value">—</strong>
-          <span id="runtime-detail" class="summary-detail">Waiting for Codex</span>
-        </inc-card>
-        <inc-card class="summary-card">
-          <span class="summary-label">Active session</span>
-          <strong id="session-value" class="summary-value">—</strong>
-          <span id="session-detail" class="summary-detail">No session selected</span>
-        </inc-card>
-        <inc-card class="summary-card">
-          <span class="summary-label">Projects</span>
-          <strong id="project-value" class="summary-value">—</strong>
-          <span class="summary-detail">Known working directories</span>
-        </inc-card>
-        <inc-card class="summary-card">
-          <span class="summary-label">Usage</span>
-          <strong id="usage-value" class="summary-value">—</strong>
-          <span id="usage-detail" class="summary-detail">Account window</span>
-        </inc-card>
       </section>
 
-      <div class="dashboard-grid">
-        <inc-card class="dashboard-card sessions-card">
-          <div class="card-heading">
-            <div>
-              <h2>Recent activity</h2>
-              <p>Read-only activity from threads available to your allowlisted Telegram account.</p>
-            </div>
-            <inc-badge variant="info">Read only</inc-badge>
-          </div>
-          <div id="sessions-list" class="session-list" aria-live="polite">
-            <div class="loading-row">Loading sessions…</div>
-          </div>
-        </inc-card>
+      <section id="empty-state" class="empty-state" hidden>
+        <div class="empty-icon" aria-hidden="true">⌂</div><h1>No active session</h1><p>Open a session in Telegram to use its control panel.</p>
+        <button id="empty-global-button" class="secondary-button" type="button">Global instructions</button>
+      </section>
 
-        <inc-card class="dashboard-card workspace-card">
-          <div class="card-heading">
-            <div>
-              <h2>Workspace</h2>
-              <p>Your saved project context and current routing.</p>
-            </div>
+      <section id="session-screen" hidden aria-labelledby="session-heading">
+        <div class="session-header">
+          <div class="session-identity">
+            <p class="section-kicker">Session</p>
+            <form id="session-name-form" class="session-name-form"><label class="sr-only" for="session-name-input">Session name</label><input id="session-name-input" name="name" maxlength="160" autocomplete="off"><button class="edit-button" type="submit" aria-label="Save session name" title="Save session name">↗</button></form>
+            <h1 id="session-heading" class="sr-only">Current Codex session</h1>
+            <div id="session-repository" class="repository-line"><span aria-hidden="true">⌂</span><span>—</span></div><div id="session-path" class="session-path">—</div>
           </div>
-          <div id="workspace-list" class="workspace-list" aria-live="polite">
-            <div class="loading-row">Loading workspace…</div>
-          </div>
-        </inc-card>
+          <div class="session-switch-wrap"><button id="session-switch-button" class="secondary-button" type="button" aria-expanded="false" aria-controls="session-switch-list">⇄ <span>Switch session</span>⌄</button><div id="session-switch-list" class="session-switch-list" hidden></div></div>
+        </div>
 
-        <inc-card class="dashboard-card supervision-card">
-          <div class="card-heading">
-            <div>
-              <h2>Durable work</h2>
-              <p>Application task and run state, kept separate from Codex thread identity.</p>
-            </div>
-            <inc-badge variant="info">Read only</inc-badge>
-          </div>
-          <div id="supervision-list" class="supervision-list" aria-live="polite">
-            <div class="loading-row">Loading durable work…</div>
-          </div>
-        </inc-card>
+        <div id="activity-strip" class="activity-strip" data-state="ready" aria-live="polite"><div class="activity-heading"><span class="activity-dot" aria-hidden="true"></span><strong id="activity-status">Ready</strong><span aria-hidden="true">·</span><span id="activity-elapsed">—</span></div><div id="activity-description" class="activity-description">Waiting for the next turn</div></div>
 
-        <inc-card class="dashboard-card workers-card">
-          <div class="card-heading">
-            <div>
-              <h2>Workers</h2>
-              <p>Registered execution workers and readiness state.</p>
-            </div>
-            <inc-badge variant="info">Drain / resume</inc-badge>
-          </div>
-          <div id="workers-list" class="workers-list" aria-live="polite">
-            <div class="loading-row">Loading workers…</div>
-          </div>
-        </inc-card>
+        <div class="control-grid">
+          <section class="control-panel goal-panel" aria-labelledby="goal-title">
+            <div class="panel-heading"><div><h2 id="goal-title">Goal</h2><p>What this session is trying to accomplish.</p></div><span id="goal-state" class="state-label">No goal</span></div>
+            <form id="goal-form"><label class="sr-only" for="goal-input">Session goal</label><textarea id="goal-input" name="objective" rows="4" maxlength="4000" placeholder="Set a goal for this session"></textarea><div class="form-actions"><button id="goal-save-button" class="primary-button" type="submit">Save</button><button id="goal-clear-button" class="secondary-button" type="button">Clear</button></div></form>
+            <div id="goal-confirmation" class="confirmation-line" hidden></div><div class="goal-secondary-actions"><button id="goal-status-button" class="text-button" type="button" hidden></button></div>
+          </section>
 
-        <inc-card class="dashboard-card rollouts-card">
-          <div class="card-heading">
-            <div>
-              <h2>Fleet rollouts</h2>
-              <p>Advance one drained worker at a time; the external installer activates packages.</p>
-            </div>
-            <inc-badge variant="info">Staged</inc-badge>
-          </div>
-          <form id="rollout-start-form" class="rollout-start-form">
-            <label>Target version <input id="rollout-version" name="version" maxlength="40" autocomplete="off" placeholder="1.0.49" required></label>
-            <label>Package SHA-256 <input id="rollout-sha256" name="sha256" maxlength="64" inputmode="text" autocomplete="off" placeholder="64 hex characters" required></label>
-            <label>Required capabilities <input id="rollout-capabilities" name="capabilities" maxlength="512" autocomplete="off" placeholder="codex-execution,task-workspaces"></label>
-            <div id="rollout-workers-picker" class="rollout-workers-picker"></div>
-            <button class="secondary-button" type="submit">Plan staged rollout</button>
-          </form>
-          <div id="rollouts-list" class="rollouts-list" aria-live="polite">
-            <div class="loading-row">Loading fleet rollouts…</div>
-          </div>
-        </inc-card>
-      </div>
+          <section class="control-panel settings-panel" aria-labelledby="settings-title">
+            <div class="panel-heading"><div><h2 id="settings-title">Model &amp; thinking</h2><p>Changes are session-specific and apply to the next turn.</p></div></div>
+            <label class="field-label" for="model-select">Model</label><select id="model-select" class="select-control" aria-describedby="settings-acceptance"></select>
+            <label class="field-label" for="effort-select">Thinking effort</label><select id="effort-select" class="select-control" aria-describedby="settings-acceptance"></select>
+            <div id="settings-acceptance" class="settings-acceptance"><span class="info-mark" aria-hidden="true">i</span><span id="settings-acceptance-text">Idle session · effective selection</span></div>
+          </section>
+        </div>
 
-      <inc-card id="detail-card" class="detail-card" hidden>
-        <div class="card-heading">
-          <div>
-            <h2 id="detail-title">Session details</h2>
-            <p id="detail-subtitle"></p>
-          </div>
-          <div class="detail-actions">
-            <inc-badge id="detail-status" variant="neutral">Loading</inc-badge>
-            <button id="close-detail-button" class="secondary-button" type="button">Close</button>
-          </div>
-        </div>
-        <div id="detail-summary" class="detail-summary-grid"></div>
-        <div class="detail-section review-packet-section">
-          <div class="review-packet-heading">
-            <div>
-              <h3>Review packet</h3>
-            <p>Bounded evidence from Codex. Acknowledge what you reviewed or continue in Telegram.</p>
-          </div>
-            <inc-badge id="review-packet-status" variant="info">Evidence</inc-badge>
-          </div>
-          <div id="detail-review-packet" class="review-packet" aria-live="polite"></div>
-          <div id="handoff-result" class="handoff-result" aria-live="polite" hidden></div>
-        </div>
-        <div class="detail-section">
-          <h3>Recent timeline</h3>
-          <div id="detail-timeline" class="timeline-list" aria-live="polite"></div>
-        </div>
-        <div class="detail-section">
-          <h3>Changes for review</h3>
-          <div id="detail-changes" class="change-list" aria-live="polite"></div>
-        </div>
-        <div class="detail-section">
-          <h3>Artifacts</h3>
-          <div id="detail-artifacts" class="artifact-list" aria-live="polite"></div>
-        </div>
-        <div class="detail-section">
-          <h3>Turns</h3>
-          <div id="detail-turns" class="turn-list" aria-live="polite"></div>
-        </div>
-      </inc-card>
+        <section class="control-panel usage-panel" aria-labelledby="usage-title"><div class="panel-heading usage-heading"><div><h2 id="usage-title">Account usage</h2><p>Quota usage for the connected Codex account. Windows are reported by the runtime.</p></div><span id="usage-retrieved" class="panel-meta">—</span></div><div id="usage-list" class="usage-list"></div></section>
+        <button id="global-card-button" class="global-link" type="button"><span class="global-link-icon" aria-hidden="true">▤</span><span class="global-link-copy"><strong>Global instructions</strong><span>Applies to new sessions; current session adopts them at the next safe boundary.</span></span><span class="global-link-arrow" aria-hidden="true">›</span></button>
+      </section>
 
-      <footer class="app-footer">
-        <span>Incursa Codex Telegram</span>
-        <span>Private, local companion surface</span>
-      </footer>
-    </inc-page>
-  </inc-app-shell>
+      <aside id="global-drawer" class="global-drawer" hidden aria-labelledby="global-drawer-title"><div class="drawer-heading"><div><p class="section-kicker">Shared profile</p><h2 id="global-drawer-title">Global instructions</h2><p>These instructions affect all new sessions on this configured host. An existing session adopts saved changes at its next supported safe boundary.</p></div><button id="global-close-button" class="icon-button" type="button" aria-label="Close global instructions">×</button></div><label class="sr-only" for="global-instructions-input">Global instructions</label><textarea id="global-instructions-input" rows="9" maxlength="8000" placeholder="Keep responses concise. Report what changed, what you tested, and anything unresolved."></textarea><div class="form-actions"><button id="global-save-button" class="primary-button" type="button">Save</button><button id="global-clear-button" class="secondary-button" type="button">Clear</button></div><div id="global-application-state" class="drawer-note">Saved instructions are not a chat message and will not interrupt work.</div></aside>
+    </main>
+    <footer class="app-footer"><span>Incursa Codex Telegram</span><span>Telegram is the conversation</span></footer>
+  </div>
   <script src="/app.js"></script>
 </body>
 </html>

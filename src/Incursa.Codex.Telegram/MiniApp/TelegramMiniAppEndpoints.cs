@@ -21,6 +21,7 @@ internal static class TelegramMiniAppEndpoints
         app.MapGet("/api/mini-app/pairing/status", GetBrowserPairingStatusAsync);
         app.MapGet("/api/mini-app/bootstrap", GetBootstrapAsync);
         app.MapGet("/api/mini-app/threads/{threadId}", GetThreadAsync);
+        TelegramMiniAppSessionActionEndpoints.Map(app);
         TelegramMiniAppTaskActionEndpoints.Map(app);
         TelegramMiniAppWorkerActionEndpoints.Map(app);
         TelegramMiniAppRolloutEndpoints.Map(app);
@@ -64,6 +65,8 @@ internal static class TelegramMiniAppEndpoints
         ICodexGateway gateway,
         ICodexTurnExecutionCoordinator turnCoordinator,
         ICodexAccountUsageService usageService,
+        ICodexSessionManager sessionManager,
+        ICodexGlobalInstructionsStore globalInstructionsStore,
         ICodexSupervisionLedger supervisionLedger,
         ITelegramMiniAppBrowserPairingStore pairingStore,
         ITelegramMiniAppAcknowledgementStore acknowledgementStore,
@@ -88,7 +91,7 @@ internal static class TelegramMiniAppEndpoints
             return Results.Unauthorized();
         }
 
-        TelegramConversationScope scope = new(identity.UserId, null);
+        TelegramConversationScope scope = new(identity.ChatId ?? identity.UserId, null);
         string? activeSessionId = null;
         string? activeProject = null;
         string? stateError = null;
@@ -213,6 +216,44 @@ internal static class TelegramMiniAppEndpoints
             .ToArray();
 
         DateTimeOffset serverTime = DateTimeOffset.UtcNow;
+        TelegramMiniAppCurrentSessionVm? currentSession = null;
+        string? currentSessionError = null;
+        if (!string.IsNullOrWhiteSpace(activeSessionId))
+        {
+            TelegramMiniAppThreadVm? activeThread = projectedThreads.FirstOrDefault(thread =>
+                string.Equals(thread.Id, activeSessionId, StringComparison.Ordinal));
+            if (activeThread is null)
+            {
+                currentSessionError = "The conversation points to a session that is not available.";
+            }
+            else
+            {
+                try
+                {
+                    CodexSessionModelSettings settings = await sessionManager
+                        .GetModelSettingsAsync(activeThread.Id, cancellationToken)
+                        .ConfigureAwait(false);
+                    CodexThreadGoalVm? goal = await sessionManager
+                        .GetGoalAsync(activeThread.Id, cancellationToken)
+                        .ConfigureAwait(false);
+                    currentSession = TelegramMiniAppProjection.ToCurrentSessionViewModel(
+                        activeThread,
+                        turnCoordinator.TryGetActiveTurnState(activeThread.Id),
+                        settings,
+                        goal,
+                        runtimeError is not null,
+                        serverTime);
+                }
+                catch (Exception exception) when (exception is not OperationCanceledException)
+                {
+                    currentSessionError = "The active session controls are currently unavailable.";
+                }
+            }
+        }
+
+        CodexGlobalInstructionsSnapshot globalInstructions = await globalInstructionsStore
+            .GetAsync(cancellationToken)
+            .ConfigureAwait(false);
         return Results.Ok(new TelegramMiniAppBootstrapVm(
             new TelegramMiniAppUserVm(identity.UserId, identity.Username, identity.FirstName, identity.LastName),
             activeSessionId,
@@ -235,6 +276,12 @@ internal static class TelegramMiniAppEndpoints
             WorkersError = workersError,
             Rollouts = rollouts,
             RolloutsError = rolloutsError,
+            CurrentSession = currentSession,
+            CurrentSessionError = currentSessionError,
+            GlobalInstructions = TelegramMiniAppEndpointsHelpers.ToGlobalInstructionsViewModel(
+                globalInstructions,
+                currentSession is not null,
+                currentSession?.ActivityStatus is not null and not "Ready"),
         });
     }
 
@@ -491,6 +538,12 @@ internal sealed record TelegramMiniAppBootstrapVm(
     public IReadOnlyList<TelegramMiniAppRolloutVm> Rollouts { get; init; } = Array.Empty<TelegramMiniAppRolloutVm>();
 
     public string? RolloutsError { get; init; }
+
+    public TelegramMiniAppCurrentSessionVm? CurrentSession { get; init; }
+
+    public string? CurrentSessionError { get; init; }
+
+    public TelegramMiniAppGlobalInstructionsVm? GlobalInstructions { get; init; }
 }
 
 internal sealed record TelegramMiniAppProjectVm(
@@ -552,3 +605,18 @@ internal sealed record TelegramMiniAppSupervisionTaskVm(
     string? LeaseId = null,
     string? WorkspaceId = null,
     bool AttentionAcknowledged = false);
+
+internal static partial class TelegramMiniAppEndpointsHelpers
+{
+    public static TelegramMiniAppGlobalInstructionsVm ToGlobalInstructionsViewModel(
+        CodexGlobalInstructionsSnapshot snapshot,
+        bool hasCurrentSession,
+        bool currentSessionWorking)
+        => new(
+            snapshot.Text,
+            snapshot.UpdatedAtUtc,
+            snapshot.HasSavedValue,
+            hasCurrentSession && currentSessionWorking
+                ? "saved_next_safe_boundary"
+                : "saved_for_next_session_or_turn");
+}

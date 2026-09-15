@@ -4,7 +4,7 @@ Incursa Codex Telegram lets you talk to a local Codex CLI session from a private
 
 Use it when you want to start, steer, and inspect Codex work from your phone without exposing your whole machine to Telegram users.
 
-An optional, disabled-by-default Telegram Mini App companion provides a read-only Incursa UI Kit dashboard for runtime health, sessions, projects, and usage. It adapts to Telegram's compact, full-height, and true fullscreen webviews, including viewport and safe-area changes when the app is minimized or reopened. Chat remains the control surface for prompts and changes; see [getting started](docs/getting-started.md#optional-telegram-mini-app-preview) before exposing the Mini App through an HTTPS URL.
+An optional, disabled-by-default Telegram Mini App companion provides the current Telegram conversation's Codex session control panel: live status, session name, goal, model/thinking settings, account quota sparklines, and shared instructions. It adapts to Telegram's compact, full-height, and true fullscreen webviews, including viewport and safe-area changes when the app is minimized or reopened. Chat remains the conversation and approval surface; see [getting started](docs/getting-started.md#optional-telegram-mini-app-preview) before exposing the Mini App through an HTTPS URL.
 
 The broader supervision-workspace direction, authority boundaries, and staged delivery contract are documented in the [Mini App roadmap](docs/mini-app-roadmap.md).
 

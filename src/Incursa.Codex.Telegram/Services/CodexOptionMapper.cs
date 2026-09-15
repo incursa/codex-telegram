@@ -28,7 +28,8 @@ internal static class CodexOptionMapper
     public static CodexThreadOptions BuildThreadOptions(
         CodexTelegramOptions options,
         CodexThreadContextSubmission submission,
-        CodexThreadManifestRecord? manifest = null)
+        CodexThreadManifestRecord? manifest = null,
+        string? globalInstructions = null)
     {
         CodexContextOptions defaults = options.Context;
         string? approvalMode = submission.ApprovalMode ?? manifest?.ApprovalMode ?? defaults.ApprovalMode;
@@ -38,7 +39,9 @@ internal static class CodexOptionMapper
         {
             Config = BuildConfigOverrides(sandbox, approvalMode, enableDefaultModeRequestUserInput),
             ApprovalsReviewer = ParseEnum<CodexApprovalsReviewer>(submission.ApprovalsReviewer ?? manifest?.ApprovalsReviewer ?? defaults.ApprovalsReviewer),
-            BaseInstructions = submission.BaseInstructions ?? manifest?.BaseInstructions ?? defaults.BaseInstructions,
+            BaseInstructions = CombineInstructions(
+                globalInstructions ?? defaults.BaseInstructions,
+                submission.BaseInstructions ?? manifest?.BaseInstructions),
             DeveloperInstructions = submission.DeveloperInstructions ?? manifest?.DeveloperInstructions ?? defaults.DeveloperInstructions,
             Ephemeral = submission.Ephemeral ?? manifest?.Ephemeral ?? defaults.Ephemeral,
             Model = submission.Model ?? manifest?.Model ?? defaults.Model,
@@ -203,6 +206,17 @@ internal static class CodexOptionMapper
 
     private static string? NormalizePath(string? path)
         => string.IsNullOrWhiteSpace(path) ? null : Path.GetFullPath(path);
+
+    private static string? CombineInstructions(string? globalInstructions, string? sessionInstructions)
+    {
+        string? global = string.IsNullOrWhiteSpace(globalInstructions) ? null : globalInstructions.Trim();
+        string? session = string.IsNullOrWhiteSpace(sessionInstructions) ? null : sessionInstructions.Trim();
+        return global is null
+            ? session
+            : session is null || string.Equals(global, session, StringComparison.Ordinal)
+                ? global
+                : $"{global}{Environment.NewLine}{Environment.NewLine}Session or repository instructions:{Environment.NewLine}{session}";
+    }
 
     private static TEnum? ParseEnum<TEnum>(string? value)
         where TEnum : struct, Enum

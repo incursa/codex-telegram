@@ -21,7 +21,13 @@ The roadmap is delivered in independently verifiable releases:
 
 ## Current release
 
-The current Mini App foundation is the first R2/R4-compatible evidence and decision slice:
+The current Mini App foundation is the current-session control-panel slice, alongside the earlier R2/R4-compatible evidence and decision capabilities:
+
+- The primary screen opens directly on the session selected in the Telegram conversation. It reports observed activity with conservative `Thinking`, `Generating response`, `Running a command`, `Waiting for you`, `Working`, `Ready`, and `Disconnected` states; it does not show a prompt composer or alternate conversation workflow.
+- The session panel exposes Codex-backed name, goal, model, and thinking controls. Active-turn model/thinking changes are explicitly next-turn settings, while goal writes return Codex acceptance evidence. Model and reasoning choices come from the owning worker's catalog rather than hard-coded UI options.
+- Account quota windows are labeled `Account usage`. The host persists de-duplicated timestamped observations for sparklines, preserves reported window durations/reset boundaries, and never sums readings from workers sharing an account. Global instructions are a separate shared profile; new sessions receive the latest version and existing sessions adopt it only at the next supported safe boundary.
+
+The earlier evidence and decision capabilities remain available as secondary surfaces:
 
 - `Needs attention` is derived from existing Codex thread and active-turn state. It reports operator input requests, failures, unavailable sessions, and runtime failures with deterministic ordering.
 - `Recent activity` and task detail use stable Codex thread identity. Detail includes bounded turns, timeline entries, Codex-reported file diffs, and redacted artifact metadata.

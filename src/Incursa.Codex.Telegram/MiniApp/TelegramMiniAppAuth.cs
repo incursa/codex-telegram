@@ -15,7 +15,8 @@ internal sealed record TelegramMiniAppIdentity(
     long UserId,
     string? Username,
     string? FirstName,
-    string? LastName);
+    string? LastName,
+    long? ChatId = null);
 
 /// <summary>
 /// Validates Telegram Mini App initialization data before serving private data.
@@ -123,7 +124,8 @@ internal sealed class TelegramMiniAppAuth
                 userId,
                 GetOptionalString(user, "username"),
                 GetOptionalString(user, "first_name"),
-                GetOptionalString(user, "last_name"));
+                GetOptionalString(user, "last_name"),
+                GetOptionalChatId(fields));
             failureReason = string.Empty;
             return true;
         }
@@ -177,4 +179,25 @@ internal sealed class TelegramMiniAppAuth
         => user.TryGetProperty(propertyName, out JsonElement value) && value.ValueKind == JsonValueKind.String
             ? value.GetString()
             : null;
+
+    private static long? GetOptionalChatId(IReadOnlyDictionary<string, string> fields)
+    {
+        if (!fields.TryGetValue("chat", out string? chatJson) || string.IsNullOrWhiteSpace(chatJson))
+        {
+            return null;
+        }
+
+        try
+        {
+            using JsonDocument document = JsonDocument.Parse(chatJson);
+            return document.RootElement.TryGetProperty("id", out JsonElement idElement)
+                && idElement.TryGetInt64(out long chatId)
+                ? chatId
+                : null;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
 }

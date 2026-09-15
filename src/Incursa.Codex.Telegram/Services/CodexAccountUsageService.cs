@@ -24,18 +24,22 @@ internal sealed class CodexAccountUsageService : ICodexAccountUsageService
 {
     private readonly CodexClientOptions _options;
     private readonly TimeProvider _timeProvider;
+    private readonly CodexAccountUsageHistoryStore? _historyStore;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="CodexAccountUsageService"/> class.
     /// </summary>
     /// <param name="options">Codex client options used by the SDK client.</param>
     /// <param name="timeProvider">Clock used to stamp returned snapshots.</param>
+    /// <param name="historyStore">Optional bounded store for chart samples.</param>
     public CodexAccountUsageService(
         IOptions<CodexClientOptions> options,
-        TimeProvider timeProvider)
+        TimeProvider timeProvider,
+        CodexAccountUsageHistoryStore? historyStore = null)
     {
         _options = options.Value;
         _timeProvider = timeProvider;
+        _historyStore = historyStore;
     }
 
     /// <inheritdoc />
@@ -43,7 +47,27 @@ internal sealed class CodexAccountUsageService : ICodexAccountUsageService
     {
         await using CodexClient client = new(_options);
         CodexAccountRateLimitsResult result = await client.GetAccountRateLimitsAsync(cancellationToken).ConfigureAwait(false);
-        return ToUsageVm(result, _timeProvider.GetUtcNow());
+        CodexAccountUsageVm usage = ToUsageVm(result, _timeProvider.GetUtcNow());
+        if (_historyStore is null)
+        {
+            return usage;
+        }
+
+        try
+        {
+            return usage with
+            {
+                History = await _historyStore.AppendAsync(usage, cancellationToken).ConfigureAwait(false),
+            };
+        }
+        catch (IOException)
+        {
+            return usage;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return usage;
+        }
     }
 
     /// <summary>

@@ -24,6 +24,19 @@ public sealed class TelegramMiniAppAuthTests
     }
 
     [Fact]
+    public void PreservesSignedChatContextWhenPresent()
+    {
+        DateTimeOffset now = DateTimeOffset.UtcNow;
+        TelegramMiniAppAuth auth = CreateAuth(now);
+        DefaultHttpContext context = CreateContext(BuildInitData("secret-token", now, 12345, -1009876));
+
+        bool result = auth.TryAuthenticate(context.Request, out TelegramMiniAppIdentity identity, out string failureReason);
+
+        Assert.True(result, failureReason);
+        Assert.Equal(-1009876, identity.ChatId);
+    }
+
+    [Fact]
     public void RejectsTamperedSignedData()
     {
         DateTimeOffset now = DateTimeOffset.UtcNow;
@@ -102,17 +115,24 @@ public sealed class TelegramMiniAppAuthTests
         return context;
     }
 
-    private static string BuildInitData(string token, DateTimeOffset authenticatedAt, long userId)
+    private static string BuildInitData(string token, DateTimeOffset authenticatedAt, long userId, long? chatId = null)
     {
         string userJson = $"{{\"id\":{userId},\"first_name\":\"Samuel\",\"username\":\"samuel\"}}";
+        string? chatJson = chatId.HasValue ? $"{{\"id\":{chatId.Value},\"type\":\"supergroup\"}}" : null;
+        List<string> fields =
+        [
+            $"auth_date={authenticatedAt.ToUnixTimeSeconds()}",
+            "query_id=query-123",
+            $"user={userJson}",
+        ];
+        if (chatJson is not null)
+        {
+            fields.Add($"chat={chatJson}");
+        }
+
         string dataCheckString = string.Join(
             '\n',
-            new[]
-            {
-                $"auth_date={authenticatedAt.ToUnixTimeSeconds()}",
-                "query_id=query-123",
-                $"user={userJson}",
-            }.OrderBy(value => value, StringComparer.Ordinal));
+            fields.OrderBy(value => value, StringComparer.Ordinal));
 
         byte[] secretKey;
         using (HMACSHA256 secretHmac = new(Encoding.UTF8.GetBytes("WebAppData")))
@@ -126,7 +146,14 @@ public sealed class TelegramMiniAppAuthTests
             hash = dataHmac.ComputeHash(Encoding.UTF8.GetBytes(dataCheckString));
         }
 
-        return $"auth_date={authenticatedAt.ToUnixTimeSeconds()}&query_id=query-123&user={Uri.EscapeDataString(userJson)}&hash={Convert.ToHexString(hash).ToLowerInvariant()}";
+        string encodedFields = string.Join(
+            '&',
+            fields.Select(field =>
+            {
+                int separator = field.IndexOf('=');
+                return $"{field[..separator]}={Uri.EscapeDataString(field[(separator + 1)..])}";
+            }));
+        return $"{encodedFields}&hash={Convert.ToHexString(hash).ToLowerInvariant()}";
     }
 
     private sealed class FixedTimeProvider(DateTimeOffset now) : TimeProvider

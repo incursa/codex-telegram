@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.52 - 2026-09-15
+
+- Reframed the Telegram Mini App as the current conversation's Codex session control panel, with an explicit no-session state and no alternate prompt workflow.
+- Added observed activity status, editable session naming, Codex-backed goal lifecycle controls, next-turn model and reasoning settings, and owning-worker catalog projection.
+- Added persisted account quota history for compact usage sparklines, plus a shared global-instructions profile with explicit safe-boundary application messaging.
+- Added authenticated, conversation-scoped Mini App settings actions and documented the distinction between saved settings and runtime acceptance.
+
 ## 1.0.51 - 2026-09-15
 
 - Recovered input-bundle auto-dispatch when Codex reports that the selected thread has no rollout, replacing the stale session and retrying the bundle once.
