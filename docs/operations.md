@@ -91,6 +91,8 @@ The important local files are under `CodexTelegram:Workspace:DataRoot`:
 
 `telegram-state.json` also contains a bounded Telegram update-receipt ledger. It is transport replay protection, not proof that a Codex command executed. A completed receipt is retained for seven days; an interrupted in-flight receipt can be reclaimed after fifteen minutes. Do not edit the JSON state file while the service is running.
 
+`codex-supervision-state.json` contains the separate bounded supervision projection for prompt commands: application-owned task, run, and command IDs, Codex thread/turn provenance, lifecycle states, and safe outcome codes. It does not contain prompt or response bodies, attachment paths, credentials, or authorization headers. `Unknown` means that an external Codex outcome needs explicit reconciliation; it is not a successful completion and is never silently replayed. The ledger is scoped by Codex thread plus Telegram user and conversation, and should be backed up with the rest of the data root. Do not edit it while the service is running.
+
 Back up that folder before moving machines or changing the data root.
 
 Transient Telegram audio, downloaded attachments, and outbound media use an instance-specific temporary directory when `DataRoot` or `InstanceId` is configured. The legacy shared temporary location is retained only when neither selector is supplied.

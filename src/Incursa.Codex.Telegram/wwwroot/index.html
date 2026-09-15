@@ -101,6 +101,19 @@
             <div class="loading-row">Loading workspace…</div>
           </div>
         </inc-card>
+
+        <inc-card class="dashboard-card supervision-card">
+          <div class="card-heading">
+            <div>
+              <h2>Durable work</h2>
+              <p>Application task and run state, kept separate from Codex thread identity.</p>
+            </div>
+            <inc-badge variant="info">Read only</inc-badge>
+          </div>
+          <div id="supervision-list" class="supervision-list" aria-live="polite">
+            <div class="loading-row">Loading durable work…</div>
+          </div>
+        </inc-card>
       </div>
 
       <inc-card id="detail-card" class="detail-card" hidden>

@@ -23,7 +23,7 @@ related_artifacts:
 
 Build the supervision workspace as a local control-plane projection around the existing Telegram state and Codex thread-manifest boundaries. Keep Telegram and Codex authoritative for their existing responsibilities. Introduce durable application-owned identity only through versioned, bounded records that reference Codex provenance; do not create a competing transcript or task database.
 
-The first implementation slice persists Telegram `UpdateId` receipts in `telegram-state.json`. It protects the update boundary without treating a transport ID as the future application-owned `CommandId`.
+The first implementation slice persists Telegram `UpdateId` receipts in `telegram-state.json`. The next slice adds a separate, bounded supervision ledger for application-owned `TaskId`, `RunId`, and `CommandId` records. It protects the command boundary without treating a transport ID as the application-owned `CommandId`.
 
 ## Boundaries
 
@@ -59,7 +59,17 @@ Conversation -> Task -> Run -> Codex Thread/Turn
 
 The receipt list is capped at 2,000 entries. The state schema version is advanced to 2, while existing state files with no `SchemaVersion` or `UpdateReceipts` property deserialize with compatible defaults and continue to work. A malformed state file remains a startup/read failure; the host does not guess or overwrite operator state.
 
-This provides at-most-once handling for completed or concurrently delivered update IDs within the retention/lease contract. It does not claim exactly-once behavior across an external Telegram or Codex side effect. Future `CommandId` records must add idempotency at the command boundary and must not rely solely on `UpdateId`.
+This provides at-most-once handling for completed or concurrently delivered update IDs within the retention/lease contract. It does not claim exactly-once behavior across an external Telegram or Codex side effect. The current one-command-per-update adapter uses a namespaced digest to keep retry identity stable, but `CommandId` remains a separate application field and future transformed/grouped commands must retain their own identity.
+
+## Second slice: task/run/command projection
+
+`CodexSupervisionLedger` stores a separate bounded `codex-supervision-state.json` in the same operator-owned data root. It is a supervision projection, not a transcript or replacement for Codex history. A task is scoped by the Codex thread, Telegram conversation, and authorized user so the same Codex thread cannot accidentally expose one user's command history in another chat. A run belongs to exactly one task and command.
+
+The current Telegram prompt path creates a stable command identity in a distinct `command:telegram:` namespace. For a positive Telegram update the value is derived from a namespaced digest of the update ID, so a handler retry retains the same application command identity while remaining distinct from the raw transport ID. A replacement-session recovery deliberately creates a child command identity rather than replaying an uncertain side effect under the original command.
+
+Run state is projected as `Accepted`, `Queued`, `Running`, `WaitingForInput`, `ReadyForReview`, `Completed`, `Failed`, `Interrupted`, or `Unknown`. `Unknown` is intentionally non-terminal: it records that an external Codex outcome could not be confirmed and requires explicit reconciliation. `CodexThreadId` and `CodexTurnId` remain provenance fields and are never replaced by `TaskId`, `RunId`, or `CommandId`.
+
+The ledger records bounded labels, IDs, timestamps, and outcome codes only. It does not persist prompt bodies, response bodies, attachment paths, credentials, or authorization headers. Terminal Codex events update the matching run by `CodexTurnId`; Telegram delivery remains a separate future dimension and is not inferred from run state.
 
 ## Lifecycle and recovery invariants
 
@@ -73,8 +83,8 @@ This provides at-most-once handling for completed or concurrently delivered upda
 
 ## Later dependency sequence
 
-1. Define and trace Task/Run/Command/Approval/Claim/Recovery/Delivery contracts and migration tests.
-2. Add application-owned Task and Run records beside existing state/manifests, with atomic transitions and explicit Codex provenance.
+1. Add persisted approval, claim, recovery, and delivery state with independent transitions and migration tests.
+2. Add atomic restart reconciliation and explicit recovery actions; no automatic side-effect replay for `Unknown` runs.
 3. Add deterministic review packets and Telegram handoffs using those records.
 4. Add task-owned worktrees, ports, database namespaces, worker registration, authenticated routing, leases, readiness, draining, and cleanup.
 5. Add the combined Mini App worker/attention projection and revocable Telegram-approved browser pairing as read-only surfaces.

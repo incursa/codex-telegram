@@ -360,6 +360,7 @@ builder.Services.AddHttpClient<OpenAiSpeechToTextService>();
 builder.Services.AddSingleton<IAudioTranscriptionService>(sp => sp.GetRequiredService<OpenAiSpeechToTextService>());
 builder.Services.AddSingleton<ICodexRuntimeClientFactory, CodexRuntimeClientFactory>();
 builder.Services.AddSingleton<ICodexSessionEventLog, CodexSessionEventLog>();
+builder.Services.AddSingleton<ICodexSupervisionLedger, CodexSupervisionLedger>();
 builder.Services.AddSingleton<CodexSessionRuntimeRegistry>();
 builder.Services.AddSingleton<ICodexTurnExecutionCoordinator>(sp => sp.GetRequiredService<CodexSessionRuntimeRegistry>());
 builder.Services.AddSingleton<ICodexGateway, CodexGateway>();

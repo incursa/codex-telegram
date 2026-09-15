@@ -25,6 +25,8 @@ public sealed class TelegramHostedServiceUpdateAdapterTests
 
         TelegramInboundMessage message = Assert.Single(harness.Handler.Messages);
         Assert.Equal(1001, message.UpdateId);
+        Assert.StartsWith("command:telegram:", message.CommandId, StringComparison.Ordinal);
+        Assert.NotEqual(message.UpdateId.ToString(), message.CommandId);
         Assert.Single(harness.Sender.Acknowledgements);
     }
 
@@ -46,6 +48,8 @@ public sealed class TelegramHostedServiceUpdateAdapterTests
 
         Assert.Single(harness.Handler.Messages);
         Assert.Equal(1002, Assert.Single(harness.Handler.Messages).UpdateId);
+        Assert.Equal(2, harness.Handler.AttemptedCommandIds.Count);
+        Assert.Equal(harness.Handler.AttemptedCommandIds[0], harness.Handler.AttemptedCommandIds[1]);
     }
 
     [Fact]
@@ -701,6 +705,8 @@ public sealed class TelegramHostedServiceUpdateAdapterTests
         Assert.Equal(77, callback.MessageThreadId);
         Assert.Equal(42, callback.SourceMessageId);
         Assert.Equal(12, callback.UpdateId);
+        Assert.StartsWith("command:telegram:", callback.CommandId, StringComparison.Ordinal);
+        Assert.NotEqual(callback.UpdateId.ToString(), callback.CommandId);
     }
 
     [Fact]
@@ -1073,6 +1079,8 @@ public sealed class TelegramHostedServiceUpdateAdapterTests
 
         public List<TelegramInboundCallback> Callbacks { get; } = [];
 
+        public List<string?> AttemptedCommandIds { get; } = [];
+
         public int FailuresRemaining { get; set; }
 
         public bool AudioPathExistedDuringHandle { get; private set; }
@@ -1082,6 +1090,7 @@ public sealed class TelegramHostedServiceUpdateAdapterTests
             ITelegramBotMessageSender sender,
             CancellationToken cancellationToken)
         {
+            AttemptedCommandIds.Add(message.CommandId);
             if (FailuresRemaining > 0)
             {
                 FailuresRemaining--;

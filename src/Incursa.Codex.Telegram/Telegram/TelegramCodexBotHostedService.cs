@@ -1,5 +1,7 @@
 using System.Collections.Concurrent;
 using System.Globalization;
+using System.Security.Cryptography;
+using System.Text;
 using Incursa.Codex.Telegram.Configuration;
 using Incursa.Codex.Telegram.Options;
 using Microsoft.Extensions.Hosting;
@@ -356,7 +358,8 @@ internal sealed class TelegramCodexBotHostedService : BackgroundService
                 ReplyContext: replyContext,
                 ReplyContextWasOperationalBotCard: replyContextWasOperationalBotCard,
                 TraceId: traceId,
-                UpdateId: update.Id);
+                UpdateId: update.Id,
+                CommandId: BuildCommandId(update.Id));
 
             if (attachments is { Count: > 0 })
             {
@@ -393,9 +396,21 @@ internal sealed class TelegramCodexBotHostedService : BackgroundService
             callback.Message.MessageThreadId,
             callback.Message.MessageId,
             callbackTraceId,
-            update.Id);
+            update.Id,
+            BuildCommandId(update.Id));
 
         await _handler.HandleCallbackAsync(inboundCallback, sender, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static string BuildCommandId(long updateId)
+    {
+        if (updateId <= 0)
+        {
+            return $"command:telegram:{Guid.NewGuid():N}";
+        }
+
+        byte[] digest = SHA256.HashData(Encoding.UTF8.GetBytes($"telegram-update:{updateId}"));
+        return $"command:telegram:{Convert.ToHexString(digest[..16]).ToLowerInvariant()}";
     }
 
     private bool TryStageMediaGroup(

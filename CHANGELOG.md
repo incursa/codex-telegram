@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 1.0.29 - 2026-09-14
+
+- Added a bounded durable supervision ledger for application-owned task, run, and command identities around Telegram prompt dispatch and queueing.
+- Persisted Codex run transitions for queued, running, operator-input, completed, failed, interrupted, and explicitly unknown outcomes while retaining Codex thread/turn provenance separately.
+- Added read-only Mini App durable-work projections and task/run identity details without adding browser mutations or changing Telegram authorization semantics.
+
 ## 1.0.28 - 2026-09-14
 
 - Added durable, bounded Telegram update receipts with atomic duplicate suppression, stale in-flight lease recovery, retention pruning, legacy-state compatibility, and retry after handler failure.

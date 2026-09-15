@@ -73,6 +73,8 @@ For workspace-mode changes, cover both `CodexTelegram:Mode=GeneralPurpose` (work
 
 For Telegram update-boundary changes, automated coverage must prove atomic duplicate exclusion, completed replay suppression after state reload, stale in-flight lease reclamation, bounded retention, compatibility with legacy state files, retry after handler failure, and propagation of the transport `UpdateId` without treating it as an application `CommandId`.
 
+For supervision-ledger changes, automated coverage must prove distinct Task/Run/Command identities, task scoping by Telegram user and conversation, replay rejection without a second Codex send, queue-to-running identity preservation, terminal Codex transition projection, explicit non-terminal `Unknown` outcomes, restart-compatible reload, bounded redacted persistence, and unchanged legacy Telegram state behavior. The ledger must preserve `CodexThreadId` and `CodexTurnId` as provenance rather than overwriting them with application IDs. Delivery acknowledgements, approvals, claims, and explicit recovery actions require separate evidence before they are considered implemented.
+
 For Mini App changes, keep these evidence categories separate:
 
 - `automated`: projection, authorization, bounded payload, and no-manifest-write tests.

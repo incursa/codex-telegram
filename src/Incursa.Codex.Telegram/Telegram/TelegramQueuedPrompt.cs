@@ -14,6 +14,8 @@ namespace Incursa.Codex.Telegram.Telegram;
 /// <param name="Attachments">Telegram attachments to forward with the prompt.</param>
 /// <param name="PlanMode">Whether the queued prompt should start as a plan-mode turn.</param>
 /// <param name="TraceId">Diagnostic trace correlation ID associated with the queued prompt.</param>
+/// <param name="CommandId">Application command identity associated with the queued prompt.</param>
+/// <param name="RunId">Durable supervision run identity associated with the queued prompt.</param>
 internal sealed record TelegramQueuedPrompt(
     string Id,
     long UserId,
@@ -25,7 +27,9 @@ internal sealed record TelegramQueuedPrompt(
     int? MessageThreadId = null,
     IReadOnlyList<TelegramAttachmentDescriptor>? Attachments = null,
     bool PlanMode = false,
-    string? TraceId = null)
+    string? TraceId = null,
+    string? CommandId = null,
+    string? RunId = null)
 {
     /// <summary>
     /// Gets the Telegram conversation that owns this queued prompt.

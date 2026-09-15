@@ -20,6 +20,7 @@ internal sealed class TelegramQueuedPromptProcessor : ITelegramQueuedPromptProce
     private readonly IOutboundTelegramQueue _outboundQueue;
     private readonly ITelegramBotMessageSender _sender;
     private readonly ITelegramDebugTraceStore _traceStore;
+    private readonly ICodexSupervisionLedger _supervisionLedger;
     private readonly ILogger<TelegramQueuedPromptProcessor> _logger;
 
     public TelegramQueuedPromptProcessor(
@@ -31,7 +32,8 @@ internal sealed class TelegramQueuedPromptProcessor : ITelegramQueuedPromptProce
         IOutboundTelegramQueue outboundQueue,
         ITelegramBotMessageSender sender,
         ITelegramDebugTraceStore traceStore,
-        ILogger<TelegramQueuedPromptProcessor> logger)
+        ILogger<TelegramQueuedPromptProcessor> logger,
+        ICodexSupervisionLedger? supervisionLedger = null)
     {
         _stateStore = stateStore;
         _sessionManager = sessionManager;
@@ -42,6 +44,7 @@ internal sealed class TelegramQueuedPromptProcessor : ITelegramQueuedPromptProce
         _sender = sender;
         _traceStore = traceStore;
         _logger = logger;
+        _supervisionLedger = supervisionLedger ?? new NullCodexSupervisionLedger();
     }
 
     public async Task<bool> ProcessNextAsync(CancellationToken cancellationToken)
@@ -59,6 +62,7 @@ internal sealed class TelegramQueuedPromptProcessor : ITelegramQueuedPromptProce
         CodexSessionSummary? session = await _sessionManager.GetSessionAsync(prompt.SessionId, cancellationToken).ConfigureAwait(false);
         if (session is null)
         {
+            await SetSupervisionStateAsync(prompt.RunId, CodexSupervisionRunState.Failed, prompt.SessionId, null, "session_missing", cancellationToken).ConfigureAwait(false);
             await RecordQueuedPromptFailureAsync(prompt, "session_missing", "The target session is no longer available.", cancellationToken).ConfigureAwait(false);
             TryDeleteAttachments(prompt.Attachments);
             await _sender.SendTextMessageAsync(
@@ -73,6 +77,7 @@ internal sealed class TelegramQueuedPromptProcessor : ITelegramQueuedPromptProce
         string? selectedSessionId = await _stateStore.GetActiveSessionIdAsync(prompt.ConversationScope, cancellationToken).ConfigureAwait(false);
         if (!string.Equals(selectedSessionId, prompt.SessionId, StringComparison.OrdinalIgnoreCase))
         {
+            await SetSupervisionStateAsync(prompt.RunId, CodexSupervisionRunState.Failed, prompt.SessionId, null, "session_changed", cancellationToken).ConfigureAwait(false);
             await RecordQueuedPromptFailureAsync(prompt, "session_changed", "The conversation now points at another session.", cancellationToken).ConfigureAwait(false);
             TryDeleteAttachments(prompt.Attachments);
             await _sender.SendTextMessageAsync(
@@ -98,6 +103,7 @@ internal sealed class TelegramQueuedPromptProcessor : ITelegramQueuedPromptProce
             if (!string.IsNullOrWhiteSpace(missingAttachment))
             {
                 string error = $"Queued attachment is no longer available: {missingAttachment}";
+                await SetSupervisionStateAsync(prompt.RunId, CodexSupervisionRunState.Failed, prompt.SessionId, null, "attachment_missing", cancellationToken).ConfigureAwait(false);
                 await RecordQueuedPromptFailureAsync(prompt, "attachment_missing", error, cancellationToken).ConfigureAwait(false);
                 TryDeleteAttachments(prompt.Attachments);
                 await _sender.SendTextMessageAsync(
@@ -144,6 +150,7 @@ internal sealed class TelegramQueuedPromptProcessor : ITelegramQueuedPromptProce
                 : prompt.PlanMode
                     ? await _sessionManager.SendPlanAsync(prompt.SessionId, prompt.Text, cancellationToken).ConfigureAwait(false)
                 : await _sessionManager.SendAsync(prompt.SessionId, prompt.Text, cancellationToken).ConfigureAwait(false);
+            await SetSupervisionStateAsync(prompt.RunId, CodexSupervisionRunState.Running, execution.ThreadId, execution.TurnId, null, cancellationToken).ConfigureAwait(false);
             _followRegistry.FollowThread(prompt.ConversationScope, execution.ThreadId);
             await _traceStore.BindTurnAsync(
                 traceId,
@@ -167,6 +174,7 @@ internal sealed class TelegramQueuedPromptProcessor : ITelegramQueuedPromptProce
         }
         catch (Exception exception)
         {
+            await SetSupervisionStateAsync(prompt.RunId, CodexSupervisionRunState.Unknown, prompt.SessionId, null, "external_outcome_unknown", CancellationToken.None).ConfigureAwait(false);
             _logger.LogError(exception, "Queued prompt {PromptId} for session {SessionId} failed to start.", prompt.Id, prompt.SessionId);
             await RecordQueuedPromptFailureAsync(prompt, "send_failed", exception.Message, cancellationToken).ConfigureAwait(false);
             TryDeleteAttachments(prompt.Attachments);
@@ -177,6 +185,39 @@ internal sealed class TelegramQueuedPromptProcessor : ITelegramQueuedPromptProce
                 cancellationToken,
                 CreateDebugContext("queued-worker", prompt.SessionId, kind: "failed")).ConfigureAwait(false);
             return true;
+        }
+    }
+
+    private async Task SetSupervisionStateAsync(
+        string? runId,
+        CodexSupervisionRunState state,
+        string? sessionId,
+        string? turnId,
+        string? outcomeCode,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(runId))
+        {
+            return;
+        }
+
+        try
+        {
+            await _supervisionLedger.UpdateRunAsync(
+                runId,
+                state,
+                sessionId,
+                turnId,
+                outcomeCode,
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            _logger.LogWarning(exception, "Failed to persist supervision state {State} for queued run {RunId}.", state, runId);
         }
     }
 

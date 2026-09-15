@@ -63,6 +63,25 @@ public sealed class TelegramMiniAppProjectionTests
     }
 
     [Fact]
+    public void DurableSupervisionAttentionUsesSpecificPriorities()
+    {
+        DateTimeOffset now = DateTimeOffset.UtcNow;
+        TelegramMiniAppSupervisionTaskVm review = CreateSupervisionTask("review", "ready_for_review", now);
+        TelegramMiniAppSupervisionTaskVm unknown = CreateSupervisionTask("unknown", "unknown", now.AddMinutes(-1));
+
+        IReadOnlyList<TelegramMiniAppAttentionVm> result = TelegramMiniAppProjection.BuildNeedsAttention(
+            [],
+            null,
+            projectsError: "Projects unavailable",
+            now: now,
+            supervisionTasks: [unknown, review]);
+
+        Assert.Equal(["projects", "task:task-review", "task:task-unknown"], result.Select(item => item.Id).ToArray());
+        Assert.Equal("Ready for review", result[1].Title);
+        Assert.Equal("Run needs reconciliation", result[2].Title);
+    }
+
+    [Fact]
     public void RuntimeFailureIsRepresentedAsExplicitAttentionItem()
     {
         IReadOnlyList<TelegramMiniAppAttentionVm> result = TelegramMiniAppProjection.BuildNeedsAttention(
@@ -210,6 +229,22 @@ public sealed class TelegramMiniAppProjectionTests
 
     private static CodexActiveTurnStateVm CreateActiveTurn(string threadId, CodexTimelineEntryVm lastEvent)
         => new(threadId, "turn-1", DateTimeOffset.UtcNow.AddMinutes(-1), DateTimeOffset.UtcNow, lastEvent);
+
+    private static TelegramMiniAppSupervisionTaskVm CreateSupervisionTask(
+        string threadId,
+        string state,
+        DateTimeOffset updatedAt)
+        => new(
+            $"task-{threadId}",
+            threadId,
+            threadId,
+            state,
+            $"run-{threadId}",
+            $"command-{threadId}",
+            $"turn-{threadId}",
+            updatedAt.AddMinutes(-1),
+            updatedAt,
+            updatedAt);
 
     private static CodexRuntimeStateVm CreateRuntime()
         => new(

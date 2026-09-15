@@ -8,7 +8,7 @@
   "owner": "codex-telegram-maintainers",
   "tags": ["codex", "telegram", "supervision", "recovery", "workers", "mini-app"],
   "purpose": "Define the authority, identity, recovery, isolation, review, browser, recipe, and release contracts for supervising Codex work across private self-hosted workers.",
-  "scope": "This specification covers the staged supervision workspace roadmap. It establishes the boundaries for the first durable Telegram update receipt slice while keeping the later Task, Run, Worker, Workspace, browser pairing, recipe, and update contracts explicit before their implementation.",
+  "scope": "This specification covers the staged supervision workspace roadmap. It establishes the durable Telegram update receipt and bounded Task/Run/Command projection slices while keeping approval, claim, recovery-action, delivery, Worker, Workspace, browser pairing, recipe, and update contracts explicit before their implementation.",
   "authority": {
     "telegram": "authentication, operator control, and consequential approval",
     "codex": "thread and turn execution plus execution provenance",

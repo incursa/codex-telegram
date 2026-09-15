@@ -12,6 +12,30 @@ namespace Incursa.Codex.Telegram.Tests;
 public sealed class TelegramCommandHandlerTests
 {
     [Fact]
+    public async Task HandleMessageAsync_DuplicateCommandDoesNotCreateAnotherCodexSend()
+    {
+        using CommandHandlerHarness harness = CommandHandlerHarness.Create();
+        harness.SessionManager.Sessions.Add(CreateSession("thread-1", "Demo session", harness.Temp.Path));
+        TelegramConversationScope conversation = new(5555, null);
+        await harness.StateStore.SetActiveSessionIdAsync(conversation, "thread-1", CancellationToken.None);
+        TelegramInboundMessage message = new(
+            1234,
+            conversation.ChatId,
+            "private",
+            "send this once",
+            CommandId: "command:stable-test");
+
+        await harness.Handler.HandleMessageAsync(message, harness.Sender, CancellationToken.None);
+        await harness.Handler.HandleMessageAsync(message, harness.Sender, CancellationToken.None);
+
+        Assert.Single(harness.SessionManager.SendRequests);
+        CodexSupervisionTaskSnapshot task = Assert.Single(await harness.SupervisionLedger.ListTasksAsync(1234, CancellationToken.None));
+        Assert.Equal("thread-1", task.CodexThreadId);
+        Assert.Equal(CodexSupervisionRunState.Running, task.LatestRun!.State);
+        Assert.Equal("command:stable-test", task.LatestRun.CommandId);
+    }
+
+    [Fact]
     public async Task HandleMessageAsync_IgnoresUnauthorizedNonWhoamiMessages()
     {
         using CommandHandlerHarness harness = CommandHandlerHarness.Create(new TelegramBotOptions
@@ -2872,6 +2896,7 @@ public sealed class TelegramCommandHandlerTests
             TestTelegramOutputModeState outputModeState,
             TelegramDebugTraceStore traceStore,
             CodexSessionEventLog eventLog,
+            CodexSupervisionLedger supervisionLedger,
             FakeTelegramForumTopicService topicService,
             FakeAudioTranscriptionService audioTranscription,
             TestTelegramBotMessageSender sender,
@@ -2892,6 +2917,7 @@ public sealed class TelegramCommandHandlerTests
             OutputModeState = outputModeState;
             TraceStore = traceStore;
             EventLog = eventLog;
+            SupervisionLedger = supervisionLedger;
             TopicService = topicService;
             AudioTranscription = audioTranscription;
             Sender = sender;
@@ -2927,6 +2953,8 @@ public sealed class TelegramCommandHandlerTests
         public TelegramDebugTraceStore TraceStore { get; }
 
         public CodexSessionEventLog EventLog { get; }
+
+        public CodexSupervisionLedger SupervisionLedger { get; }
 
         public FakeTelegramForumTopicService TopicService { get; }
 
@@ -2979,6 +3007,7 @@ public sealed class TelegramCommandHandlerTests
                 codexOptions,
                 Microsoft.Extensions.Options.Options.Create(new TelegramDebugTraceOptions()));
             CodexSessionEventLog eventLog = new(Microsoft.Extensions.Options.Options.Create(new TelegramOutputOptions()));
+            CodexSupervisionLedger supervisionLedger = new(codexOptions, TimeProvider.System);
             TelegramAttachmentStore attachmentStore = new(codexOptions);
             FakeTurnExecutionCoordinator turnCoordinator = new();
             TelegramCodexBotCommandHandler handler = new(
@@ -3012,14 +3041,18 @@ public sealed class TelegramCommandHandlerTests
                 inputOptions,
                 NullLogger<TelegramCodexBotCommandHandler>.Instance,
                 steerStartTimeout,
-                codexOptions: codexOptions);
+                codexOptions: codexOptions,
+                supervisionLedger: supervisionLedger);
 
-            return new CommandHandlerHarness(temp, sessionManager, accountUsage, projectCatalog, stateStore, outboundQueue, turnCoordinator, turnOutputRelay, inputBundleStore, typingIndicatorRegistry, turnReactionRegistry, debugPreambleMode, outputModeState, traceStore, eventLog, topicService, audioTranscription, sender, handler);
+            return new CommandHandlerHarness(temp, sessionManager, accountUsage, projectCatalog, stateStore, outboundQueue, turnCoordinator, turnOutputRelay, inputBundleStore, typingIndicatorRegistry, turnReactionRegistry, debugPreambleMode, outputModeState, traceStore, eventLog, supervisionLedger, topicService, audioTranscription, sender, handler);
         }
 
 
         public void Dispose()
-            => Temp.Dispose();
+        {
+            SupervisionLedger.Dispose();
+            Temp.Dispose();
+        }
     }
 
     private sealed class FakeCodexSessionManager : ICodexSessionManager

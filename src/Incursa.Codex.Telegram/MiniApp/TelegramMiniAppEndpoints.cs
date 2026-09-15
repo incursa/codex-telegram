@@ -30,6 +30,7 @@ internal static class TelegramMiniAppEndpoints
         ICodexGateway gateway,
         ICodexTurnExecutionCoordinator turnCoordinator,
         ICodexAccountUsageService usageService,
+        ICodexSupervisionLedger supervisionLedger,
         CancellationToken cancellationToken)
     {
         if (!miniAppOptions.Value.Enabled)
@@ -104,6 +105,19 @@ internal static class TelegramMiniAppEndpoints
             usageError = "Codex usage is currently unavailable.";
         }
 
+        IReadOnlyList<TelegramMiniAppSupervisionTaskVm> supervisionTasks = Array.Empty<TelegramMiniAppSupervisionTaskVm>();
+        string? supervisionError = null;
+        try
+        {
+            supervisionTasks = (await supervisionLedger.ListTasksAsync(identity.UserId, cancellationToken).ConfigureAwait(false))
+                .Select(ToSupervisionTaskViewModel)
+                .ToArray();
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            supervisionError = "Durable task state is currently unavailable.";
+        }
+
         TelegramMiniAppThreadVm[] projectedThreads = threads
             .Select(thread => TelegramMiniAppProjection.ToThreadViewModel(thread, turnCoordinator.TryGetActiveTurnState(thread.Id)))
             .ToArray();
@@ -121,10 +135,12 @@ internal static class TelegramMiniAppEndpoints
             usageError,
             serverTime) with
         {
-            NeedsAttention = TelegramMiniAppProjection.BuildNeedsAttention(projectedThreads, runtimeError, threadsError, projectsError, stateError, serverTime),
+            NeedsAttention = TelegramMiniAppProjection.BuildNeedsAttention(projectedThreads, runtimeError, threadsError, projectsError, stateError, serverTime, supervisionTasks),
             RecentActivity = projectedThreads,
             ProjectsError = projectsError,
             StateError = stateError,
+            SupervisionTasks = supervisionTasks,
+            SupervisionError = supervisionError,
         });
     }
 
@@ -135,6 +151,7 @@ internal static class TelegramMiniAppEndpoints
         IOptions<TelegramMiniAppOptions> miniAppOptions,
         ICodexGateway gateway,
         ICodexTurnExecutionCoordinator turnCoordinator,
+        ICodexSupervisionLedger supervisionLedger,
         CancellationToken cancellationToken)
     {
         if (!miniAppOptions.Value.Enabled)
@@ -142,7 +159,7 @@ internal static class TelegramMiniAppEndpoints
             return Results.NotFound();
         }
 
-        if (!auth.TryAuthenticate(context.Request, out _, out _))
+        if (!auth.TryAuthenticate(context.Request, out TelegramMiniAppIdentity identity, out _))
         {
             return Results.Unauthorized();
         }
@@ -165,10 +182,25 @@ internal static class TelegramMiniAppEndpoints
             }
 
             CodexThreadDetailVm detail = await gateway.GetThreadAsync(threadId, cancellationToken: cancellationToken).ConfigureAwait(false);
-            return Results.Ok(TelegramMiniAppProjection.ToThreadDetailViewModel(
+            TelegramMiniAppThreadDetailVm projected = TelegramMiniAppProjection.ToThreadDetailViewModel(
                 detail,
                 turnCoordinator.TryGetActiveTurnState(threadId),
-                DateTimeOffset.UtcNow));
+                DateTimeOffset.UtcNow);
+            try
+            {
+                projected = projected with
+                {
+                    Supervision = (await supervisionLedger.GetTaskForSessionAsync(identity.UserId, threadId, cancellationToken).ConfigureAwait(false)) is { } task
+                        ? ToSupervisionTaskViewModel(task)
+                        : null,
+                };
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            {
+                // Thread detail remains useful when the optional durable projection is unavailable.
+            }
+
+            return Results.Ok(projected);
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
@@ -197,6 +229,22 @@ internal static class TelegramMiniAppEndpoints
     private static string BuildProjectId(string path)
         => "project-" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(path))).ToLowerInvariant()[..16];
 
+    private static TelegramMiniAppSupervisionTaskVm ToSupervisionTaskViewModel(CodexSupervisionTaskSnapshot task)
+    {
+        CodexSupervisionRunSnapshot? run = task.LatestRun;
+        return new TelegramMiniAppSupervisionTaskVm(
+            task.TaskId,
+            task.CodexThreadId,
+            task.SessionName,
+            run?.State.ToString().ToLowerInvariant() ?? "not_started",
+            run?.RunId,
+            run?.CommandId,
+            run?.TurnId,
+            task.CreatedAt,
+            task.UpdatedAt,
+            run?.UpdatedAt ?? task.UpdatedAt);
+    }
+
 }
 
 internal sealed record TelegramMiniAppBootstrapVm(
@@ -218,6 +266,10 @@ internal sealed record TelegramMiniAppBootstrapVm(
     public string? ProjectsError { get; init; }
 
     public string? StateError { get; init; }
+
+    public IReadOnlyList<TelegramMiniAppSupervisionTaskVm> SupervisionTasks { get; init; } = Array.Empty<TelegramMiniAppSupervisionTaskVm>();
+
+    public string? SupervisionError { get; init; }
 }
 
 internal sealed record TelegramMiniAppProjectVm(
@@ -247,3 +299,15 @@ internal sealed record TelegramMiniAppUserVm(
     string? Username,
     string? FirstName,
     string? LastName);
+
+internal sealed record TelegramMiniAppSupervisionTaskVm(
+    string TaskId,
+    string CodexThreadId,
+    string SessionName,
+    string State,
+    string? RunId,
+    string? CommandId,
+    string? TurnId,
+    DateTimeOffset CreatedAt,
+    DateTimeOffset UpdatedAt,
+    DateTimeOffset LastRunUpdatedAt);

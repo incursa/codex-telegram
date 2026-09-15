@@ -53,6 +53,7 @@ internal sealed class CodexTurnExecutionCoordinator
     private readonly ICodexRealtimeBroadcaster _broadcaster;
     private readonly ITelegramTurnOutputRelay _telegramTurnOutputRelay;
     private readonly ICodexSessionEventLog _eventLog;
+    private readonly ICodexSupervisionLedger _supervisionLedger;
     private readonly IHostApplicationLifetime _applicationLifetime;
     private readonly TimeProvider _timeProvider;
     private readonly TimeSpan _terminalEventHoldDuration;
@@ -67,11 +68,13 @@ internal sealed class CodexTurnExecutionCoordinator
         TimeSpan terminalEventHoldDuration,
         ILogger<CodexTurnExecutionCoordinator> logger,
         IReadOnlyList<TimeSpan>? capacityRetryDelays = null,
-        ICodexSessionEventLog? eventLog = null)
+        ICodexSessionEventLog? eventLog = null,
+        ICodexSupervisionLedger? supervisionLedger = null)
     {
         _broadcaster = broadcaster;
         _telegramTurnOutputRelay = telegramTurnOutputRelay;
         _eventLog = eventLog ?? NullCodexSessionEventLog.Instance;
+        _supervisionLedger = supervisionLedger ?? new NullCodexSupervisionLedger();
         _applicationLifetime = applicationLifetime;
         _timeProvider = timeProvider;
         _terminalEventHoldDuration = terminalEventHoldDuration < TimeSpan.Zero ? TimeSpan.Zero : terminalEventHoldDuration;
@@ -791,6 +794,14 @@ internal sealed class CodexTurnExecutionCoordinator
     private async Task PublishNonTerminalEventAsync(CodexTimelineEntryVm entry)
     {
         RecordEvent(entry);
+        if (IsOperatorInputRequest(entry) && !string.IsNullOrWhiteSpace(entry.TurnId))
+        {
+            await UpdateSupervisionRunsAsync(
+                entry.TurnId,
+                CodexSupervisionRunState.WaitingForInput,
+                entry.ThreadId,
+                "operator_input_required").ConfigureAwait(false);
+        }
 
         try
         {
@@ -815,6 +826,11 @@ internal sealed class CodexTurnExecutionCoordinator
         CodexTurnCloseoutSummary closeout = BuildTurnCloseoutSummary(state, entry);
         RecordEvent(entry, closeout);
         UpdateActiveTurnState(state.ThreadId, state.TurnId, entry);
+        await UpdateSupervisionRunsAsync(
+            state.TurnId,
+            ResolveSupervisionState(entry),
+            state.ThreadId,
+            ResolveSupervisionOutcome(entry)).ConfigureAwait(false);
 
         try
         {
@@ -924,6 +940,55 @@ internal sealed class CodexTurnExecutionCoordinator
             || string.Equals(entry.Type, "turn.failed", StringComparison.OrdinalIgnoreCase)
             || string.Equals(entry.Type, "turn.interrupted", StringComparison.OrdinalIgnoreCase)
             || IsMetadataFlagSet(entry, "terminal");
+
+    private static bool IsOperatorInputRequest(CodexTimelineEntryVm entry)
+        => ContainsAny(entry.Type, "requestUserInput", "approval", "plan.question", "plan_input", "input.request")
+            || ContainsAny(entry.Title, "approval", "question", "waiting for input", "needs your input")
+            || ContainsAny(entry.Subtitle, "approval", "question", "waiting for input", "needs your input");
+
+    private static CodexSupervisionRunState ResolveSupervisionState(CodexTimelineEntryVm entry)
+        => string.Equals(entry.Type, "turn.completed", StringComparison.OrdinalIgnoreCase)
+            ? CodexSupervisionRunState.Completed
+            : string.Equals(entry.Type, "turn.interrupted", StringComparison.OrdinalIgnoreCase)
+                ? CodexSupervisionRunState.Interrupted
+                : CodexSupervisionRunState.Failed;
+
+    private static string ResolveSupervisionOutcome(CodexTimelineEntryVm entry)
+        => string.Equals(entry.Type, "turn.completed", StringComparison.OrdinalIgnoreCase)
+            ? "turn_completed"
+            : string.Equals(entry.Type, "turn.interrupted", StringComparison.OrdinalIgnoreCase)
+                ? "turn_interrupted"
+                : "turn_failed";
+
+    private async Task UpdateSupervisionRunsAsync(
+        string? turnId,
+        CodexSupervisionRunState state,
+        string? sessionId,
+        string outcomeCode)
+    {
+        if (string.IsNullOrWhiteSpace(turnId))
+        {
+            return;
+        }
+
+        try
+        {
+            await _supervisionLedger.UpdateRunsForTurnAsync(
+                turnId,
+                state,
+                sessionId,
+                outcomeCode,
+                CancellationToken.None).ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            _logger.LogWarning(exception, "Failed to persist supervision state {State} for turn {TurnId}.", state, turnId);
+        }
+    }
+
+    private static bool ContainsAny(string? value, params string[] values)
+        => !string.IsNullOrWhiteSpace(value)
+            && values.Any(candidate => value.Contains(candidate, StringComparison.OrdinalIgnoreCase));
 
     private void RecordEvent(CodexTimelineEntryVm entry, CodexTurnCloseoutSummary? closeout = null)
         => _eventLog.Record(CodexSessionEventRecord.FromTimelineEntry(entry, closeout));

@@ -292,6 +292,65 @@
     });
   }
 
+  function supervisionVariant(state) {
+    switch ((state || "").toLowerCase()) {
+      case "running": return "success";
+      case "waitingforinput":
+      case "waiting_for_input":
+      case "readyforreview":
+      case "ready_for_review": return "warning";
+      case "failed":
+      case "interrupted":
+      case "unknown": return "danger";
+      default: return "neutral";
+    }
+  }
+
+  function renderSupervision(data) {
+    const list = byId("supervision-list");
+    list.replaceChildren();
+    if (data.supervisionError) {
+      const unavailable = document.createElement("div");
+      unavailable.className = "empty-row";
+      unavailable.textContent = data.supervisionError;
+      list.append(unavailable);
+      return;
+    }
+    const tasks = data.supervisionTasks || [];
+    if (!tasks.length) {
+      const empty = document.createElement("div");
+      empty.className = "empty-row";
+      empty.textContent = "No durable task runs have been recorded yet.";
+      list.append(empty);
+      return;
+    }
+    tasks.slice(0, 12).forEach((task) => {
+      const row = document.createElement("div");
+      row.className = "supervision-row";
+      row.tabIndex = task.codexThreadId ? 0 : -1;
+      row.setAttribute("role", task.codexThreadId ? "button" : "status");
+      const copy = document.createElement("div");
+      copy.className = "supervision-copy";
+      const name = document.createElement("div");
+      name.className = "supervision-name";
+      name.textContent = task.sessionName || "Codex task";
+      const ids = document.createElement("div");
+      ids.className = "supervision-ids";
+      ids.textContent = `${task.state || "not_started"}${task.runId ? ` · ${task.runId.slice(-12)}` : ""}`;
+      copy.append(name, ids);
+      const badge = document.createElement("inc-badge");
+      badge.setAttribute("variant", supervisionVariant(task.state));
+      badge.textContent = task.state || "not started";
+      row.append(copy, badge);
+      if (task.codexThreadId) {
+        const open = () => openThread(task.codexThreadId);
+        row.addEventListener("click", open);
+        row.addEventListener("keydown", (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); open(); } });
+      }
+      list.append(row);
+    });
+  }
+
   function setDetailLoading(message) {
     byId("detail-card").hidden = false;
     byId("detail-title").textContent = "Task details";
@@ -343,6 +402,11 @@
     appendSummaryItem(summary, "Working directory", shortPath(detail.threadWorkingDirectory || thread.workingDirectory));
     appendSummaryItem(summary, "Active turn", detail.activeTurnId || "None");
     appendSummaryItem(summary, "Freshness", state.stale ? "Stale snapshot" : "Live snapshot");
+    if (detail.supervision) {
+      appendSummaryItem(summary, "Task", detail.supervision.taskId);
+      appendSummaryItem(summary, "Run state", detail.supervision.state);
+      appendSummaryItem(summary, "Run", detail.supervision.runId || "None");
+    }
 
     const timeline = byId("detail-timeline");
     timeline.replaceChildren();
@@ -497,6 +561,7 @@
     renderAttention({ needsAttention: [] });
     renderSessions({ threads: [] });
     renderWorkspace({ projects: [] });
+    renderSupervision({ supervisionTasks: [] });
   }
 
   function render(data) {
@@ -505,6 +570,7 @@
     renderSummary(data);
     renderSessions(data);
     renderWorkspace(data);
+    renderSupervision(data);
   }
 
   function authHeaders() {

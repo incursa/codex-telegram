@@ -130,7 +130,8 @@ internal sealed record TelegramInboundMessage(
     bool ReplyContextWasOperationalBotCard = false,
     string? TraceId = null,
     IReadOnlyList<int>? SourceMessageIds = null,
-    long? UpdateId = null)
+    long? UpdateId = null,
+    string? CommandId = null)
 {
     public TelegramConversationScope ConversationScope => new(ChatId, MessageThreadId);
 }
@@ -144,7 +145,8 @@ internal sealed record TelegramInboundCallback(
     int? MessageThreadId = null,
     int? SourceMessageId = null,
     string? TraceId = null,
-    long? UpdateId = null)
+    long? UpdateId = null,
+    string? CommandId = null)
 {
     public TelegramConversationScope ConversationScope => new(ChatId, MessageThreadId);
 }
@@ -194,6 +196,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
     private readonly TelegramInputBundleCardRenderer _inputBundleCardRenderer;
     private readonly ITelegramDebugTraceStore _traceStore;
     private readonly ICodexSessionEventLog _eventLog;
+    private readonly ICodexSupervisionLedger _supervisionLedger;
     private readonly TelegramBotOptions _options;
     private readonly TelegramInputOptions _inputOptions;
     private readonly ILogger<TelegramCodexBotCommandHandler> _logger;
@@ -236,7 +239,8 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         ILogger<TelegramCodexBotCommandHandler> logger,
         TimeSpan? steerStartTimeout = null,
         RepositorySummaryService? repositorySummaryService = null,
-        IOptions<CodexTelegramOptions>? codexOptions = null)
+        IOptions<CodexTelegramOptions>? codexOptions = null,
+        ICodexSupervisionLedger? supervisionLedger = null)
     {
         _parser = parser;
         _chunker = chunker;
@@ -273,6 +277,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             : codexOptions.Value.RepositoryDisplayLabel.Trim();
         _repositorySummaryService = repositorySummaryService ?? new RepositorySummaryService();
         _steerStartTimeout = steerStartTimeout ?? TelegramSteerStartTimeout;
+        _supervisionLedger = supervisionLedger ?? new NullCodexSupervisionLedger();
     }
 
     public async Task HandleMessageAsync(
@@ -1766,6 +1771,25 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         string trimmed = text?.Trim() ?? string.Empty;
         string traceId = message.TraceId ?? _traceStore.CreateTraceId();
         message = message with { TraceId = traceId };
+        CodexSupervisionCommandStart supervision = await _supervisionLedger.StartCommandAsync(
+            message.CommandId,
+            session.Id,
+            session.Name,
+            message.ConversationScope,
+            message.UserId,
+            planMode ? "plan" : "prompt",
+            cancellationToken).ConfigureAwait(false);
+        if (!supervision.Accepted && supervision.Run is not null)
+        {
+            _logger.LogDebug(
+                "Ignoring duplicate supervision command {CommandId} for task {TaskId} and run {RunId}.",
+                supervision.CommandId,
+                supervision.Run.TaskId,
+                supervision.Run.RunId);
+            return true;
+        }
+
+        string? supervisionRunId = supervision.Run?.RunId;
         await _stateStore.TrackSessionAsync(session.Id, cancellationToken).ConfigureAwait(false);
 
         if (_turnCoordinator.HasActiveTurnForThread(session.Id))
@@ -1775,7 +1799,8 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
                 message.ChatId,
                 message.MessageThreadId,
                 session.Id);
-            await QueuePromptAsync(message, session, trimmed, sender, cancellationToken, planMode).ConfigureAwait(false);
+            await SetSupervisionStateAsync(supervisionRunId, CodexSupervisionRunState.Queued, session.Id, null, "active_turn", cancellationToken).ConfigureAwait(false);
+            await QueuePromptAsync(message, session, trimmed, sender, cancellationToken, planMode, supervisionRunId).ConfigureAwait(false);
             return true;
         }
 
@@ -1787,7 +1812,8 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
                 message.MessageThreadId,
                 session.Id,
                 session.Status);
-            await QueuePromptAsync(message, session, trimmed, sender, cancellationToken, planMode).ConfigureAwait(false);
+            await SetSupervisionStateAsync(supervisionRunId, CodexSupervisionRunState.Queued, session.Id, null, "session_active", cancellationToken).ConfigureAwait(false);
+            await QueuePromptAsync(message, session, trimmed, sender, cancellationToken, planMode, supervisionRunId).ConfigureAwait(false);
             return true;
         }
 
@@ -1798,7 +1824,8 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
                 "Telegram message for chat {ChatId} topic {MessageThreadId} is being queued because prior output for that conversation is still pending.",
                 message.ChatId,
                 message.MessageThreadId);
-            await QueuePromptAsync(message, session, trimmed, sender, cancellationToken, planMode).ConfigureAwait(false);
+            await SetSupervisionStateAsync(supervisionRunId, CodexSupervisionRunState.Queued, session.Id, null, "telegram_output_pending", cancellationToken).ConfigureAwait(false);
+            await QueuePromptAsync(message, session, trimmed, sender, cancellationToken, planMode, supervisionRunId).ConfigureAwait(false);
             return true;
         }
 
@@ -1838,7 +1865,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             Task completedTask = await Task.WhenAny(sendTask, timeoutTask).ConfigureAwait(false);
             if (!ReferenceEquals(completedTask, sendTask))
             {
-                _ = ObserveSlowTelegramSendAsync(sendTask, message, session, trimmed, sender, typingRegistration, planMode);
+                _ = ObserveSlowTelegramSendAsync(sendTask, message, session, trimmed, sender, typingRegistration, planMode, supervisionRunId);
                 typingRegistration = null;
                 await _turnOutputRelay.RepostLiveCardAsync(
                     session.Id,
@@ -1857,6 +1884,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             }
 
             CodexThreadExecutionVm execution = await sendTask.ConfigureAwait(false);
+            await SetSupervisionStateAsync(supervisionRunId, CodexSupervisionRunState.Running, execution.ThreadId, execution.TurnId, null, cancellationToken).ConfigureAwait(false);
             _followRegistry.FollowThread(message.ConversationScope, execution.ThreadId);
             await _traceStore.BindTurnAsync(traceId, execution.ThreadId, execution.TurnId, cancellationToken).ConfigureAwait(false);
             RegisterTurnReactionTarget(message, execution);
@@ -1876,11 +1904,13 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
                 message.ChatId,
                 message.MessageThreadId,
                 session.Id);
-            await QueuePromptAsync(message, session, trimmed, sender, cancellationToken, planMode).ConfigureAwait(false);
+            await SetSupervisionStateAsync(supervisionRunId, CodexSupervisionRunState.Queued, session.Id, null, "active_turn", cancellationToken).ConfigureAwait(false);
+            await QueuePromptAsync(message, session, trimmed, sender, cancellationToken, planMode, supervisionRunId).ConfigureAwait(false);
             return true;
         }
         catch (Exception exception) when (allowUnreadableThreadRecovery && IsUnreadableCodexThreadException(exception))
         {
+            await SetSupervisionStateAsync(supervisionRunId, CodexSupervisionRunState.Unknown, session.Id, null, "external_outcome_unknown", CancellationToken.None).ConfigureAwait(false);
             return await RecoverUnreadableSessionAndRetryAsync(
                 message,
                 session,
@@ -1889,6 +1919,11 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
                 sender,
                 cancellationToken,
                 planMode).ConfigureAwait(false);
+        }
+        catch
+        {
+            await SetSupervisionStateAsync(supervisionRunId, CodexSupervisionRunState.Unknown, session.Id, null, "external_outcome_unknown", CancellationToken.None).ConfigureAwait(false);
+            throw;
         }
         finally
         {
@@ -1929,8 +1964,14 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             BuildSessionButtons([replacement], includeUse: false),
             cancellationToken).ConfigureAwait(false);
 
+        // The replacement is a deliberate child dispatch. Keep it distinct from the
+        // original command so an uncertain external outcome is never silently replayed
+        // under the same command identity.
+        string recoveryCommandId = string.IsNullOrWhiteSpace(message.CommandId)
+            ? $"command:recovery:{Guid.NewGuid():N}"
+            : $"{message.CommandId}:recovery:{Guid.NewGuid():N}";
         return await SendOrQueueAsync(
-            message,
+            message with { CommandId = recoveryCommandId },
             replacement,
             text,
             sender,
@@ -1975,11 +2016,13 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         string text,
         ITelegramBotMessageSender sender,
         IDisposable typingRegistration,
-        bool planMode)
+        bool planMode,
+        string? supervisionRunId)
     {
         try
         {
             CodexThreadExecutionVm execution = await sendTask.ConfigureAwait(false);
+            await SetSupervisionStateAsync(supervisionRunId, CodexSupervisionRunState.Running, execution.ThreadId, execution.TurnId, null, CancellationToken.None).ConfigureAwait(false);
             _followRegistry.FollowThread(message.ConversationScope, execution.ThreadId);
             if (!string.IsNullOrWhiteSpace(message.TraceId))
             {
@@ -2002,10 +2045,12 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
                 message.ChatId,
                 message.MessageThreadId,
                 session.Id);
-            await QueuePromptAsync(message, session, text, sender, CancellationToken.None, planMode).ConfigureAwait(false);
+            await SetSupervisionStateAsync(supervisionRunId, CodexSupervisionRunState.Queued, session.Id, null, "active_turn", CancellationToken.None).ConfigureAwait(false);
+            await QueuePromptAsync(message, session, text, sender, CancellationToken.None, planMode, supervisionRunId).ConfigureAwait(false);
         }
         catch (Exception exception)
         {
+            await SetSupervisionStateAsync(supervisionRunId, CodexSupervisionRunState.Unknown, session.Id, null, "external_outcome_unknown", CancellationToken.None).ConfigureAwait(false);
             _logger.LogError(
                 exception,
                 "Slow Telegram message for chat {ChatId} topic {MessageThreadId} failed to start session {SessionId}.",
@@ -2033,7 +2078,8 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         string text,
         ITelegramBotMessageSender sender,
         CancellationToken cancellationToken,
-        bool planMode = false)
+        bool planMode = false,
+        string? supervisionRunId = null)
     {
         await _stateStore.TrackSessionAsync(session.Id, cancellationToken).ConfigureAwait(false);
         string traceId = message.TraceId ?? _traceStore.CreateTraceId();
@@ -2054,7 +2100,9 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
                 message.MessageThreadId,
                 durableAttachments?.ToArray(),
                 planMode,
-                traceId),
+                traceId,
+                message.CommandId,
+                supervisionRunId),
             cancellationToken).ConfigureAwait(false);
         await _traceStore.RecordAsync(
             new TelegramDebugTraceEvent(
@@ -2122,6 +2170,39 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             destination.ChatId == conversation.ChatId
             && destination.MessageThreadId == conversation.MessageThreadId
             && (destination.PendingMessageCount > 0 || destination.PendingChunkCount > 0));
+
+    private async Task SetSupervisionStateAsync(
+        string? runId,
+        CodexSupervisionRunState state,
+        string? sessionId,
+        string? turnId,
+        string? outcomeCode,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(runId))
+        {
+            return;
+        }
+
+        try
+        {
+            await _supervisionLedger.UpdateRunAsync(
+                runId,
+                state,
+                sessionId,
+                turnId,
+                outcomeCode,
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            _logger.LogWarning(exception, "Failed to persist supervision state {State} for run {RunId}.", state, runId);
+        }
+    }
 
     private async Task HandleTailAsync(TelegramInboundMessage message, string arguments, ITelegramBotMessageSender sender, CancellationToken cancellationToken)
     {

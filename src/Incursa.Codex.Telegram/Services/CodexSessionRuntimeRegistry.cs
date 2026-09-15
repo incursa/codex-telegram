@@ -19,6 +19,7 @@ internal sealed class CodexSessionRuntimeRegistry : ICodexTurnExecutionCoordinat
     private readonly ICodexRealtimeBroadcaster _broadcaster;
     private readonly ITelegramTurnOutputRelay _telegramTurnOutputRelay;
     private readonly ICodexSessionEventLog _eventLog;
+    private readonly ICodexSupervisionLedger _supervisionLedger;
     private readonly IHostApplicationLifetime _applicationLifetime;
     private readonly TimeProvider _timeProvider;
     private readonly ILoggerFactory _loggerFactory;
@@ -39,7 +40,8 @@ internal sealed class CodexSessionRuntimeRegistry : ICodexTurnExecutionCoordinat
         TimeProvider timeProvider,
         ILoggerFactory loggerFactory,
         ICodexRuntimeClientFactory runtimeClientFactory,
-        ICodexThreadManifestStore? manifestStore = null)
+        ICodexThreadManifestStore? manifestStore = null,
+        ICodexSupervisionLedger? supervisionLedger = null)
     {
         _clientOptions = clientOptions;
         _planInputCoordinator = planInputCoordinator;
@@ -52,6 +54,7 @@ internal sealed class CodexSessionRuntimeRegistry : ICodexTurnExecutionCoordinat
         _logger = loggerFactory.CreateLogger<CodexSessionRuntimeRegistry>();
         _runtimeClientFactory = runtimeClientFactory;
         _manifestStore = manifestStore;
+        _supervisionLedger = supervisionLedger ?? new NullCodexSupervisionLedger();
         _telegramOptions = telegramOptions.Value;
         int holdMilliseconds = Math.Clamp(
             _telegramOptions.TerminalEventHoldMilliseconds,
@@ -175,6 +178,12 @@ internal sealed class CodexSessionRuntimeRegistry : ICodexTurnExecutionCoordinat
                         return current;
                     },
                     cancellationToken).ConfigureAwait(false);
+                await UpdateSupervisionStateAsync(
+                    execution.TurnId,
+                    CodexSupervisionRunState.Running,
+                    threadId,
+                    "turn_reattached",
+                    cancellationToken).ConfigureAwait(false);
                 attached.Add(execution);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -287,6 +296,12 @@ internal sealed class CodexSessionRuntimeRegistry : ICodexTurnExecutionCoordinat
                         return manifest;
                     },
                     cancellationToken).ConfigureAwait(false);
+                await UpdateSupervisionStateAsync(
+                    activeTurn.TurnId,
+                    CodexSupervisionRunState.Interrupted,
+                    activeTurn.ThreadId,
+                    "application_shutdown",
+                    cancellationToken).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -342,6 +357,32 @@ internal sealed class CodexSessionRuntimeRegistry : ICodexTurnExecutionCoordinat
         };
     }
 
+    private async Task UpdateSupervisionStateAsync(
+        string turnId,
+        CodexSupervisionRunState state,
+        string? sessionId,
+        string outcomeCode,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await _supervisionLedger.UpdateRunsForTurnAsync(
+                turnId,
+                state,
+                sessionId,
+                outcomeCode,
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            _logger.LogWarning(exception, "Failed to persist supervision state {State} for turn {TurnId}.", state, turnId);
+        }
+    }
+
     private CodexRuntimeSlot CreateSlot(bool broadcastRuntimeState)
         => new(
             _runtimeClientFactory.Create(CreateClientOptions()),
@@ -353,7 +394,8 @@ internal sealed class CodexSessionRuntimeRegistry : ICodexTurnExecutionCoordinat
                 _timeProvider,
                 _terminalEventHoldDuration,
                 _loggerFactory.CreateLogger<CodexTurnExecutionCoordinator>(),
-                eventLog: _eventLog),
+                eventLog: _eventLog,
+                supervisionLedger: _supervisionLedger),
             _broadcaster,
             broadcastRuntimeState);
 

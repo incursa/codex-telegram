@@ -4,9 +4,9 @@ using Incursa.Codex.Telegram.Services;
 namespace Incursa.Codex.Telegram.MiniApp;
 
 /// <summary>
-/// Builds the small, read-only projection used by the Mini App. The projection
-/// deliberately derives state from the existing Codex thread and turn surfaces;
-/// it is not a second task database.
+/// Builds the small, read-only projection used by the Mini App. Codex thread and
+/// turn surfaces remain authoritative for execution detail; the bounded
+/// supervision ledger adds explicit application task/run lifecycle metadata.
 /// </summary>
 internal static class TelegramMiniAppProjection
 {
@@ -41,7 +41,8 @@ internal static class TelegramMiniAppProjection
         string? threadsError = null,
         string? projectsError = null,
         string? stateError = null,
-        DateTimeOffset? now = null)
+        DateTimeOffset? now = null,
+        IReadOnlyList<TelegramMiniAppSupervisionTaskVm>? supervisionTasks = null)
     {
         ArgumentNullException.ThrowIfNull(threads);
 
@@ -69,6 +70,30 @@ internal static class TelegramMiniAppProjection
                 thread.LifecycleState,
                 thread.UpdatedAt,
                 ResolveAttentionPriority(thread.AttentionKind)));
+        }
+
+        HashSet<string> representedSessions = threads
+            .Where(thread => thread.NeedsAttention)
+            .Select(thread => thread.Id)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (TelegramMiniAppSupervisionTaskVm task in supervisionTasks ?? [])
+        {
+            string? attentionKind = ResolveSupervisionAttentionKind(task.State);
+            if (attentionKind is null || representedSessions.Contains(task.CodexThreadId))
+            {
+                continue;
+            }
+
+            attention.Add(new TelegramMiniAppAttentionVm(
+                $"task:{task.TaskId}",
+                attentionKind,
+                ResolveSupervisionAttentionTitle(attentionKind),
+                $"{task.SessionName} · durable run state is {task.State}.",
+                task.CodexThreadId,
+                null,
+                task.State,
+                task.LastRunUpdatedAt,
+                ResolveAttentionPriority(attentionKind)));
         }
 
         return attention
@@ -307,6 +332,25 @@ internal static class TelegramMiniAppProjection
             _ => null,
         };
 
+    private static string? ResolveSupervisionAttentionKind(string state)
+        => state switch
+        {
+            "waitingforinput" or "waiting_for_input" => "waiting-for-input",
+            "readyforreview" or "ready_for_review" => "ready-for-review",
+            "failed" => "failed",
+            "interrupted" => "interrupted",
+            "unknown" => "reconciliation-required",
+            _ => null,
+        };
+
+    private static string ResolveSupervisionAttentionTitle(string attentionKind)
+        => attentionKind switch
+        {
+            "ready-for-review" => "Ready for review",
+            "reconciliation-required" => "Run needs reconciliation",
+            _ => ResolveAttentionTitle(attentionKind) ?? "Needs attention",
+        };
+
     private static string ResolveAttentionDetail(TelegramMiniAppThreadVm thread)
         => !string.IsNullOrWhiteSpace(thread.Preview)
             ? thread.Preview
@@ -316,9 +360,11 @@ internal static class TelegramMiniAppProjection
         => attentionKind switch
         {
             "waiting-for-input" => 80,
+            "ready-for-review" => 75,
             "failed" => 70,
             "interrupted" => 65,
             "unavailable" => 60,
+            "reconciliation-required" => 55,
             _ => 10,
         };
 
@@ -358,7 +404,10 @@ internal sealed record TelegramMiniAppThreadDetailVm(
     string? ThreadWorkingDirectory,
     IReadOnlyList<TelegramMiniAppChangeVm> Changes,
     IReadOnlyList<TelegramMiniAppArtifactVm> Artifacts,
-    DateTimeOffset RetrievedAtUtc);
+    DateTimeOffset RetrievedAtUtc)
+{
+    public TelegramMiniAppSupervisionTaskVm? Supervision { get; init; }
+}
 
 internal sealed record TelegramMiniAppTurnVm(
     string Id,

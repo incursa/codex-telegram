@@ -31,7 +31,7 @@ The current Mini App foundation is the first R2/R4-compatible read-only slice:
 
 The v1.0.28 R1.0 slice is the update-boundary foundation. Its contract is recorded in [`SPEC-CTG-SUPERVISION`](../specs/requirements/codex-telegram/SPEC-CTG-SUPERVISION.json) and [`ARC-CTG-SUPERVISION-0001`](../specs/architecture/codex-telegram/ARC-CTG-SUPERVISION-0001.md). Telegram `UpdateId` receipts provide bounded replay protection at the transport boundary; this is not yet the application-owned `CommandId` or full Task/Run lifecycle. Handler failures remain retryable, stale in-flight receipts are reclaimable, and completed receipts are retained only for the documented window.
 
-The next R1 slice is application-owned Task/Run/Command identity and persisted approval, claim, recovery, and delivery state.
+The v1.0.29 R1.1 slice adds an application-owned Task/Run/Command projection for prompt dispatch. It stores only bounded, redacted lifecycle metadata in `codex-supervision-state.json`, scopes tasks by Codex thread plus Telegram user/conversation, retains the raw Codex thread/turn IDs as provenance, and exposes the projection to the read-only Mini App. Queueing, direct dispatch, terminal Codex events, shutdown interruption, and explicit replacement-session recovery update the same run identity. An `Unknown` result remains open for reconciliation and is never treated as success or silently replayed. Approval, claim, recovery-action, and Telegram delivery acknowledgement records remain the next R1 slice.
 
 ## Identity and state vocabulary
 
