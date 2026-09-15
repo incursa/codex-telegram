@@ -658,7 +658,7 @@ public sealed class TelegramCommandHandlerTests
 
         SentTelegramMessage sent = Assert.Single(harness.Sender.Sent);
         Assert.Contains("Input ready", sent.Text);
-        Assert.Contains("Text: 1 part", sent.Text);
+        Assert.DoesNotContain("Text:", sent.Text);
         Assert.Empty(harness.SessionManager.SendRequests);
 
         await harness.Handler.HandleMessageAsync(
@@ -667,7 +667,7 @@ public sealed class TelegramCommandHandlerTests
             CancellationToken.None);
 
         EditedTelegramMessage edited = Assert.Single(harness.Sender.Edited);
-        Assert.Contains("Text: 2 parts", edited.Text);
+        Assert.DoesNotContain("Text:", edited.Text);
         Assert.Empty(harness.SessionManager.SendRequests);
 
         TelegramInputBundle bundle = Assert.Single(await harness.InputBundleStore.ListAsync(conversation, CancellationToken.None));
@@ -854,8 +854,7 @@ public sealed class TelegramCommandHandlerTests
         TelegramInputBundle completed = Assert.Single(await harness.InputBundleStore.ListAsync(conversation, CancellationToken.None));
         Assert.Equal(TelegramInputBundleStatus.Sent, completed.Status);
         Assert.Contains(harness.Sender.Edited, edited =>
-            edited.Text.Contains("Bundle sent to Codex", StringComparison.Ordinal)
-            && edited.Text.Contains("Live updates will stream here", StringComparison.Ordinal));
+            edited.Text.Equals("Sent to Codex", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -896,7 +895,7 @@ public sealed class TelegramCommandHandlerTests
         TelegramInputBundle completed = Assert.Single(await harness.InputBundleStore.ListAsync(conversation, CancellationToken.None));
         Assert.Equal(TelegramInputBundleStatus.Sent, completed.Status);
         Assert.Contains(harness.Sender.Sent, sent => sent.Text.Contains("could not be resumed", StringComparison.Ordinal));
-        Assert.Contains(harness.Sender.Edited, edited => edited.Text.Contains("Bundle sent to Codex", StringComparison.Ordinal));
+        Assert.Contains(harness.Sender.Edited, edited => edited.Text.Equals("Sent to Codex", StringComparison.Ordinal));
 
         IReadOnlyList<CodexSupervisionRecoverySnapshot> recoveries =
             await harness.SupervisionLedger.ListRecoveryActionsAsync(1234, CancellationToken.None);

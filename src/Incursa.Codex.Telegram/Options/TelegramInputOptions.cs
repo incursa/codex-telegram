@@ -6,7 +6,7 @@ namespace Incursa.Codex.Telegram.Options;
 public enum TelegramInputCaptureMode
 {
     /// <summary>
-    /// Keep simple text immediate unless a draft already exists.
+    /// Keep simple idle text immediate, while bundling media and input received during active work.
     /// </summary>
     ImmediateText,
 

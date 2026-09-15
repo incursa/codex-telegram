@@ -34,25 +34,20 @@ internal sealed class TelegramInputBundleCardRenderer : ITelegramInputBundleCard
     private string BuildText(TelegramInputBundle bundle, TelegramInputBundleCardBehavior behavior)
     {
         StringBuilder builder = new();
-        builder.AppendLine(bundle.Status is TelegramInputBundleStatus.Capturing
-            ? bundle.HasContent ? "Input ready" : "Add input"
-            : behavior.StatusText);
-        if (!string.IsNullOrWhiteSpace(bundle.SessionId))
+        if (bundle.Status is not TelegramInputBundleStatus.Capturing)
         {
-            builder.AppendLine(CultureInfo.InvariantCulture, $"Session: {bundle.SessionName} ({ShortId(bundle.SessionId)})");
+            builder.AppendLine(behavior.StatusText);
+            AppendAdvisory(builder, behavior.AdvisoryText);
+            return builder.ToString().TrimEnd();
         }
 
-        builder.AppendLine(CultureInfo.InvariantCulture, $"Action: {behavior.PrimaryActionText}");
+        builder.Append(bundle.HasContent ? "Input ready" : "Add input");
         int autoDispatchAfterSeconds = _options.Value.AutoDispatchAfterSeconds;
         if (bundle.Status is TelegramInputBundleStatus.Capturing && bundle.HasContent && autoDispatchAfterSeconds > 0)
         {
-            builder.AppendLine(CultureInfo.InvariantCulture, $"Auto: {behavior.AutoDispatchActionText} after {autoDispatchAfterSeconds.ToString(CultureInfo.InvariantCulture)}s idle");
+            builder.Append(CultureInfo.InvariantCulture, $" · auto-dispatches after {autoDispatchAfterSeconds.ToString(CultureInfo.InvariantCulture)}s idle");
         }
-
-        if (bundle.TextParts.Count > 0)
-        {
-            builder.AppendLine(CultureInfo.InvariantCulture, $"Text: {FormatCount(bundle.TextParts.Count, "part")}, {bundle.CombinedText.Length.ToString(CultureInfo.InvariantCulture)} chars");
-        }
+        builder.AppendLine();
 
         if (bundle.Attachments.Count > 0)
         {
@@ -62,18 +57,21 @@ internal sealed class TelegramInputBundleCardRenderer : ITelegramInputBundleCard
         string combinedText = bundle.CombinedText;
         if (!string.IsNullOrWhiteSpace(combinedText))
         {
-            builder.AppendLine();
-            builder.AppendLine("Preview:");
             builder.AppendLine(TrimPreview(combinedText, GetPreviewCharacters()));
         }
 
-        if (!string.IsNullOrWhiteSpace(behavior.AdvisoryText))
-        {
-            builder.AppendLine();
-            builder.AppendLine(behavior.AdvisoryText);
-        }
+        AppendAdvisory(builder, behavior.AdvisoryText);
 
         return builder.ToString().TrimEnd();
+    }
+
+    private static void AppendAdvisory(StringBuilder builder, string? advisoryText)
+    {
+        if (!string.IsNullOrWhiteSpace(advisoryText))
+        {
+            builder.AppendLine();
+            builder.AppendLine(advisoryText);
+        }
     }
 
     private static IReadOnlyList<IReadOnlyList<TelegramReplyButton>> BuildButtons(
@@ -102,9 +100,6 @@ internal sealed class TelegramInputBundleCardRenderer : ITelegramInputBundleCard
 
         return string.Concat(value.AsSpan(0, maxLength).TrimEnd(), "...");
     }
-
-    private static string ShortId(string value)
-        => value.Length <= 8 ? value : value[..8];
 
     private static string FormatCount(int count, string singular)
         => count == 1

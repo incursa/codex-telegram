@@ -223,6 +223,8 @@ Images and documents can be sent with a prompt. Voice notes are transcribed befo
 
 By default, the bot captures text, voice transcripts, images, and documents into an input bundle before starting Codex. Each new item resets the bundle's idle timer. The bundle automatically sends or queues after 25 seconds with no additional input, so a forgotten Send tap does not leave the transcript stranded. Use the buttons when you want to send, queue, steer, clear, or cancel earlier.
 
+The editable card is intentionally compact: it shows the draft text once, a short attachment summary when needed, and the available controls. After dispatch, the same card becomes a short status such as `Sent to Codex` instead of repeating the prompt.
+
 If the selected Codex thread has disappeared from the local rollout store before the bundle is dispatched, the bot clears that stale binding, starts a replacement session in the selected project, and retries the bundle once. This preserves the bundle while avoiding an unsafe repeated send to an uncertain external thread.
 
 Very long plain-text messages still open an input bundle even if `TelegramInput:DefaultCaptureMode` is changed to `ImmediateText`, which keeps Telegram-split prompts together instead of sending the first chunk immediately.

@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.53 - 2026-09-15
+
+- Kept editable input bundles as the default while compacting their cards to show the prompt once with only the useful controls and timing.
+- Replaced the post-dispatch bundle card contents with a short `Sent to Codex` acknowledgement instead of repeating the prompt and live-update preamble.
+
 ## 1.0.52 - 2026-09-15
 
 - Reframed the Telegram Mini App as the current conversation's Codex session control panel, with an explicit no-session state and no alternate prompt workflow.

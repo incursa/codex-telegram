@@ -40,10 +40,13 @@ public sealed class TelegramInputBundleCardRendererTests
                 AllowAttachmentSteering: true));
 
         Assert.Contains("Input ready", card.Text);
-        Assert.Contains("Action: Steer current turn", card.Text);
-        Assert.Contains("Auto: Queue next after 25s idle", card.Text);
-        Assert.Contains("Text: 1 part", card.Text);
+        Assert.Contains("Input ready · auto-dispatches after 25s idle", card.Text);
         Assert.Contains("Attachments: 1 file (image)", card.Text);
+        Assert.DoesNotContain("Session:", card.Text);
+        Assert.DoesNotContain("Action:", card.Text);
+        Assert.DoesNotContain("Auto:", card.Text);
+        Assert.DoesNotContain("Text:", card.Text);
+        Assert.DoesNotContain("Preview:", card.Text);
         Assert.DoesNotContain("Sources:", card.Text);
         Assert.Contains(string.Concat(new string('x', 80), "..."), card.Text);
         Assert.DoesNotContain("Trace:", card.Text);
@@ -90,8 +93,10 @@ public sealed class TelegramInputBundleCardRendererTests
                 AllowAttachmentSteering: true));
 
         Assert.Contains("Input ready", card.Text);
-        Assert.Contains("Action: Send now", card.Text);
-        Assert.Contains("Auto: Send now after 25s idle", card.Text);
+        Assert.Contains("Input ready · auto-dispatches after 25s idle", card.Text);
+        Assert.Contains("ready to send", card.Text);
+        Assert.DoesNotContain("Action:", card.Text);
+        Assert.DoesNotContain("Preview:", card.Text);
         Assert.DoesNotContain("Trace:", card.Text);
         Assert.Equal(
             ["Send now", "Add more", "Clear", "Cancel"],
@@ -136,7 +141,7 @@ public sealed class TelegramInputBundleCardRendererTests
                 ShouldQueueForLater: false,
                 AllowAttachmentSteering: false));
 
-        Assert.Contains("Action: Queue next", card.Text);
+        Assert.DoesNotContain("Action:", card.Text);
         Assert.Contains("Attachment steering is not supported", card.Text);
         Assert.Equal(
             ["Queue next", "Text-only steer", "Add more", "Clear", "Cancel"],
@@ -165,7 +170,7 @@ public sealed class TelegramInputBundleCardRendererTests
                 ShouldQueueForLater: true,
                 AllowAttachmentSteering: true));
 
-        Assert.Contains("Action: Queue next", card.Text);
+        Assert.DoesNotContain("Action:", card.Text);
         Assert.Equal(
             ["Queue next", "Add more", "Clear", "Cancel"],
             card.Buttons.SelectMany(row => row.Select(button => button.Text)).ToArray());
