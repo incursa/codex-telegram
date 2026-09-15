@@ -200,6 +200,8 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
     private readonly ICodexSupervisionLedger _supervisionLedger;
     private readonly ICodexGateway? _gateway;
     private readonly ICodexTaskWorkspaceManager? _taskWorkspaceManager;
+    private readonly ITelegramMiniAppBrowserPairingStore? _browserPairingStore;
+    private readonly bool _browserPairingEnabled;
     private readonly TelegramBotOptions _options;
     private readonly TelegramInputOptions _inputOptions;
     private readonly ILogger<TelegramCodexBotCommandHandler> _logger;
@@ -245,7 +247,9 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         IOptions<CodexTelegramOptions>? codexOptions = null,
         ICodexSupervisionLedger? supervisionLedger = null,
         ICodexGateway? gateway = null,
-        ICodexTaskWorkspaceManager? taskWorkspaceManager = null)
+        ICodexTaskWorkspaceManager? taskWorkspaceManager = null,
+        ITelegramMiniAppBrowserPairingStore? browserPairingStore = null,
+        IOptions<TelegramMiniAppOptions>? miniAppOptions = null)
     {
         _parser = parser;
         _chunker = chunker;
@@ -285,6 +289,8 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         _supervisionLedger = supervisionLedger ?? new NullCodexSupervisionLedger();
         _gateway = gateway;
         _taskWorkspaceManager = taskWorkspaceManager;
+        _browserPairingStore = browserPairingStore;
+        _browserPairingEnabled = miniAppOptions?.Value.BrowserPairingEnabled ?? true;
     }
 
     public async Task HandleMessageAsync(
@@ -416,6 +422,9 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
                     break;
                 case "task":
                     await HandleTaskAsync(message, command.Arguments, sender, cancellationToken).ConfigureAwait(false);
+                    break;
+                case "pair":
+                    await HandlePairAsync(message, command.Arguments, sender, cancellationToken).ConfigureAwait(false);
                     break;
                 case "use":
                 case "resume":
@@ -1182,6 +1191,65 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
                     cancellationToken).ConfigureAwait(false);
                 return;
         }
+    }
+
+    private async Task HandlePairAsync(
+        TelegramInboundMessage message,
+        string arguments,
+        ITelegramBotMessageSender sender,
+        CancellationToken cancellationToken)
+    {
+        if (_browserPairingStore is null || !_browserPairingEnabled)
+        {
+            await ReplyAsync(sender, message, "Browser pairing is not available in this host.", null, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        if (!IsPrivateChat(message))
+        {
+            await ReplyAsync(sender, message, "Approve browser pairing only from this bot's private chat. No group or topic pairing is accepted.", null, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        string[] parts = SplitArguments(arguments, 2);
+        string pairingInput = parts.FirstOrDefault() ?? string.Empty;
+        string operation = pairingInput.ToLowerInvariant();
+        if (operation is "revoke" or "unpair")
+        {
+            int revoked = await _browserPairingStore.RevokeAsync(message.UserId, cancellationToken).ConfigureAwait(false);
+            await ReplyAsync(sender, message, revoked == 0 ? "No active browser sessions were found." : $"Revoked {revoked} browser session{(revoked == 1 ? string.Empty : "s")}.", null, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        if (operation is "status" or "list")
+        {
+            IReadOnlyList<TelegramMiniAppBrowserSessionSummary> sessions = await _browserPairingStore.ListSessionsAsync(message.UserId, cancellationToken).ConfigureAwait(false);
+            string text = sessions.Count == 0
+                ? "No browser sessions are paired. Start pairing in the browser, then send /pair <code> here."
+                : string.Join(Environment.NewLine, [
+                    "Browser sessions:",
+                    .. sessions.Take(10).Select(session => $"{session.PairingId} · {(session.Revoked ? "revoked" : "active")} · expires {session.ExpiresAtUtc:yyyy-MM-dd HH:mm} UTC"),
+                    "Use /pair revoke to revoke all of your browser sessions.",
+                ]);
+            await ReplyAsync(sender, message, text, null, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(operation))
+        {
+            await ReplyAsync(sender, message, "Start the browser pairing page, then send /pair <code> here. Use /pair status or /pair revoke afterward.", null, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        bool approved = await _browserPairingStore.ApproveAsync(pairingInput, message.UserId, cancellationToken).ConfigureAwait(false);
+        await ReplyAsync(
+            sender,
+            message,
+            approved
+                ? "Browser pairing approved. Return to the browser; it will connect automatically."
+                : "That browser pairing code is invalid, expired, or already used.",
+            null,
+            cancellationToken).ConfigureAwait(false);
     }
 
     private async Task HandleTaskCreateAsync(
@@ -4994,6 +5062,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             "/sessions all [count] - show recent Codex history",
             "/new [name] - create and select a Codex session in this conversation",
             "/task <new|status|release|discard> ... - manage an isolated task workspace",
+            "/pair <code> - approve a browser session; /pair status or /pair revoke",
             "/use <sessionId> - select the active session for this conversation",
             "/resume <sessionId> - resume a session in this conversation",
             "/send <text> - send text to the active session",

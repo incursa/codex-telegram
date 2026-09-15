@@ -40,6 +40,19 @@
 
       <div id="notice" class="notice" role="status" hidden></div>
 
+      <inc-card id="browser-pairing-card" class="dashboard-card pairing-card" hidden>
+        <div class="card-heading">
+          <div>
+            <h2>Connect this browser</h2>
+            <p>Approve this short-lived, read-only browser session from the bot's private Telegram chat.</p>
+          </div>
+          <inc-badge variant="warning">Pairing</inc-badge>
+        </div>
+        <div class="pairing-code" id="browser-pairing-code">—</div>
+        <p class="pairing-instructions" id="browser-pairing-instructions">Send the code to your bot as <code>/pair …</code>.</p>
+        <button id="browser-pairing-retry" class="secondary-button" type="button">Get a new code</button>
+      </inc-card>
+
       <inc-card class="dashboard-card attention-card">
         <div class="card-heading">
           <div>

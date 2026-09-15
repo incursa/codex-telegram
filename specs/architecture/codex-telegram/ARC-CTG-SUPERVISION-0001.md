@@ -99,6 +99,10 @@ The same record allocates the first currently non-listening development port in 
 
 The Telegram `/task new [name] [| baseRef]` command resolves the already-authorized active project, provisions a workspace, creates a new Codex session whose working directory is exactly the returned worktree, and registers the TaskId against the requesting user and conversation in the supervision ledger. `/task status` and release/discard resolve the task through that same user-plus-conversation scope. A live Codex session blocks release until the operator stops it; a successful release clears the active session selection so later prompts cannot target a removed worktree. No existing session is moved and no prompt is replayed implicitly.
 
+## R4.1 browser pairing
+
+When `TelegramMiniApp:BrowserPairingEnabled` is enabled, an anonymous browser may request a one-time high-entropy pairing challenge. The challenge displays a short-lived code and is approved only by `/pair <code>` from an allowlisted private Telegram chat. The state file stores hashes of the code and token, never their plaintext values. After approval, the browser presents the high-entropy token as a session header; the session is time-limited and `/pair revoke` records revocation for all sessions belonging to that Telegram user. Browser-authenticated requests use the same read-only Mini App projections as Telegram-authenticated requests; no browser mutation or approval endpoint is introduced.
+
 ## Later dependency sequence
 
 1. Add worker registration, authenticated routing, leases, readiness, draining, and isolation enforcement around the task workspace boundary.

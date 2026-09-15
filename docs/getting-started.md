@@ -61,7 +61,10 @@ To try it locally, add the following to `appsettings.Local.json` or user secrets
     "Enabled": true,
     "ListenUrl": "http://127.0.0.1:5287",
     "PublicUrl": "https://your-https-host.example/",
-    "InitDataMaxAgeSeconds": 900
+    "InitDataMaxAgeSeconds": 900,
+    "BrowserPairingEnabled": false,
+    "BrowserPairingLifetimeMinutes": 10,
+    "BrowserSessionLifetimeHours": 12
   }
 }
 ```
@@ -71,6 +74,8 @@ Telegram requires the Mini App URL to be HTTPS and reachable from the Telegram c
 Telegram can present the same Mini App in different webview modes depending on how it was launched. The bot profile's Main Mini App and the chat menu button are separate Telegram launch paths, so one may appear full-height while another initially appears compact. The dashboard handles compact, full-height, and true fullscreen presentation: it expands to the maximum available height when Telegram permits it, respects dynamic and content safe areas, and exposes a `Fullscreen` action when the Telegram client supports true fullscreen. The `Webview` badge shows the current presentation (`Compact`, `Full height`, or `Full screen`).
 
 The current Mini App remains intentionally read-only. Use the Telegram chat for creating sessions, changing projects, sending prompts, steering turns, and approvals. Failed refreshes show unavailable or stale state; sample data is only available with an explicit `?preview=1` query string. Do not expose the listener beyond the intended HTTPS proxy or tunnel.
+
+To allow the same read-only dashboard in a normal browser, set `BrowserPairingEnabled` to `true`. Open the Mini App URL in that browser, copy its short-lived pairing code, and send `/pair <code>` to the bot in the authorized private Telegram chat. The browser receives a time-limited session without weakening Telegram authorization; use `/pair status` to inspect sessions and `/pair revoke` to revoke all browser sessions for the Telegram user. Pairing is disabled by default.
 
 ## Before You Start
 

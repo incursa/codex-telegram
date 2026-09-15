@@ -333,6 +333,8 @@ builder.Services.PostConfigure<TelegramMiniAppOptions>(options =>
 {
     options.ListenUrl = DefaultIfWhiteSpace(options.ListenUrl, "http://127.0.0.1:5287")!;
     options.InitDataMaxAgeSeconds = Math.Clamp(options.InitDataMaxAgeSeconds, 60, 86_400);
+    options.BrowserPairingLifetimeMinutes = Math.Clamp(options.BrowserPairingLifetimeMinutes, 1, 60);
+    options.BrowserSessionLifetimeHours = Math.Clamp(options.BrowserSessionLifetimeHours, 1, 168);
 });
 
 builder.Services.AddSingleton(TimeProvider.System);
@@ -371,6 +373,8 @@ builder.Services.AddSingleton<ICodexTurnExecutionCoordinator>(sp => sp.GetRequir
 builder.Services.AddSingleton<ICodexGateway, CodexGateway>();
 builder.Services.AddSingleton<ICodexAccountUsageService, CodexAccountUsageService>();
 builder.Services.AddSingleton<TelegramMiniAppAuth>();
+builder.Services.AddSingleton<TelegramMiniAppBrowserPairingStore>();
+builder.Services.AddSingleton<ITelegramMiniAppBrowserPairingStore>(sp => sp.GetRequiredService<TelegramMiniAppBrowserPairingStore>());
 builder.Services.AddSingleton<TelegramCommandParser>();
 builder.Services.AddSingleton<TelegramMessageChunker>();
 builder.Services.AddSingleton<ITelegramBotStateStore, TelegramBotStateStore>();

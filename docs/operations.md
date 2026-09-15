@@ -61,6 +61,8 @@ Never publish the local listener directly, and do not enable the feature without
 
 Mini App requests must include Telegram's signed initialization data. The host rejects missing, stale, tampered, or non-allowlisted identities. Treat the public URL and all displayed session/workspace data as private operator data.
 
+Browser access is opt-in. Set `TelegramMiniApp:BrowserPairingEnabled` to `true`, open the public URL in a normal browser, then send the displayed `/pair <code>` command to the bot from the authorized private chat. Pairing codes expire quickly, browser sessions expire separately, and `/pair revoke` invalidates all browser sessions for that Telegram user. The browser receives only the same read-only projection; prompts, approvals, steering, and other control actions remain in Telegram.
+
 Task workspaces are provisioned below CodexTelegram:Workspace:TaskWorktreeRoot, or below the DataRoot/task-workspaces directory when that setting is empty. The allocator creates a task-specific Git branch/worktree and records one development port plus one database namespace in codex-task-workspaces.json. Configure a dedicated writable root for these worktrees; do not place it below the protected application installation directory. Releasing a clean worktree is safe; discarding changes requires an explicit operator action and is never inferred from a failed cleanup.
 
 Task detail is a Codex-authoritative read projection. Opening a task validates that the thread is present in the current Codex list and does not create a local thread manifest when one is missing. The browser receives bounded timeline and diff data plus redacted artifact metadata; it does not receive artifact payloads, result URLs, or raw artifact paths.

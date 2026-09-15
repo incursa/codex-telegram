@@ -681,6 +681,10 @@ The command:
 
 Use /task status [taskId] to inspect the allocation. Stop the task session before releasing it. Then use /task release <taskId> confirm for a clean worktree, or /task discard <taskId> confirm only when explicitly discarding changes. A failed session creation is cleaned up when possible; no prompt is replayed and an existing session is never moved implicitly.
 
+### `/pair <code>` / `/pair status` / `/pair revoke`
+
+Manages the optional read-only standalone browser session. Open the Mini App URL in a browser and send its displayed pairing code as `/pair <code>` from the authorized private bot chat. `/pair status` lists the current user's browser sessions; `/pair revoke` revokes all of them. Pairing is disabled unless `TelegramMiniApp:BrowserPairingEnabled` is enabled, and it never creates a browser path for prompts, approvals, steering, or other Telegram control actions.
+
 ### `/usage`
 
 Shows Codex account usage reported by the local Codex app-server.

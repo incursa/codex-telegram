@@ -150,6 +150,30 @@ public sealed class TelegramCommandHandlerTests
     }
 
     [Fact]
+    public async Task HandleMessageAsync_PairApprovesOnlyPrivateBrowserSession()
+    {
+        FakeBrowserPairingStore pairing = new("ABCD2345EFGH");
+        using CommandHandlerHarness harness = CommandHandlerHarness.Create(browserPairingStore: pairing);
+
+        await harness.Handler.HandleMessageAsync(
+            new TelegramInboundMessage(1234, 5555, "private", "/pair ABCD2345EFGH"),
+            harness.Sender,
+            CancellationToken.None);
+
+        Assert.Equal(1234, pairing.ApprovedUserId);
+        Assert.Contains("Browser pairing approved", Assert.Single(harness.Sender.Sent).Text);
+
+        harness.Sender.Sent.Clear();
+        await harness.Handler.HandleMessageAsync(
+            new TelegramInboundMessage(1234, -1005555, "supergroup", "/pair ABCD2345EFGH"),
+            harness.Sender,
+            CancellationToken.None);
+
+        Assert.Contains("private chat", Assert.Single(harness.Sender.Sent).Text);
+        Assert.Equal(1, pairing.ApprovalCount);
+    }
+
+    [Fact]
     public async Task HandleMessageAsync_IgnoresUnauthorizedNonWhoamiMessages()
     {
         using CommandHandlerHarness harness = CommandHandlerHarness.Create(new TelegramBotOptions
@@ -3018,6 +3042,7 @@ public sealed class TelegramCommandHandlerTests
             CodexSessionEventLog eventLog,
             CodexSupervisionLedger supervisionLedger,
             FakeCodexTaskWorkspaceManager? taskWorkspaceManager,
+            ITelegramMiniAppBrowserPairingStore? browserPairingStore,
             FakeTelegramForumTopicService topicService,
             FakeAudioTranscriptionService audioTranscription,
             TestTelegramBotMessageSender sender,
@@ -3040,6 +3065,7 @@ public sealed class TelegramCommandHandlerTests
             EventLog = eventLog;
             SupervisionLedger = supervisionLedger;
             TaskWorkspaceManager = taskWorkspaceManager;
+            BrowserPairingStore = browserPairingStore;
             TopicService = topicService;
             AudioTranscription = audioTranscription;
             Sender = sender;
@@ -3080,6 +3106,8 @@ public sealed class TelegramCommandHandlerTests
 
         public FakeCodexTaskWorkspaceManager? TaskWorkspaceManager { get; }
 
+        public ITelegramMiniAppBrowserPairingStore? BrowserPairingStore { get; }
+
         public FakeTelegramForumTopicService TopicService { get; }
 
         public FakeAudioTranscriptionService AudioTranscription { get; }
@@ -3093,7 +3121,8 @@ public sealed class TelegramCommandHandlerTests
             TelegramInputOptions? inputOptionsOverride = null,
             TimeSpan? steerStartTimeout = null,
             CodexTelegramOptions? codexOptionsOverride = null,
-            FakeCodexTaskWorkspaceManager? taskWorkspaceManager = null)
+            FakeCodexTaskWorkspaceManager? taskWorkspaceManager = null,
+            ITelegramMiniAppBrowserPairingStore? browserPairingStore = null)
         {
             TemporaryDirectory temp = TemporaryDirectory.Create();
             IOptions<CodexTelegramOptions> codexOptions = Microsoft.Extensions.Options.Options.Create(new CodexTelegramOptions
@@ -3168,9 +3197,10 @@ public sealed class TelegramCommandHandlerTests
                 steerStartTimeout,
                 codexOptions: codexOptions,
                 supervisionLedger: supervisionLedger,
-                taskWorkspaceManager: taskWorkspaceManager);
+                taskWorkspaceManager: taskWorkspaceManager,
+                browserPairingStore: browserPairingStore);
 
-            return new CommandHandlerHarness(temp, sessionManager, accountUsage, projectCatalog, stateStore, outboundQueue, turnCoordinator, turnOutputRelay, inputBundleStore, typingIndicatorRegistry, turnReactionRegistry, debugPreambleMode, outputModeState, traceStore, eventLog, supervisionLedger, taskWorkspaceManager, topicService, audioTranscription, sender, handler);
+            return new CommandHandlerHarness(temp, sessionManager, accountUsage, projectCatalog, stateStore, outboundQueue, turnCoordinator, turnOutputRelay, inputBundleStore, typingIndicatorRegistry, turnReactionRegistry, debugPreambleMode, outputModeState, traceStore, eventLog, supervisionLedger, taskWorkspaceManager, browserPairingStore, topicService, audioTranscription, sender, handler);
         }
 
 
@@ -3467,6 +3497,40 @@ public sealed class TelegramCommandHandlerTests
             Records[index] = released;
             return Task.FromResult<CodexTaskWorkspaceRecord?>(released);
         }
+    }
+
+    private sealed class FakeBrowserPairingStore(string expectedCode) : ITelegramMiniAppBrowserPairingStore
+    {
+        public long? ApprovedUserId { get; private set; }
+
+        public int ApprovalCount { get; private set; }
+
+        public Task<TelegramMiniAppBrowserPairingStart> StartAsync(CancellationToken cancellationToken)
+            => Task.FromResult(new TelegramMiniAppBrowserPairingStart("pairing:test", expectedCode, "token:test", DateTimeOffset.UtcNow.AddMinutes(10)));
+
+        public Task<TelegramMiniAppBrowserPairingStatus> GetPairingStatusAsync(string pairingToken, CancellationToken cancellationToken)
+            => Task.FromResult(new TelegramMiniAppBrowserPairingStatus("pending", DateTimeOffset.UtcNow.AddMinutes(10), null, null));
+
+        public Task<bool> ApproveAsync(string pairingCode, long userId, CancellationToken cancellationToken)
+        {
+            if (!string.Equals(pairingCode, expectedCode, StringComparison.Ordinal))
+            {
+                return Task.FromResult(false);
+            }
+
+            ApprovalCount++;
+            ApprovedUserId = userId;
+            return Task.FromResult(true);
+        }
+
+        public Task<int> RevokeAsync(long userId, CancellationToken cancellationToken)
+            => Task.FromResult(0);
+
+        public Task<long?> AuthenticateSessionAsync(string sessionToken, CancellationToken cancellationToken)
+            => Task.FromResult<long?>(null);
+
+        public Task<IReadOnlyList<TelegramMiniAppBrowserSessionSummary>> ListSessionsAsync(long userId, CancellationToken cancellationToken)
+            => Task.FromResult<IReadOnlyList<TelegramMiniAppBrowserSessionSummary>>([]);
     }
 
     private sealed record PlanSendRequest(string Input);

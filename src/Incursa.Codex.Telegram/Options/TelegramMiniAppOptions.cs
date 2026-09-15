@@ -24,4 +24,19 @@ public sealed class TelegramMiniAppOptions
     /// Gets or sets the maximum age of Telegram initialization data accepted by the API.
     /// </summary>
     public int InitDataMaxAgeSeconds { get; set; } = 900;
+
+    /// <summary>
+    /// Gets or sets whether the explicit Telegram-approved standalone browser pairing flow is enabled.
+    /// </summary>
+    public bool BrowserPairingEnabled { get; set; }
+
+    /// <summary>
+    /// Gets or sets how long an unapproved browser pairing remains valid.
+    /// </summary>
+    public int BrowserPairingLifetimeMinutes { get; set; } = 10;
+
+    /// <summary>
+    /// Gets or sets how long an approved browser session remains valid.
+    /// </summary>
+    public int BrowserSessionLifetimeHours { get; set; } = 12;
 }

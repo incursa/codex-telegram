@@ -41,6 +41,8 @@ The v1.0.32 R3.1 slice adds a task workspace allocator. It creates an isolated G
 
 The v1.0.33 R3.2 slice binds that allocator to an explicit Telegram `/task` flow. Creation resolves the already-authorized project, creates a new Codex session in the returned worktree, and registers the TaskId against the requesting user and conversation. Status and release require the same ownership scope; release refuses an in-use session, and discard remains an explicit confirmation. Coordinator/worker routing remains a later R3 slice.
 
+The v1.0.34 R4.1 slice adds opt-in browser pairing. A browser receives a high-entropy challenge and short-lived code, an allowlisted private Telegram command approves it, and the resulting browser session is read-only, time-limited, hash-persisted, and revocable with `/pair revoke`. Telegram initialization remains the preferred identity path; browser pairing does not add control or approval endpoints.
+
 ## Identity and state vocabulary
 
 Until R1 introduces durable application records, a Mini App task is a Codex thread and its turns are the run history. The implementation must not imply stronger guarantees than the underlying thread state provides.

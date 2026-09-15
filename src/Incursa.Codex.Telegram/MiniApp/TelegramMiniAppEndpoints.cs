@@ -17,8 +17,39 @@ internal static class TelegramMiniAppEndpoints
 {
     public static void Map(WebApplication app)
     {
+        app.MapGet("/api/mini-app/pairing/start", StartBrowserPairingAsync);
+        app.MapGet("/api/mini-app/pairing/status", GetBrowserPairingStatusAsync);
         app.MapGet("/api/mini-app/bootstrap", GetBootstrapAsync);
         app.MapGet("/api/mini-app/threads/{threadId}", GetThreadAsync);
+    }
+
+    private static async Task<IResult> StartBrowserPairingAsync(
+        IOptions<TelegramMiniAppOptions> miniAppOptions,
+        ITelegramMiniAppBrowserPairingStore pairingStore,
+        CancellationToken cancellationToken)
+    {
+        if (!miniAppOptions.Value.Enabled || !miniAppOptions.Value.BrowserPairingEnabled)
+        {
+            return Results.NotFound();
+        }
+
+        return Results.Ok(await pairingStore.StartAsync(cancellationToken).ConfigureAwait(false));
+    }
+
+    private static async Task<IResult> GetBrowserPairingStatusAsync(
+        HttpContext context,
+        IOptions<TelegramMiniAppOptions> miniAppOptions,
+        ITelegramMiniAppBrowserPairingStore pairingStore,
+        CancellationToken cancellationToken)
+    {
+        if (!miniAppOptions.Value.Enabled || !miniAppOptions.Value.BrowserPairingEnabled)
+        {
+            return Results.NotFound();
+        }
+
+        string? pairingToken = context.Request.Headers["X-Codex-Browser-Pairing"].FirstOrDefault();
+        TelegramMiniAppBrowserPairingStatus status = await pairingStore.GetPairingStatusAsync(pairingToken ?? string.Empty, cancellationToken).ConfigureAwait(false);
+        return status.State == "unknown" ? Results.Unauthorized() : Results.Ok(status);
     }
 
     private static async Task<IResult> GetBootstrapAsync(
@@ -31,6 +62,7 @@ internal static class TelegramMiniAppEndpoints
         ICodexTurnExecutionCoordinator turnCoordinator,
         ICodexAccountUsageService usageService,
         ICodexSupervisionLedger supervisionLedger,
+        ITelegramMiniAppBrowserPairingStore pairingStore,
         CancellationToken cancellationToken)
     {
         if (!miniAppOptions.Value.Enabled)
@@ -38,7 +70,13 @@ internal static class TelegramMiniAppEndpoints
             return Results.NotFound();
         }
 
-        if (!auth.TryAuthenticate(context.Request, out TelegramMiniAppIdentity identity, out _))
+        TelegramMiniAppIdentity? identity = await TryAuthenticateAsync(
+            context,
+            auth,
+            miniAppOptions.Value,
+            pairingStore,
+            cancellationToken).ConfigureAwait(false);
+        if (identity is null)
         {
             return Results.Unauthorized();
         }
@@ -152,6 +190,7 @@ internal static class TelegramMiniAppEndpoints
         ICodexGateway gateway,
         ICodexTurnExecutionCoordinator turnCoordinator,
         ICodexSupervisionLedger supervisionLedger,
+        ITelegramMiniAppBrowserPairingStore pairingStore,
         CancellationToken cancellationToken)
     {
         if (!miniAppOptions.Value.Enabled)
@@ -159,7 +198,13 @@ internal static class TelegramMiniAppEndpoints
             return Results.NotFound();
         }
 
-        if (!auth.TryAuthenticate(context.Request, out TelegramMiniAppIdentity identity, out _))
+        TelegramMiniAppIdentity? identity = await TryAuthenticateAsync(
+            context,
+            auth,
+            miniAppOptions.Value,
+            pairingStore,
+            cancellationToken).ConfigureAwait(false);
+        if (identity is null)
         {
             return Results.Unauthorized();
         }
@@ -247,6 +292,28 @@ internal static class TelegramMiniAppEndpoints
             task.CreatedAt,
             task.UpdatedAt,
             run?.UpdatedAt ?? task.UpdatedAt);
+    }
+
+    private static async Task<TelegramMiniAppIdentity?> TryAuthenticateAsync(
+        HttpContext context,
+        TelegramMiniAppAuth auth,
+        TelegramMiniAppOptions miniAppOptions,
+        ITelegramMiniAppBrowserPairingStore pairingStore,
+        CancellationToken cancellationToken)
+    {
+        if (auth.TryAuthenticate(context.Request, out TelegramMiniAppIdentity telegramIdentity, out _))
+        {
+            return telegramIdentity;
+        }
+
+        if (!miniAppOptions.BrowserPairingEnabled)
+        {
+            return null;
+        }
+
+        string? sessionToken = context.Request.Headers["X-Codex-Browser-Session"].FirstOrDefault();
+        long? userId = await pairingStore.AuthenticateSessionAsync(sessionToken ?? string.Empty, cancellationToken).ConfigureAwait(false);
+        return userId.HasValue ? new TelegramMiniAppIdentity(userId.Value, null, null, null) : null;
     }
 
 }

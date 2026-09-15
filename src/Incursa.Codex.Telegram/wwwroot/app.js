@@ -7,6 +7,10 @@
   let detailController = null;
   let detailHistoryActive = false;
   let detailPreviousFocus = null;
+  let browserPairingToken = sessionStorage.getItem("codexTelegramBrowserPairing");
+  let browserSessionToken = sessionStorage.getItem("codexTelegramBrowserSession");
+  let pairingPollTimer = null;
+  let pairingPollInFlight = false;
   const byId = (id) => document.getElementById(id);
   const root = document.documentElement;
 
@@ -111,6 +115,77 @@
     notice.hidden = !message;
     notice.textContent = message || "";
     notice.classList.toggle("error", error);
+  }
+
+  function setBrowserPairingVisible(visible) {
+    byId("browser-pairing-card").hidden = !visible;
+  }
+
+  function clearPairingPoll() {
+    if (pairingPollTimer) window.clearTimeout(pairingPollTimer);
+    pairingPollTimer = null;
+  }
+
+  async function pollBrowserPairing() {
+    if (!browserPairingToken || pairingPollInFlight) return;
+    pairingPollInFlight = true;
+    try {
+      const response = await fetch("/api/mini-app/pairing/status", {
+        headers: { "X-Codex-Browser-Pairing": browserPairingToken },
+        credentials: "same-origin"
+      });
+      if (response.status === 401) throw new Error("This pairing code is no longer valid.");
+      if (!response.ok) throw new Error(`Pairing status is unavailable (${response.status}).`);
+      const status = await response.json();
+      if (status.state === "approved" && status.sessionToken) {
+        browserSessionToken = status.sessionToken;
+        sessionStorage.setItem("codexTelegramBrowserSession", browserSessionToken);
+        sessionStorage.removeItem("codexTelegramBrowserPairing");
+        browserPairingToken = null;
+        clearPairingPoll();
+        setBrowserPairingVisible(false);
+        await load();
+        return;
+      }
+      if (status.state === "expired") {
+        browserPairingToken = null;
+        sessionStorage.removeItem("codexTelegramBrowserPairing");
+        clearPairingPoll();
+        showNotice("That pairing code expired. Select Get a new code to try again.", true);
+        setBadge("Pairing expired", "warning");
+        return;
+      }
+      pairingPollTimer = window.setTimeout(pollBrowserPairing, 2000);
+    } catch (error) {
+      if (browserPairingToken) {
+        showNotice(error.message || "Browser pairing status is unavailable.", true);
+        pairingPollTimer = window.setTimeout(pollBrowserPairing, 5000);
+      }
+    } finally {
+      pairingPollInFlight = false;
+    }
+  }
+
+  async function beginBrowserPairing() {
+    clearPairingPoll();
+    setBrowserPairingVisible(false);
+    setBadge("Pairing", "warning");
+    try {
+      const response = await fetch("/api/mini-app/pairing/start", { credentials: "same-origin" });
+      if (response.status === 404) throw new Error("Open this Mini App from Telegram, or enable browser pairing on this host.");
+      if (!response.ok) throw new Error(`Browser pairing is unavailable (${response.status}).`);
+      const start = await response.json();
+      browserPairingToken = start.pairingToken;
+      sessionStorage.setItem("codexTelegramBrowserPairing", browserPairingToken);
+      byId("browser-pairing-code").textContent = start.pairingCode || "—";
+      byId("browser-pairing-instructions").textContent = `Send /pair ${start.pairingCode || "<code>"} to your bot in its private Telegram chat. This code expires at ${formatDate(start.expiresAtUtc)}.`;
+      setBrowserPairingVisible(true);
+      showNotice("Approve the browser pairing code in Telegram to connect this page.");
+      pollBrowserPairing();
+    } catch (error) {
+      setBadge("Unavailable", "danger");
+      showNotice(error.message || "Browser pairing is unavailable.", true);
+    }
   }
 
   function setBadge(label, variant) {
@@ -619,6 +694,7 @@
   function authHeaders() {
     const headers = {};
     if (telegram?.initData) headers["X-Telegram-Init-Data"] = telegram.initData;
+    if (browserSessionToken) headers["X-Codex-Browser-Session"] = browserSessionToken;
     return headers;
   }
 
@@ -628,8 +704,18 @@
     const { signal } = loadController;
     setBadge("Connecting", "neutral");
     if (!state.stale) showNotice("");
+    if (!telegram && !browserSessionToken && !explicitPreview) {
+      await beginBrowserPairing();
+      return;
+    }
     try {
       const response = await fetch("/api/mini-app/bootstrap", { headers: authHeaders(), credentials: "same-origin", signal });
+      if (response.status === 401 && !telegram && browserSessionToken) {
+        browserSessionToken = null;
+        sessionStorage.removeItem("codexTelegramBrowserSession");
+        await beginBrowserPairing();
+        return;
+      }
       if (response.status === 401) throw new Error("Open this Mini App from Telegram to connect your account.");
       if (!response.ok) throw new Error(`Mini App is not enabled on this host (${response.status}).`);
       const data = await response.json();
@@ -711,6 +797,7 @@
     } catch (error) { showNotice(`Fullscreen mode could not be changed: ${error.message || "unsupported operation"}.`, true); }
   });
   byId("refresh-button").addEventListener("click", load);
+  byId("browser-pairing-retry").addEventListener("click", beginBrowserPairing);
   byId("close-detail-button").addEventListener("click", () => closeThreadDetail());
   byId("open-chat-button").addEventListener("click", () => { if (telegram) telegram.close(); else showNotice("Return to the Telegram chat to send prompts and change context."); });
   window.addEventListener("resize", syncViewport);

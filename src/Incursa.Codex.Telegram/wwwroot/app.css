@@ -121,6 +121,10 @@ h2 { margin-bottom: 0.25rem; font-size: 1.02rem; letter-spacing: -0.015em; }
 
 .notice { margin: 0 0 1rem; padding: 0.75rem 0.9rem; border: 1px solid #ead79c; border-radius: 9px; color: var(--inc-warning); background: var(--inc-warning-soft); font-size: 0.86rem; }
 .notice.error { border-color: #edb3b3; color: var(--inc-danger); background: #fff0f0; }
+.pairing-card { margin-bottom: 1rem; }
+.pairing-code { margin: 0.6rem 0; color: var(--inc-primary); font: 700 clamp(1.5rem, 7vw, 2.4rem) "IBM Plex Mono", ui-monospace, monospace; letter-spacing: 0.16em; overflow-wrap: anywhere; }
+.pairing-instructions { color: var(--inc-muted); font-size: 0.82rem; line-height: 1.5; }
+.pairing-instructions code { color: var(--inc-ink); font-family: "IBM Plex Mono", ui-monospace, monospace; }
 
 .summary-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0.8rem; margin-bottom: 1rem; }
 inc-card { display: block; }

@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 1.0.34 - 2026-09-15
+
+- Added opt-in standalone browser pairing for the read-only Mini App using short-lived Telegram-approved codes and revocable sessions.
+- Persisted only pairing/session hashes and kept browser access scoped to the same read-only projection as Telegram Mini App access.
+- Added `/pair <code>`, `/pair status`, and `/pair revoke` guidance and browser connection UI.
+
 ## 1.0.33 - 2026-09-15
 
 - Added `/task new`, `/task status`, `/task release`, and `/task discard` Telegram flows for creating and inspecting task-owned Codex worktrees.
