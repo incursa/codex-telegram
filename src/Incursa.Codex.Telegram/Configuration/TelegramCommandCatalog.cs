@@ -28,6 +28,7 @@ internal static class TelegramCommandCatalog
         Definition("project", "Select, add, or show the current project", mode: CodexTelegramMode.GeneralPurpose),
         Definition("repo", "Show repository status and guidance", mode: CodexTelegramMode.Repository),
         Definition("new", "Create and select a Codex session"),
+        Definition("task", "Create or inspect an isolated task workspace"),
         Definition("resume", "Resume a Codex session"),
         Definition("sessions", "List active and managed sessions"),
         Definition("use", "Select an existing session"),

@@ -580,7 +580,7 @@ For a complete parameter-by-parameter reference, see [command-reference.md](comm
 | `/rename <sessionId> <new name>` | Renames a session. | Use to make a session list easier to scan later. |
 | `/forget <sessionId>` | Hides a stopped or exited session without deleting logs. | Use when you want to clean up the visible list. |
 
-Task workspace provisioning is the next-stage R3 boundary. Set CodexTelegram:Workspace:TaskWorktreeRoot to a writable operator-owned directory when using managed worktrees, and keep TaskDevelopmentPortRangeStart/TaskDevelopmentPortRangeEnd inside an unused local range. The allocator records the worktree, branch, development port, and database namespace; it does not silently move an existing session into the worktree or replay a prompt.
+Task workspace provisioning is available through the R3 task flow. Set CodexTelegram:Workspace:TaskWorktreeRoot to a writable operator-owned directory when using managed worktrees, and keep TaskDevelopmentPortRangeStart/TaskDevelopmentPortRangeEnd inside an unused local range. Use `/task new [name] [| baseRef]` after selecting a project; it creates a new Codex session in the allocated worktree and records the task against the current authorized Telegram conversation. Stop the session before `/task release <taskId> confirm`; `/task discard <taskId> confirm` is the separate explicit path for discarding dirty work. The flow does not silently move an existing session or replay a prompt.
 
 There are also convenience behaviors that do not require a command:
 

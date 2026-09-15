@@ -8,6 +8,45 @@ namespace Incursa.Codex.Telegram.Tests;
 public sealed class CodexSupervisionLedgerTests
 {
     [Fact]
+    public async Task RegisterTaskIsIdempotentAndFailsClosedForMismatchedOwner()
+    {
+        using TemporaryDirectory temp = TemporaryDirectory.Create();
+        using CodexSupervisionLedger ledger = CreateLedger(temp.Path);
+        TelegramConversationScope conversation = new(1234, 55);
+
+        CodexSupervisionTaskRecord? first = await ledger.RegisterTaskAsync(
+            "task:explicit",
+            "thread-explicit",
+            "Explicit task",
+            conversation,
+            1234,
+            CancellationToken.None);
+        CodexSupervisionTaskRecord? replay = await ledger.RegisterTaskAsync(
+            "task:explicit",
+            "thread-explicit",
+            "Renamed replay",
+            conversation,
+            1234,
+            CancellationToken.None);
+        CodexSupervisionTaskRecord? mismatchedOwner = await ledger.RegisterTaskAsync(
+            "task:explicit",
+            "thread-explicit",
+            "Explicit task",
+            conversation,
+            9999,
+            CancellationToken.None);
+
+        Assert.NotNull(first);
+        Assert.Equal(first, replay);
+        Assert.Null(mismatchedOwner);
+        CodexSupervisionTaskSnapshot task = Assert.Single(await ledger.ListTasksAsync(1234, CancellationToken.None));
+        Assert.Equal(first!.TaskId, task.TaskId);
+        Assert.Equal(first.CodexThreadId, task.CodexThreadId);
+        Assert.Equal(first.Conversation, task.Conversation);
+        Assert.Empty(await ledger.ListTasksAsync(9999, CancellationToken.None));
+    }
+
+    [Fact]
     public async Task StartCommandCreatesSeparateTaskRunAndCommandIdentities()
     {
         using TemporaryDirectory temp = TemporaryDirectory.Create();

@@ -93,11 +93,15 @@ The Mini App renders the packet read-only and states that decisions remain in Te
 
 CodexTaskWorkspaceManager owns a bounded codex-task-workspaces.json projection in the operator data root. Given an already-authorized application TaskId, an existing repository root, and an optional explicit base ref, it creates a generated codex/task/... branch and Git worktree under the configured task-worktree root. Git arguments are passed without a shell, the source root is normalized, and the generated path is the only path later eligible for release.
 
-The same record allocates the first currently non-listening development port in the configured range and a safe database namespace. Port reservations are held for provisioned records and released records remain as historical evidence. Creation is idempotent for an active TaskId. Clean release uses git worktree remove; forced discard is a separate explicit operation and is never used automatically after an error. This slice does not imply that Codex has moved an existing thread into the worktree; the session/coordinator integration must use the returned path in a later R3 slice.
+The same record allocates the first currently non-listening development port in the configured range and a safe database namespace. Port reservations are held for provisioned records and released records remain as historical evidence. Creation is idempotent for an active TaskId. Clean release uses git worktree remove; forced discard is a separate explicit operation and is never used automatically after an error.
+
+## R3.2 explicit task workspace flow
+
+The Telegram `/task new [name] [| baseRef]` command resolves the already-authorized active project, provisions a workspace, creates a new Codex session whose working directory is exactly the returned worktree, and registers the TaskId against the requesting user and conversation in the supervision ledger. `/task status` and release/discard resolve the task through that same user-plus-conversation scope. A live Codex session blocks release until the operator stops it; a successful release clears the active session selection so later prompts cannot target a removed worktree. No existing session is moved and no prompt is replayed implicitly.
 
 ## Later dependency sequence
 
-1. Add task-owned worktrees, ports, database namespaces, worker registration, authenticated routing, leases, readiness, draining, and cleanup.
+1. Add worker registration, authenticated routing, leases, readiness, draining, and isolation enforcement around the task workspace boundary.
 2. Add the combined Mini App worker/attention projection and revocable Telegram-approved browser pairing as read-only surfaces.
 3. Add immutable task recipes and staged, drain-aware, health-verified worker updates with rollback evidence.
 

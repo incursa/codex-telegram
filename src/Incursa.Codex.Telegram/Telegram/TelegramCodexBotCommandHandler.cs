@@ -199,6 +199,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
     private readonly ICodexSessionEventLog _eventLog;
     private readonly ICodexSupervisionLedger _supervisionLedger;
     private readonly ICodexGateway? _gateway;
+    private readonly ICodexTaskWorkspaceManager? _taskWorkspaceManager;
     private readonly TelegramBotOptions _options;
     private readonly TelegramInputOptions _inputOptions;
     private readonly ILogger<TelegramCodexBotCommandHandler> _logger;
@@ -243,7 +244,8 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         RepositorySummaryService? repositorySummaryService = null,
         IOptions<CodexTelegramOptions>? codexOptions = null,
         ICodexSupervisionLedger? supervisionLedger = null,
-        ICodexGateway? gateway = null)
+        ICodexGateway? gateway = null,
+        ICodexTaskWorkspaceManager? taskWorkspaceManager = null)
     {
         _parser = parser;
         _chunker = chunker;
@@ -282,6 +284,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         _steerStartTimeout = steerStartTimeout ?? TelegramSteerStartTimeout;
         _supervisionLedger = supervisionLedger ?? new NullCodexSupervisionLedger();
         _gateway = gateway;
+        _taskWorkspaceManager = taskWorkspaceManager;
     }
 
     public async Task HandleMessageAsync(
@@ -410,6 +413,9 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
                     break;
                 case "new":
                     await HandleNewAsync(message, command.Arguments, sender, cancellationToken).ConfigureAwait(false);
+                    break;
+                case "task":
+                    await HandleTaskAsync(message, command.Arguments, sender, cancellationToken).ConfigureAwait(false);
                     break;
                 case "use":
                 case "resume":
@@ -1136,6 +1142,235 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         string topicName = BuildDefaultTopicName(resolvedProject.Project);
         await CreateTopicAndSessionAsync(message, topicName, resolvedProject.Project.WorkingDirectory, sender, cancellationToken).ConfigureAwait(false);
     }
+
+    private async Task HandleTaskAsync(
+        TelegramInboundMessage message,
+        string arguments,
+        ITelegramBotMessageSender sender,
+        CancellationToken cancellationToken)
+    {
+        if (_taskWorkspaceManager is null)
+        {
+            await ReplyAsync(sender, message, "Managed task workspaces are not available in this host.", null, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        string[] parts = SplitArguments(arguments, 2);
+        string operation = parts.FirstOrDefault()?.ToLowerInvariant() ?? "status";
+        string details = parts.Length > 1 ? parts[1] : string.Empty;
+        switch (operation)
+        {
+            case "new":
+            case "create":
+                await HandleTaskCreateAsync(message, details, sender, cancellationToken).ConfigureAwait(false);
+                return;
+            case "status":
+                await HandleTaskWorkspaceStatusAsync(message, details, sender, cancellationToken).ConfigureAwait(false);
+                return;
+            case "release":
+                await HandleTaskWorkspaceReleaseAsync(message, details, discardChanges: false, sender, cancellationToken).ConfigureAwait(false);
+                return;
+            case "discard":
+                await HandleTaskWorkspaceReleaseAsync(message, details, discardChanges: true, sender, cancellationToken).ConfigureAwait(false);
+                return;
+            default:
+                await ReplyAsync(
+                    sender,
+                    message,
+                    "Usage: /task new [name] [| baseRef], /task status [taskId], /task release <taskId> confirm, or /task discard <taskId> confirm",
+                    null,
+                    cancellationToken).ConfigureAwait(false);
+                return;
+        }
+    }
+
+    private async Task HandleTaskCreateAsync(
+        TelegramInboundMessage message,
+        string details,
+        ITelegramBotMessageSender sender,
+        CancellationToken cancellationToken)
+    {
+        ResolvedProject resolvedProject = await ResolveActiveProjectAsync(message.ConversationScope, cancellationToken).ConfigureAwait(false);
+        if (resolvedProject.Project is null)
+        {
+            await ReplyAsync(sender, message, resolvedProject.Message, null, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        string[] nameAndRef = details.Split('|', 2, StringSplitOptions.TrimEntries);
+        string sessionName = string.IsNullOrWhiteSpace(nameAndRef.FirstOrDefault())
+            ? BuildDefaultSessionName(resolvedProject.Project) + " task"
+            : nameAndRef[0].Trim();
+        string? baseRef = nameAndRef.Length > 1 && !string.IsNullOrWhiteSpace(nameAndRef[1])
+            ? nameAndRef[1].Trim()
+            : null;
+        string taskId = $"task:{Guid.NewGuid():N}";
+        CodexTaskWorkspaceRecord workspace = await _taskWorkspaceManager!.CreateAsync(
+            taskId,
+            resolvedProject.Project.WorkingDirectory,
+            baseRef,
+            cancellationToken).ConfigureAwait(false);
+
+        CodexSessionSummary session;
+        try
+        {
+            session = await CreateAndSelectSessionAsync(
+                message.ConversationScope,
+                sessionName,
+                workspace.WorktreePath,
+                cancellationToken).ConfigureAwait(false);
+            CodexSupervisionTaskRecord? registered = await _supervisionLedger.RegisterTaskAsync(
+                taskId,
+                session.Id,
+                session.Name,
+                message.ConversationScope,
+                message.UserId,
+                cancellationToken).ConfigureAwait(false);
+            if (registered is null)
+            {
+                throw new InvalidOperationException("The task could not be registered in the supervision ledger.");
+            }
+        }
+        catch
+        {
+            try
+            {
+                await _taskWorkspaceManager.ReleaseAsync(taskId, discardChanges: false, CancellationToken.None).ConfigureAwait(false);
+            }
+            catch (Exception cleanupException)
+            {
+                _logger.LogWarning(cleanupException, "Could not clean up task workspace {TaskId} after session creation failed.", taskId);
+            }
+
+            throw;
+        }
+
+        await ReplyAsync(
+            sender,
+            message,
+            string.Join(Environment.NewLine, [
+                "Task workspace created",
+                $"Task: {taskId}",
+                $"Session: {session.Name} ({session.Id})",
+                $"Worktree: {workspace.WorktreePath}",
+                $"Branch: {workspace.Branch}",
+                $"Development port: {workspace.DevelopmentPort}",
+                $"Database namespace: {workspace.DatabaseNamespace}",
+                $"Base ref: {baseRef ?? "HEAD"}",
+                "The session is selected and ready. Use /send <text> to start Codex in this worktree.",
+            ]),
+            null,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task HandleTaskWorkspaceStatusAsync(
+        TelegramInboundMessage message,
+        string taskId,
+        ITelegramBotMessageSender sender,
+        CancellationToken cancellationToken)
+    {
+        CodexSupervisionTaskRecord? task = await ResolveTaskForConversationAsync(message, taskId, cancellationToken).ConfigureAwait(false);
+        if (task is null)
+        {
+            await ReplyAsync(sender, message, "No task is recorded for this conversation. Use /task new [name] to create an isolated task workspace.", null, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        CodexTaskWorkspaceRecord? workspace = await _taskWorkspaceManager!.GetAsync(task.TaskId, cancellationToken).ConfigureAwait(false);
+        await ReplyAsync(sender, message, FormatTaskWorkspace(task, workspace), null, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task HandleTaskWorkspaceReleaseAsync(
+        TelegramInboundMessage message,
+        string details,
+        bool discardChanges,
+        ITelegramBotMessageSender sender,
+        CancellationToken cancellationToken)
+    {
+        string[] parts = SplitArguments(details, 2);
+        if (parts.Length != 2 || !parts[1].Equals("confirm", StringComparison.OrdinalIgnoreCase))
+        {
+            await ReplyAsync(
+                sender,
+                message,
+                discardChanges
+                    ? "Usage: /task discard <taskId> confirm. This removes the recorded worktree and discards its changes."
+                    : "Usage: /task release <taskId> confirm. The worktree must be clean.",
+                null,
+                cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        CodexSupervisionTaskRecord? task = await ResolveTaskForConversationAsync(message, parts[0], cancellationToken).ConfigureAwait(false);
+        if (task is null)
+        {
+            await ReplyAsync(sender, message, "That task is not owned by this authorized Telegram conversation.", null, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        CodexSessionSummary? session = await _sessionManager.GetSessionAsync(task.CodexThreadId, cancellationToken).ConfigureAwait(false);
+        if (session is not null && IsLive(session.Status))
+        {
+            await ReplyAsync(sender, message, "Stop the task session first with /stop, then retry the release. The worktree is still in use.", null, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        CodexTaskWorkspaceRecord? released = await _taskWorkspaceManager!.ReleaseAsync(task.TaskId, discardChanges, cancellationToken).ConfigureAwait(false);
+        if (released?.State == CodexTaskWorkspaceState.Released
+            && string.Equals(
+                await _stateStore.GetActiveSessionIdAsync(message.ConversationScope, cancellationToken).ConfigureAwait(false),
+                task.CodexThreadId,
+                StringComparison.OrdinalIgnoreCase))
+        {
+            await _stateStore.ClearActiveSessionAsync(message.ConversationScope, cancellationToken).ConfigureAwait(false);
+        }
+
+        await ReplyAsync(
+            sender,
+            message,
+            released is null
+                ? $"No task workspace is recorded for {task.TaskId}."
+                : FormatTaskWorkspace(task, released),
+            null,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<CodexSupervisionTaskRecord?> ResolveTaskForConversationAsync(
+        TelegramInboundMessage message,
+        string taskId,
+        CancellationToken cancellationToken)
+    {
+        IReadOnlyList<CodexSupervisionTaskSnapshot> tasks = await _supervisionLedger.ListTasksAsync(message.UserId, cancellationToken).ConfigureAwait(false);
+        CodexSupervisionTaskSnapshot? task = string.IsNullOrWhiteSpace(taskId)
+            ? tasks.FirstOrDefault(candidate => candidate.Conversation == message.ConversationScope)
+            : tasks.FirstOrDefault(candidate =>
+                candidate.Conversation == message.ConversationScope
+                && string.Equals(candidate.TaskId, taskId.Trim(), StringComparison.Ordinal));
+        return task is null
+            ? null
+            : new CodexSupervisionTaskRecord(
+                task.TaskId,
+                task.CodexThreadId,
+                task.SessionName,
+                task.Conversation,
+                message.UserId,
+                task.CreatedAt,
+                task.UpdatedAt);
+    }
+
+    private static string FormatTaskWorkspace(CodexSupervisionTaskRecord task, CodexTaskWorkspaceRecord? workspace)
+        => workspace is null
+            ? $"Task: {task.TaskId}{Environment.NewLine}Session: {task.SessionName}{Environment.NewLine}Workspace: not provisioned"
+            : string.Join(Environment.NewLine, [
+                $"Task: {task.TaskId}",
+                $"Session: {task.SessionName}",
+                $"Workspace state: {workspace.State}",
+                $"Worktree: {workspace.WorktreePath}",
+                $"Branch: {workspace.Branch}",
+                $"Development port: {workspace.DevelopmentPort}",
+                $"Database namespace: {workspace.DatabaseNamespace}",
+                $"Outcome: {workspace.OutcomeCode ?? "(none)"}",
+            ]);
 
     private async Task HandleNewAsync(TelegramInboundMessage message, string arguments, ITelegramBotMessageSender sender, CancellationToken cancellationToken)
     {
@@ -4758,6 +4993,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             "/sessions - show active and Telegram-managed sessions",
             "/sessions all [count] - show recent Codex history",
             "/new [name] - create and select a Codex session in this conversation",
+            "/task <new|status|release|discard> ... - manage an isolated task workspace",
             "/use <sessionId> - select the active session for this conversation",
             "/resume <sessionId> - resume a session in this conversation",
             "/send <text> - send text to the active session",

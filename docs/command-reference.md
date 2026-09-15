@@ -665,6 +665,22 @@ Expected behavior:
 4. Does not transfer a workspace, replay a prompt, or approve an action. Continue consequential work in this Telegram conversation.
 5. Rejects sessions that are not selected or not owned by the requesting Telegram user.
 
+### `/task new [name] [| baseRef]`
+
+Creates an isolated task workspace and selects a new Codex session rooted in its worktree.
+
+    /task new
+    /task new Fix login | main
+
+The command:
+
+1. Resolves the active allowlisted project, or the configured repository in Repository mode.
+2. Creates a task-owned Git branch and worktree below the configured task-worktree root.
+3. Allocates a development port and a safe database namespace for the task.
+4. Creates and selects a Codex session whose working directory is the new worktree, then registers the task with the supervision ledger.
+
+Use /task status [taskId] to inspect the allocation. Stop the task session before releasing it. Then use /task release <taskId> confirm for a clean worktree, or /task discard <taskId> confirm only when explicitly discarding changes. A failed session creation is cleaned up when possible; no prompt is replayed and an existing session is never moved implicitly.
+
 ### `/usage`
 
 Shows Codex account usage reported by the local Codex app-server.

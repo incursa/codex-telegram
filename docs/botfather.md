@@ -123,7 +123,7 @@ repo - Show repository status and guidance
 ```
 
 Advanced commands such as `/model`, `/thinking`, `/goal`, `/tail`, `/usage`,
-`/debug`, `/handoff`, `/outbound`, `/output`, `/topics`, and `/restart` remain supported as slash
+`/debug`, `/handoff`, `/outbound`, `/output`, `/task`, `/topics`, and `/restart` remain supported as slash
 commands even when they are omitted from the compact picker.
 
 `/output mode balanced` is the middle-ground presentation choice for concise

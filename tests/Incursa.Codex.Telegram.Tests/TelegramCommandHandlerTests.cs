@@ -62,6 +62,94 @@ public sealed class TelegramCommandHandlerTests
     }
 
     [Fact]
+    public async Task HandleMessageAsync_TaskCreatesOwnedWorkspaceAndStatusResolvesIt()
+    {
+        using TemporaryDirectory workspaceTemp = TemporaryDirectory.Create();
+        using CommandHandlerHarness harness = CommandHandlerHarness.Create(
+            taskWorkspaceManager: new FakeCodexTaskWorkspaceManager(workspaceTemp.CreateDirectory("worktrees")));
+        string projectPath = harness.Temp.CreateDirectory("repo");
+        harness.ProjectCatalog.Projects.Add(new CodexProjectCatalogRecord
+        {
+            WorkingDirectory = projectPath,
+            AddedAt = DateTimeOffset.Parse("2026-05-04T00:00:00Z", CultureInfo.InvariantCulture),
+        });
+        TelegramConversationScope conversation = new(5555, null);
+        await harness.StateStore.SetActiveProjectWorkingDirectoryAsync(conversation, projectPath, CancellationToken.None);
+
+        await harness.Handler.HandleMessageAsync(
+            new TelegramInboundMessage(1234, conversation.ChatId, "private", "/task new Fix login | main"),
+            harness.Sender,
+            CancellationToken.None);
+
+        SentTelegramMessage created = Assert.Single(harness.Sender.Sent);
+        Assert.Contains("Task workspace created", created.Text);
+        Assert.Contains("Branch: codex/task/", created.Text);
+        Assert.Contains("Development port:", created.Text);
+        Assert.Contains("Database namespace:", created.Text);
+        CreateCodexSessionRequest sessionRequest = Assert.Single(harness.SessionManager.CreateRequests);
+        Assert.Equal("Fix login", sessionRequest.Name);
+        Assert.NotEqual(projectPath, sessionRequest.WorkingDirectory);
+        Assert.Contains("worktrees", sessionRequest.WorkingDirectory, StringComparison.Ordinal);
+
+        CodexSupervisionTaskSnapshot task = Assert.Single(await harness.SupervisionLedger.ListTasksAsync(1234, CancellationToken.None));
+        Assert.Equal(sessionRequest.WorkingDirectory, harness.TaskWorkspaceManager!.Records.Single().WorktreePath);
+        Assert.Equal("thread-1", task.CodexThreadId);
+
+        harness.Sender.Sent.Clear();
+        await harness.Handler.HandleMessageAsync(
+            new TelegramInboundMessage(1234, conversation.ChatId, "private", "/task status"),
+            harness.Sender,
+            CancellationToken.None);
+
+        SentTelegramMessage status = Assert.Single(harness.Sender.Sent);
+        Assert.Contains($"Task: {task.TaskId}", status.Text);
+        Assert.Contains("Workspace state: Provisioned", status.Text);
+        Assert.Contains("Worktree:", status.Text);
+
+        harness.Sender.Sent.Clear();
+        await harness.Handler.HandleMessageAsync(
+            new TelegramInboundMessage(1234, conversation.ChatId, "private", $"/task release {task.TaskId} confirm"),
+            harness.Sender,
+            CancellationToken.None);
+
+        Assert.Contains("Workspace state: Released", Assert.Single(harness.Sender.Sent).Text);
+        Assert.Null(await harness.StateStore.GetActiveSessionIdAsync(conversation, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task HandleMessageAsync_TaskReleaseRequiresStoppedSession()
+    {
+        using TemporaryDirectory workspaceTemp = TemporaryDirectory.Create();
+        using CommandHandlerHarness harness = CommandHandlerHarness.Create(
+            taskWorkspaceManager: new FakeCodexTaskWorkspaceManager(workspaceTemp.CreateDirectory("worktrees")));
+        string projectPath = harness.Temp.CreateDirectory("repo");
+        harness.ProjectCatalog.Projects.Add(new CodexProjectCatalogRecord
+        {
+            WorkingDirectory = projectPath,
+            AddedAt = DateTimeOffset.Parse("2026-05-04T00:00:00Z", CultureInfo.InvariantCulture),
+        });
+        TelegramConversationScope conversation = new(5555, null);
+        await harness.StateStore.SetActiveProjectWorkingDirectoryAsync(conversation, projectPath, CancellationToken.None);
+        await harness.Handler.HandleMessageAsync(
+            new TelegramInboundMessage(1234, conversation.ChatId, "private", "/task new Running task"),
+            harness.Sender,
+            CancellationToken.None);
+
+        CodexSupervisionTaskSnapshot task = Assert.Single(await harness.SupervisionLedger.ListTasksAsync(1234, CancellationToken.None));
+        int sessionIndex = harness.SessionManager.Sessions.FindIndex(session => session.Id == task.CodexThreadId);
+        harness.SessionManager.Sessions[sessionIndex] = harness.SessionManager.Sessions[sessionIndex] with { Status = CodexSessionStatus.Running };
+        harness.Sender.Sent.Clear();
+
+        await harness.Handler.HandleMessageAsync(
+            new TelegramInboundMessage(1234, conversation.ChatId, "private", $"/task discard {task.TaskId} confirm"),
+            harness.Sender,
+            CancellationToken.None);
+
+        Assert.Contains("Stop the task session first", Assert.Single(harness.Sender.Sent).Text);
+        Assert.Equal(CodexTaskWorkspaceState.Provisioned, harness.TaskWorkspaceManager!.Records.Single().State);
+    }
+
+    [Fact]
     public async Task HandleMessageAsync_IgnoresUnauthorizedNonWhoamiMessages()
     {
         using CommandHandlerHarness harness = CommandHandlerHarness.Create(new TelegramBotOptions
@@ -2929,6 +3017,7 @@ public sealed class TelegramCommandHandlerTests
             TelegramDebugTraceStore traceStore,
             CodexSessionEventLog eventLog,
             CodexSupervisionLedger supervisionLedger,
+            FakeCodexTaskWorkspaceManager? taskWorkspaceManager,
             FakeTelegramForumTopicService topicService,
             FakeAudioTranscriptionService audioTranscription,
             TestTelegramBotMessageSender sender,
@@ -2950,6 +3039,7 @@ public sealed class TelegramCommandHandlerTests
             TraceStore = traceStore;
             EventLog = eventLog;
             SupervisionLedger = supervisionLedger;
+            TaskWorkspaceManager = taskWorkspaceManager;
             TopicService = topicService;
             AudioTranscription = audioTranscription;
             Sender = sender;
@@ -2988,6 +3078,8 @@ public sealed class TelegramCommandHandlerTests
 
         public CodexSupervisionLedger SupervisionLedger { get; }
 
+        public FakeCodexTaskWorkspaceManager? TaskWorkspaceManager { get; }
+
         public FakeTelegramForumTopicService TopicService { get; }
 
         public FakeAudioTranscriptionService AudioTranscription { get; }
@@ -3000,7 +3092,8 @@ public sealed class TelegramCommandHandlerTests
             TelegramBotOptions? botOptions = null,
             TelegramInputOptions? inputOptionsOverride = null,
             TimeSpan? steerStartTimeout = null,
-            CodexTelegramOptions? codexOptionsOverride = null)
+            CodexTelegramOptions? codexOptionsOverride = null,
+            FakeCodexTaskWorkspaceManager? taskWorkspaceManager = null)
         {
             TemporaryDirectory temp = TemporaryDirectory.Create();
             IOptions<CodexTelegramOptions> codexOptions = Microsoft.Extensions.Options.Options.Create(new CodexTelegramOptions
@@ -3074,9 +3167,10 @@ public sealed class TelegramCommandHandlerTests
                 NullLogger<TelegramCodexBotCommandHandler>.Instance,
                 steerStartTimeout,
                 codexOptions: codexOptions,
-                supervisionLedger: supervisionLedger);
+                supervisionLedger: supervisionLedger,
+                taskWorkspaceManager: taskWorkspaceManager);
 
-            return new CommandHandlerHarness(temp, sessionManager, accountUsage, projectCatalog, stateStore, outboundQueue, turnCoordinator, turnOutputRelay, inputBundleStore, typingIndicatorRegistry, turnReactionRegistry, debugPreambleMode, outputModeState, traceStore, eventLog, supervisionLedger, topicService, audioTranscription, sender, handler);
+            return new CommandHandlerHarness(temp, sessionManager, accountUsage, projectCatalog, stateStore, outboundQueue, turnCoordinator, turnOutputRelay, inputBundleStore, typingIndicatorRegistry, turnReactionRegistry, debugPreambleMode, outputModeState, traceStore, eventLog, supervisionLedger, taskWorkspaceManager, topicService, audioTranscription, sender, handler);
         }
 
 
@@ -3304,6 +3398,74 @@ public sealed class TelegramCommandHandlerTests
         {
             Sessions.RemoveAll(session => string.Equals(session.Id, sessionId, StringComparison.OrdinalIgnoreCase));
             return Task.CompletedTask;
+        }
+    }
+
+    private sealed class FakeCodexTaskWorkspaceManager : ICodexTaskWorkspaceManager
+    {
+        private readonly string _worktreeRoot;
+
+        public FakeCodexTaskWorkspaceManager(string worktreeRoot)
+        {
+            _worktreeRoot = Path.GetFullPath(worktreeRoot);
+        }
+
+        public List<CodexTaskWorkspaceRecord> Records { get; } = [];
+
+        public Task<CodexTaskWorkspaceRecord> CreateAsync(
+            string taskId,
+            string repositoryRoot,
+            string? baseRef,
+            CancellationToken cancellationToken)
+        {
+            CodexTaskWorkspaceRecord? existing = Records.FirstOrDefault(record =>
+                record.TaskId == taskId && record.State == CodexTaskWorkspaceState.Provisioned);
+            if (existing is not null)
+            {
+                return Task.FromResult(existing);
+            }
+
+            string suffix = taskId.Replace(':', '-');
+            string worktreePath = Path.Combine(_worktreeRoot, suffix);
+            Directory.CreateDirectory(worktreePath);
+            DateTimeOffset now = DateTimeOffset.Parse("2026-05-06T12:00:00Z", CultureInfo.InvariantCulture);
+            CodexTaskWorkspaceRecord record = new(
+                $"workspace:{suffix}",
+                taskId,
+                Path.GetFullPath(repositoryRoot),
+                worktreePath,
+                $"codex/task/{suffix}",
+                $"codex_task_{suffix}",
+                43123,
+                CodexTaskWorkspaceState.Provisioned,
+                now,
+                now);
+            Records.Add(record);
+            return Task.FromResult(record);
+        }
+
+        public Task<CodexTaskWorkspaceRecord?> GetAsync(string taskId, CancellationToken cancellationToken)
+            => Task.FromResult<CodexTaskWorkspaceRecord?>(Records.LastOrDefault(record => record.TaskId == taskId));
+
+        public Task<IReadOnlyList<CodexTaskWorkspaceRecord>> ListAsync(CancellationToken cancellationToken)
+            => Task.FromResult<IReadOnlyList<CodexTaskWorkspaceRecord>>(Records.ToArray());
+
+        public Task<CodexTaskWorkspaceRecord?> ReleaseAsync(string taskId, bool discardChanges, CancellationToken cancellationToken)
+        {
+            int index = Records.FindLastIndex(record => record.TaskId == taskId && record.State == CodexTaskWorkspaceState.Provisioned);
+            if (index < 0)
+            {
+                return Task.FromResult<CodexTaskWorkspaceRecord?>(Records.LastOrDefault(record => record.TaskId == taskId));
+            }
+
+            CodexTaskWorkspaceRecord released = Records[index] with
+            {
+                State = CodexTaskWorkspaceState.Released,
+                OutcomeCode = discardChanges ? "released_discarded" : "released_clean",
+                ReleasedAt = DateTimeOffset.Parse("2026-05-06T12:01:00Z", CultureInfo.InvariantCulture),
+            };
+            Records[index] = released;
+            return Task.FromResult<CodexTaskWorkspaceRecord?>(released);
         }
     }
 

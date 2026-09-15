@@ -14,6 +14,14 @@ namespace Incursa.Codex.Telegram.Services;
 /// </summary>
 internal interface ICodexSupervisionLedger
 {
+    Task<CodexSupervisionTaskRecord?> RegisterTaskAsync(
+        string taskId,
+        string codexThreadId,
+        string sessionName,
+        TelegramConversationScope conversation,
+        long userId,
+        CancellationToken cancellationToken);
+
     Task<CodexSupervisionCommandStart> StartCommandAsync(
         string? commandId,
         string codexThreadId,
@@ -325,6 +333,55 @@ internal sealed class CodexSupervisionLedger : ICodexSupervisionLedger, IDisposa
         _dataRoot = string.IsNullOrWhiteSpace(dataRootOverride)
             ? GetDataRoot()
             : Path.GetFullPath(dataRootOverride);
+    }
+
+    public async Task<CodexSupervisionTaskRecord?> RegisterTaskAsync(
+        string taskId,
+        string codexThreadId,
+        string sessionName,
+        TelegramConversationScope conversation,
+        long userId,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(taskId) || string.IsNullOrWhiteSpace(codexThreadId))
+        {
+            return null;
+        }
+
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            LedgerState state = await LoadAsync(cancellationToken).ConfigureAwait(false);
+            string conversationKey = conversation.ToStorageKey();
+            LedgerTaskRecord? existing = state.Tasks.FirstOrDefault(task =>
+                string.Equals(task.TaskId, taskId.Trim(), StringComparison.Ordinal));
+            if (existing is not null)
+            {
+                return existing.OwnerUserId == userId
+                    && string.Equals(existing.CodexThreadId, codexThreadId.Trim(), StringComparison.Ordinal)
+                    && string.Equals(existing.ConversationKey, conversationKey, StringComparison.Ordinal)
+                    ? existing.ToPublicRecord()
+                    : null;
+            }
+
+            DateTimeOffset now = _timeProvider.GetUtcNow();
+            LedgerTaskRecord taskRecord = new(
+                taskId.Trim(),
+                codexThreadId.Trim(),
+                Limit(sessionName, 200) ?? "Codex task",
+                conversationKey,
+                userId,
+                now,
+                now);
+            state.Tasks.Add(taskRecord);
+            Trim(state);
+            await SaveAsync(state, cancellationToken).ConfigureAwait(false);
+            return taskRecord.ToPublicRecord();
+        }
+        finally
+        {
+            _gate.Release();
+        }
     }
 
     public async Task<CodexSupervisionCommandStart> StartCommandAsync(
@@ -1583,6 +1640,15 @@ internal sealed class CodexSupervisionLedger : ICodexSupervisionLedger, IDisposa
 
 internal sealed class NullCodexSupervisionLedger : ICodexSupervisionLedger
 {
+    public Task<CodexSupervisionTaskRecord?> RegisterTaskAsync(
+        string taskId,
+        string codexThreadId,
+        string sessionName,
+        TelegramConversationScope conversation,
+        long userId,
+        CancellationToken cancellationToken)
+        => Task.FromResult<CodexSupervisionTaskRecord?>(null);
+
     public Task<CodexSupervisionCommandStart> StartCommandAsync(
         string? commandId,
         string sessionId,

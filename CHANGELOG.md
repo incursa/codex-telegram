@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 1.0.33 - 2026-09-15
+
+- Added `/task new`, `/task status`, `/task release`, and `/task discard` Telegram flows for creating and inspecting task-owned Codex worktrees.
+- Registered explicitly created task identities in the durable supervision ledger with conversation and user ownership checks.
+- Prevented release of worktrees whose Codex session is still running and cleared the active session after a successful release.
+
 ## 1.0.32 - 2026-09-15
 
 - Added a bounded task workspace allocator that provisions Git worktrees and task branches from explicit repositories and base refs.

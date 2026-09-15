@@ -15,6 +15,8 @@ When enabled by the operator, open the bot's Telegram menu button to view a mobi
 
 The Mini App only receives project/task display labels rather than raw local filesystem paths. Review data is deterministic and bounded: at most 200 changed-file previews and 100 artifact records are returned, while artifact paths, generated results, and other raw metadata remain server-side.
 
+For isolated parallel work, use /task new [name] [| baseRef]. It provisions a task-owned Git worktree, branch, development port, and database namespace, then starts a new Codex session in that worktree. Inspect it with /task status; stop the session before release, clean release requires confirmation, and dirty-worktree discard is a separate explicit command.
+
 Telegram may open the profile Main Mini App and the chat menu Mini App with different initial presentation. The dashboard supports compact, full-height, and true fullscreen webviews. In compact mode it requests the maximum available height when the client allows that transition; use the `Fullscreen` button for a user-initiated true fullscreen transition when available. The `Webview` badge reflects the current client state, and returning to the app after minimizing or closing refreshes the dashboard data.
 
 ## Normal Start
