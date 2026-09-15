@@ -47,6 +47,45 @@ public sealed class CodexSupervisionLedgerTests
     }
 
     [Fact]
+    public async Task TaskWorkerBindingPersistsOwnershipAndFailsClosedForAnotherUser()
+    {
+        using TemporaryDirectory temp = TemporaryDirectory.Create();
+        using CodexSupervisionLedger ledger = CreateLedger(temp.Path);
+        CodexSupervisionTaskRecord task = (await ledger.RegisterTaskAsync(
+            "task:bound",
+            "thread-bound",
+            "Bound task",
+            new TelegramConversationScope(1234, null),
+            1234,
+            CancellationToken.None))!;
+
+        CodexSupervisionTaskRecord? bound = await ledger.BindTaskWorkerAsync(
+            task.TaskId,
+            1234,
+            "worker:remote",
+            "lease:remote",
+            "workspace:bound",
+            CancellationToken.None);
+        CodexSupervisionTaskRecord? denied = await ledger.BindTaskWorkerAsync(
+            task.TaskId,
+            9999,
+            "worker:other",
+            "lease:other",
+            null,
+            CancellationToken.None);
+
+        Assert.NotNull(bound);
+        Assert.Equal("worker:remote", bound.WorkerId);
+        Assert.Equal("lease:remote", bound.LeaseId);
+        Assert.Equal("workspace:bound", bound.WorkspaceId);
+        Assert.Null(denied);
+        CodexSupervisionTaskSnapshot snapshot = Assert.Single(await ledger.ListTasksAsync(1234, CancellationToken.None));
+        Assert.Equal("worker:remote", snapshot.WorkerId);
+        Assert.Equal("lease:remote", snapshot.LeaseId);
+        Assert.Equal("workspace:bound", snapshot.WorkspaceId);
+    }
+
+    [Fact]
     public async Task StartCommandCreatesSeparateTaskRunAndCommandIdentities()
     {
         using TemporaryDirectory temp = TemporaryDirectory.Create();

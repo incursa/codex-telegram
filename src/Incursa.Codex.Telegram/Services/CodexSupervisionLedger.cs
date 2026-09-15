@@ -23,6 +23,14 @@ internal interface ICodexSupervisionLedger
         CancellationToken cancellationToken,
         CodexTaskRecipeSnapshot? recipe = null);
 
+    Task<CodexSupervisionTaskRecord?> BindTaskWorkerAsync(
+        string taskId,
+        long ownerUserId,
+        string workerId,
+        string leaseId,
+        string? workspaceId,
+        CancellationToken cancellationToken);
+
     Task<CodexSupervisionCommandStart> StartCommandAsync(
         string? commandId,
         string codexThreadId,
@@ -179,7 +187,10 @@ internal sealed record CodexSupervisionTaskRecord(
     DateTimeOffset UpdatedAt,
     string? RecipeId = null,
     string? RecipeVersion = null,
-    string? RecipeDisplayName = null);
+    string? RecipeDisplayName = null,
+    string? WorkerId = null,
+    string? LeaseId = null,
+    string? WorkspaceId = null);
 
 internal sealed record CodexSupervisionRunRecord(
     string RunId,
@@ -290,7 +301,10 @@ internal sealed record CodexSupervisionTaskSnapshot(
     CodexSupervisionRunSnapshot? LatestRun,
     string? RecipeId = null,
     string? RecipeVersion = null,
-    string? RecipeDisplayName = null);
+    string? RecipeDisplayName = null,
+    string? WorkerId = null,
+    string? LeaseId = null,
+    string? WorkspaceId = null);
 
 internal sealed record CodexSupervisionRunSnapshot(
     string RunId,
@@ -388,6 +402,44 @@ internal sealed class CodexSupervisionLedger : ICodexSupervisionLedger, IDisposa
             Trim(state);
             await SaveAsync(state, cancellationToken).ConfigureAwait(false);
             return taskRecord.ToPublicRecord();
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    public async Task<CodexSupervisionTaskRecord?> BindTaskWorkerAsync(
+        string taskId,
+        long ownerUserId,
+        string workerId,
+        string leaseId,
+        string? workspaceId,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(taskId) || string.IsNullOrWhiteSpace(workerId) || string.IsNullOrWhiteSpace(leaseId))
+        {
+            return null;
+        }
+
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            LedgerState state = await LoadAsync(cancellationToken).ConfigureAwait(false);
+            LedgerTaskRecord? task = state.Tasks.FirstOrDefault(candidate =>
+                candidate.OwnerUserId == ownerUserId
+                && string.Equals(candidate.TaskId, taskId.Trim(), StringComparison.Ordinal));
+            if (task is null)
+            {
+                return null;
+            }
+
+            task.WorkerId = Limit(workerId, 120);
+            task.LeaseId = Limit(leaseId, 160);
+            task.WorkspaceId = Limit(workspaceId, 160);
+            task.UpdatedAt = _timeProvider.GetUtcNow();
+            await SaveAsync(state, cancellationToken).ConfigureAwait(false);
+            return task.ToPublicRecord();
         }
         finally
         {
@@ -1238,7 +1290,10 @@ internal sealed class CodexSupervisionLedger : ICodexSupervisionLedger, IDisposa
                     .FirstOrDefault(),
                 task.RecipeId,
                 task.RecipeVersion,
-                task.RecipeDisplayName))
+                task.RecipeDisplayName,
+                task.WorkerId,
+                task.LeaseId,
+                task.WorkspaceId))
             .OrderByDescending(task => task.UpdatedAt)
             .ToArray();
 
@@ -1370,7 +1425,10 @@ internal sealed class CodexSupervisionLedger : ICodexSupervisionLedger, IDisposa
             DateTimeOffset updatedAt,
             string? recipeId = null,
             string? recipeVersion = null,
-            string? recipeDisplayName = null)
+            string? recipeDisplayName = null,
+            string? workerId = null,
+            string? leaseId = null,
+            string? workspaceId = null)
         {
             TaskId = taskId;
             CodexThreadId = codexThreadId;
@@ -1382,6 +1440,9 @@ internal sealed class CodexSupervisionLedger : ICodexSupervisionLedger, IDisposa
             RecipeId = recipeId;
             RecipeVersion = recipeVersion;
             RecipeDisplayName = recipeDisplayName;
+            WorkerId = workerId;
+            LeaseId = leaseId;
+            WorkspaceId = workspaceId;
         }
 
         public string TaskId { get; set; } = string.Empty;
@@ -1394,11 +1455,14 @@ internal sealed class CodexSupervisionLedger : ICodexSupervisionLedger, IDisposa
         public string? RecipeId { get; set; }
         public string? RecipeVersion { get; set; }
         public string? RecipeDisplayName { get; set; }
+        public string? WorkerId { get; set; }
+        public string? LeaseId { get; set; }
+        public string? WorkspaceId { get; set; }
 
         public CodexSupervisionTaskRecord ToPublicRecord()
             => TelegramConversationScope.TryParseStorageKey(ConversationKey, out TelegramConversationScope conversation)
-                ? new(TaskId, CodexThreadId, SessionName, conversation, OwnerUserId, CreatedAt, UpdatedAt, RecipeId, RecipeVersion, RecipeDisplayName)
-                : new(TaskId, CodexThreadId, SessionName, new TelegramConversationScope(OwnerUserId, null), OwnerUserId, CreatedAt, UpdatedAt, RecipeId, RecipeVersion, RecipeDisplayName);
+                ? new(TaskId, CodexThreadId, SessionName, conversation, OwnerUserId, CreatedAt, UpdatedAt, RecipeId, RecipeVersion, RecipeDisplayName, WorkerId, LeaseId, WorkspaceId)
+                : new(TaskId, CodexThreadId, SessionName, new TelegramConversationScope(OwnerUserId, null), OwnerUserId, CreatedAt, UpdatedAt, RecipeId, RecipeVersion, RecipeDisplayName, WorkerId, LeaseId, WorkspaceId);
     }
 
     private sealed class LedgerRunRecord
@@ -1671,6 +1735,15 @@ internal sealed class NullCodexSupervisionLedger : ICodexSupervisionLedger
         long userId,
         CancellationToken cancellationToken,
         CodexTaskRecipeSnapshot? recipe = null)
+        => Task.FromResult<CodexSupervisionTaskRecord?>(null);
+
+    public Task<CodexSupervisionTaskRecord?> BindTaskWorkerAsync(
+        string taskId,
+        long ownerUserId,
+        string workerId,
+        string leaseId,
+        string? workspaceId,
+        CancellationToken cancellationToken)
         => Task.FromResult<CodexSupervisionTaskRecord?>(null);
 
     public Task<CodexSupervisionCommandStart> StartCommandAsync(

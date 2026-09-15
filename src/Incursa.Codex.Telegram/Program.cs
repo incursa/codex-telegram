@@ -426,6 +426,7 @@ catch (InvalidOperationException exception)
 app.UseDefaultFiles();
 app.UseStaticFiles();
 CodexCoordinatorWorkerEndpoints.Map(app);
+CodexWorkerUpdateEndpoints.Map(app);
 TelegramMiniAppEndpoints.Map(app);
 
 await RehydrateTelegramThreadFollowsAsync(app.Services, CancellationToken.None);

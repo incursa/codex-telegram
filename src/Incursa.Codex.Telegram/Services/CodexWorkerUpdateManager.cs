@@ -15,13 +15,22 @@ internal interface ICodexWorkerUpdateManager
     Task<CodexWorkerUpdateSnapshot> StageAsync(CancellationToken cancellationToken);
 
     Task<CodexWorkerUpdateSnapshot> StageRollbackAsync(CancellationToken cancellationToken);
+
+    Task<CodexWorkerUpdateSnapshot> CompleteAsync(
+        CodexWorkerUpdateCompletion completion,
+        CancellationToken cancellationToken);
 }
+
+internal sealed record CodexWorkerUpdateCompletion(string Version, string Sha256, bool Healthy);
 
 internal enum CodexWorkerUpdateState
 {
     None,
     Staged,
     RollbackStaged,
+    Active,
+    HealthFailed,
+    RollbackActive,
     Rejected,
 }
 
@@ -140,7 +149,9 @@ internal sealed class CodexWorkerUpdateManager : ICodexWorkerUpdateManager, IDis
             CopyIfDifferent(packagePath, stagedPackagePath);
 
             string currentBinaryPath = Environment.ProcessPath ?? throw new InvalidOperationException("The current worker executable path is unavailable.");
-            string rollbackPackageName = $"codex-telegram-last-known-good-{ToSafeToken(GetCurrentVersion(), 40)}.bin";
+            string rollbackVersion = GetCurrentVersion();
+            string rollbackSha256 = await ComputeSha256Async(currentBinaryPath, cancellationToken).ConfigureAwait(false);
+            string rollbackPackageName = $"codex-telegram-last-known-good-{ToSafeToken(rollbackVersion, 40)}.bin";
             string rollbackPackagePath = Path.Combine(stageRoot, rollbackPackageName);
             CopyIfDifferent(currentBinaryPath, rollbackPackagePath);
 
@@ -151,6 +162,8 @@ internal sealed class CodexWorkerUpdateManager : ICodexWorkerUpdateManager, IDis
                 expectedSha256,
                 stagedPackageName,
                 rollbackPackageName,
+                rollbackVersion,
+                rollbackSha256,
                 _timeProvider.GetUtcNow(),
                 "package_verified_and_staged");
             await SaveAsync(staged, cancellationToken).ConfigureAwait(false);
@@ -173,7 +186,8 @@ internal sealed class CodexWorkerUpdateManager : ICodexWorkerUpdateManager, IDis
         try
         {
             WorkerUpdateState state = await LoadAsync(cancellationToken).ConfigureAwait(false);
-            if (state.State != CodexWorkerUpdateState.Staged || string.IsNullOrWhiteSpace(state.RollbackPackageName))
+            if (state.State is not (CodexWorkerUpdateState.Staged or CodexWorkerUpdateState.HealthFailed)
+                || string.IsNullOrWhiteSpace(state.RollbackPackageName))
             {
                 return await RejectAsync(state, "no_staged_update", cancellationToken).ConfigureAwait(false);
             }
@@ -205,6 +219,47 @@ internal sealed class CodexWorkerUpdateManager : ICodexWorkerUpdateManager, IDis
         }
     }
 
+    public async Task<CodexWorkerUpdateSnapshot> CompleteAsync(
+        CodexWorkerUpdateCompletion completion,
+        CancellationToken cancellationToken)
+    {
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            WorkerUpdateState state = await LoadAsync(cancellationToken).ConfigureAwait(false);
+            bool rollback = state.State == CodexWorkerUpdateState.RollbackStaged;
+            if (state.State is not (CodexWorkerUpdateState.Staged or CodexWorkerUpdateState.RollbackStaged))
+            {
+                return await RejectAsync(state, "no_staged_update", cancellationToken).ConfigureAwait(false);
+            }
+
+            string expectedVersion = rollback ? state.RollbackVersion ?? string.Empty : state.TargetVersion ?? string.Empty;
+            string expectedSha256 = rollback ? state.RollbackSha256 ?? string.Empty : state.ExpectedSha256 ?? string.Empty;
+            CodexWorkerSnapshot worker = await _workerRegistry.GetSnapshotAsync(cancellationToken).ConfigureAwait(false);
+            bool verified = completion.Healthy
+                && worker.State == CodexWorkerState.Online
+                && string.Equals(worker.Readiness, "ready", StringComparison.OrdinalIgnoreCase)
+                && VersionsMatch(completion.Version, expectedVersion)
+                && HashesMatch(completion.Sha256, expectedSha256);
+            WorkerUpdateState completed = state with
+            {
+                State = verified
+                    ? rollback ? CodexWorkerUpdateState.RollbackActive : CodexWorkerUpdateState.Active
+                    : CodexWorkerUpdateState.HealthFailed,
+                UpdatedAtUtc = _timeProvider.GetUtcNow(),
+                OutcomeCode = verified
+                    ? rollback ? "rollback_health_verified" : "health_verified"
+                    : rollback ? "rollback_health_verification_failed" : "health_verification_failed",
+            };
+            await SaveAsync(completed, cancellationToken).ConfigureAwait(false);
+            return ToSnapshot(completed);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
     public void Dispose() => _gate.Dispose();
 
     private async Task<CodexWorkerUpdateSnapshot> RejectAsync(
@@ -227,7 +282,7 @@ internal sealed class CodexWorkerUpdateManager : ICodexWorkerUpdateManager, IDis
         string path = GetStatePath();
         if (!File.Exists(path))
         {
-            return new WorkerUpdateState(CurrentSchemaVersion, CodexWorkerUpdateState.None, null, null, null, null, null, null);
+            return new WorkerUpdateState(CurrentSchemaVersion, CodexWorkerUpdateState.None, null, null, null, null, null, null, null, null);
         }
 
         await using FileStream stream = File.OpenRead(path);
@@ -266,6 +321,12 @@ internal sealed class CodexWorkerUpdateManager : ICodexWorkerUpdateManager, IDis
     private string GetCurrentVersion()
         => Assembly.GetEntryAssembly()?.GetName().Version?.ToString() ?? "unknown";
 
+    private static async Task<string> ComputeSha256Async(string path, CancellationToken cancellationToken)
+    {
+        await using FileStream stream = File.OpenRead(path);
+        return Convert.ToHexString(await SHA256.HashDataAsync(stream, cancellationToken).ConfigureAwait(false)).ToLowerInvariant();
+    }
+
     private static CodexWorkerUpdateSnapshot ToSnapshot(WorkerUpdateState state)
         => new(state.State, state.TargetVersion, state.ExpectedSha256, state.StagedPackageName, state.RollbackPackageName, state.UpdatedAtUtc, state.OutcomeCode);
 
@@ -275,6 +336,20 @@ internal sealed class CodexWorkerUpdateManager : ICodexWorkerUpdateManager, IDis
             && actualVersion.Major == expectedVersion.Major
             && actualVersion.Minor == expectedVersion.Minor
             && actualVersion.Build == expectedVersion.Build;
+
+    private static bool HashesMatch(string? actual, string expected)
+    {
+        if (string.IsNullOrWhiteSpace(actual) || string.IsNullOrWhiteSpace(expected)
+            || actual.Trim().Length != 64 || expected.Trim().Length != 64
+            || !actual.Trim().All(char.IsAsciiHexDigit) || !expected.Trim().All(char.IsAsciiHexDigit))
+        {
+            return false;
+        }
+
+        return CryptographicOperations.FixedTimeEquals(
+            Convert.FromHexString(actual.Trim()),
+            Convert.FromHexString(expected.Trim()));
+    }
 
     private static void CopyIfDifferent(string sourcePath, string destinationPath)
     {
@@ -296,6 +371,8 @@ internal sealed class CodexWorkerUpdateManager : ICodexWorkerUpdateManager, IDis
         string? ExpectedSha256,
         string? StagedPackageName,
         string? RollbackPackageName,
+        string? RollbackVersion,
+        string? RollbackSha256,
         DateTimeOffset? UpdatedAtUtc,
         string? OutcomeCode);
 }

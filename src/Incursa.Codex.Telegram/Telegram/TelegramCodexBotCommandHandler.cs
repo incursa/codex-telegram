@@ -1517,6 +1517,17 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             {
                 throw new InvalidOperationException("The task could not be registered in the supervision ledger.");
             }
+
+            if (workerLease is not null)
+            {
+                await _supervisionLedger.BindTaskWorkerAsync(
+                    taskId,
+                    message.UserId,
+                    workerLease.WorkerId,
+                    workerLease.LeaseId,
+                    workspace.WorkspaceId,
+                    cancellationToken).ConfigureAwait(false);
+            }
         }
         catch
         {

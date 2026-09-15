@@ -411,7 +411,7 @@
       name.textContent = task.sessionName || "Codex task";
       const ids = document.createElement("div");
       ids.className = "supervision-ids";
-      ids.textContent = `${task.state || "not_started"}${task.runId ? ` · ${task.runId.slice(-12)}` : ""}`;
+      ids.textContent = `${task.state || "not_started"} · ${task.workerId || "unassigned"}${task.runId ? ` · ${task.runId.slice(-12)}` : ""}`;
       copy.append(name, ids);
       const badge = document.createElement("inc-badge");
       badge.setAttribute("variant", supervisionVariant(task.state));
@@ -567,6 +567,7 @@
       appendSummaryItem(summary, "Task", detail.supervision.taskId);
       appendSummaryItem(summary, "Run state", detail.supervision.state);
       appendSummaryItem(summary, "Run", detail.supervision.runId || "None");
+      appendSummaryItem(summary, "Worker", detail.supervision.workerId || "Unassigned");
     }
     renderReviewPacket(detail.reviewPacket);
 

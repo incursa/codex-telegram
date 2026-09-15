@@ -319,7 +319,10 @@ internal static class TelegramMiniAppEndpoints
             run?.UpdatedAt ?? task.UpdatedAt,
             task.RecipeId,
             task.RecipeVersion,
-            task.RecipeDisplayName);
+            task.RecipeDisplayName,
+            task.WorkerId,
+            task.LeaseId,
+            task.WorkspaceId);
     }
 
     private static TelegramMiniAppWorkerVm ToWorkerViewModel(CodexWorkerSnapshot worker)
@@ -445,4 +448,7 @@ internal sealed record TelegramMiniAppSupervisionTaskVm(
     DateTimeOffset LastRunUpdatedAt,
     string? RecipeId = null,
     string? RecipeVersion = null,
-    string? RecipeDisplayName = null);
+    string? RecipeDisplayName = null,
+    string? WorkerId = null,
+    string? LeaseId = null,
+    string? WorkspaceId = null);

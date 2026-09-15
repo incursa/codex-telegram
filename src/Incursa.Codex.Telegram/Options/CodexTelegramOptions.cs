@@ -236,6 +236,9 @@ public sealed class CodexWorkerUpdateOptions
     /// <summary>Gets or sets the operator-owned staging directory.</summary>
     public string? StageRoot { get; set; }
 
+    /// <summary>Gets or sets the private token used by the external installer to report post-install health.</summary>
+    public string? InstallerAuthenticationToken { get; set; }
+
     /// <summary>Gets the worker capabilities required before staging is allowed.</summary>
     public List<string> RequiredCapabilities { get; set; } = [];
 }

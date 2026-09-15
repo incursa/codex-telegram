@@ -72,15 +72,64 @@ public sealed class CodexWorkerUpdateManagerTests
         Assert.False(File.Exists(Path.Combine(dataRoot.Path, "worker-updates", result.StagedPackageName ?? string.Empty)));
     }
 
+    [Fact]
+    public async Task CompletionRecordsHealthAndFailedHealthLeavesRollbackAvailable()
+    {
+        using TemporaryDirectory dataRoot = TemporaryDirectory.Create();
+        string packagePath = Path.Combine(dataRoot.Path, "candidate.dll");
+        File.Copy(typeof(CodexWorkerUpdateManager).Assembly.Location, packagePath);
+        string version = typeof(CodexWorkerUpdateManager).Assembly.GetName().Version!.ToString();
+        string sha256 = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(packagePath))).ToLowerInvariant();
+        IOptions<CodexTelegramOptions> options = Microsoft.Extensions.Options.Options.Create(new CodexTelegramOptions
+        {
+            Workspace = new CodexWorkspaceOptions { DataRoot = dataRoot.Path },
+            Updates = new CodexWorkerUpdateOptions
+            {
+                Enabled = true,
+                PackagePath = packagePath,
+                TargetVersion = version,
+                ExpectedSha256 = sha256,
+            },
+        });
+        FakeWorkerRegistry worker = new();
+        using CodexWorkerUpdateManager manager = new(options, worker, TimeProvider.System, dataRoot.Path);
+
+        CodexWorkerUpdateSnapshot staged = await manager.StageAsync(CancellationToken.None);
+        worker.State = CodexWorkerState.Online;
+        CodexWorkerUpdateSnapshot active = await manager.CompleteAsync(
+            new CodexWorkerUpdateCompletion(version, sha256, true),
+            CancellationToken.None);
+
+        Assert.Equal(CodexWorkerUpdateState.Active, active.State);
+        Assert.Equal("health_verified", active.OutcomeCode);
+
+        worker.State = CodexWorkerState.Draining;
+        CodexWorkerUpdateSnapshot restaged = await manager.StageAsync(CancellationToken.None);
+        worker.State = CodexWorkerState.Online;
+        CodexWorkerUpdateSnapshot failed = await manager.CompleteAsync(
+            new CodexWorkerUpdateCompletion(version, new string('0', 64), true),
+            CancellationToken.None);
+        worker.State = CodexWorkerState.Draining;
+        CodexWorkerUpdateSnapshot rollback = await manager.StageRollbackAsync(CancellationToken.None);
+
+        Assert.Equal(CodexWorkerUpdateState.Staged, staged.State);
+        Assert.Equal(CodexWorkerUpdateState.Staged, restaged.State);
+        Assert.Equal(CodexWorkerUpdateState.HealthFailed, failed.State);
+        Assert.Equal("health_verification_failed", failed.OutcomeCode);
+        Assert.Equal(CodexWorkerUpdateState.RollbackStaged, rollback.State);
+    }
+
     private sealed class FakeWorkerRegistry : ICodexWorkerRegistry
     {
         public int ActiveLeaseCount { get; set; }
+
+        public CodexWorkerState State { get; set; } = CodexWorkerState.Draining;
 
         public Task<CodexWorkerSnapshot> GetSnapshotAsync(CancellationToken cancellationToken)
             => Task.FromResult(new CodexWorkerSnapshot(
                 "worker:test",
                 "Test worker",
-                CodexWorkerState.Draining,
+                State,
                 "ready",
                 "test",
                 ActiveLeaseCount,

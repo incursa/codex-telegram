@@ -137,9 +137,11 @@ internal sealed class CodexTelegramOptionsValidator : IValidateOptions<CodexTele
         if (string.IsNullOrWhiteSpace(updates.PackagePath)
             || string.IsNullOrWhiteSpace(updates.TargetVersion)
             || !IsSafeRecipeToken(updates.TargetVersion, 40)
-            || !RegexLikeSha256(updates.ExpectedSha256))
+            || !RegexLikeSha256(updates.ExpectedSha256)
+            || string.IsNullOrWhiteSpace(updates.InstallerAuthenticationToken)
+            || updates.InstallerAuthenticationToken.Trim().Length < 32)
         {
-            return ["CodexTelegram:Updates requires a package path, safe target version, and 64-character hexadecimal ExpectedSha256."];
+            return ["CodexTelegram:Updates requires a package path, safe target version, 64-character hexadecimal ExpectedSha256, and an InstallerAuthenticationToken of at least 32 characters."];
         }
 
         return updates.RequiredCapabilities.Any(capability => !IsSafeRecipeToken(capability, 120))

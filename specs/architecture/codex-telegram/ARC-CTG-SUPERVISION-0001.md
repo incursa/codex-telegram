@@ -132,11 +132,15 @@ Workers may advertise an operator-configured private `ControlPlaneUrl` in their 
 
 The worker-side endpoint requires the same exact bearer token, checks the grant lifetime and worker identity, re-reads local readiness/draining/capability state, and acquires the lease through `ICodexWorkerRegistry`. The coordinator records the worker's accepted lease ID or a bounded rejection outcome. A successful handoff is admission evidence only: workspace provisioning, Codex session creation, prompts, approvals, and execution remain separate worker-owned operations. The coordinator cannot stop or replay a Codex turn.
 
+## R5.3 installer completion evidence
+
+The external installer reports completion only through the authenticated `/api/worker/v1/update/complete` endpoint using a token separate from coordinator worker registration. The request contains the running release version, binary SHA-256, and a health flag. The manager compares those fields with the currently staged target or rollback artifact and re-reads local worker readiness. A positive result records `Active` or `RollbackActive`; a mismatch, unhealthy flag, or non-ready worker records `HealthFailed` without claiming activation. This endpoint is an acknowledgement after an actual restart, not a Telegram-controlled stop/start path.
+
 ## Later dependency sequence
 
 1. Use the lease handoff during remote task provisioning and bind the returned WorkerId/LeaseId to the durable task projection.
 2. Add cross-worker task ownership to the combined Mini App worker/attention projection.
-3. Add external-installer completion acknowledgements, post-install health/version evidence, and safe rollback finalization.
+3. Add fleet-wide staged rollout coordination, compatibility gates, and safe rollback finalization.
 
 Each step requires focused automated tests plus the repository release floor. Browser and Telegram-live checks remain separate evidence categories.
 

@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 1.0.39 - 2026-09-15
+
+- Added an authenticated external-installer completion endpoint for staged worker updates.
+- Added version, SHA-256, readiness, and health verification before recording an update as active.
+- Added explicit health-failure and rollback-active states while retaining the protected installation boundary.
+
 ## 1.0.38 - 2026-09-15
 
 - Added authenticated coordinator-issued worker lease handoff with fresh-worker selection, capability/capacity checks, five-minute grants, and idempotent task reuse.

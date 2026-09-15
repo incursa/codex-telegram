@@ -88,6 +88,13 @@
       "statement": "A coordinator lease handoff MUST select only a fresh, ready, capacity-available worker with the requested capabilities and a configured private control endpoint, persist the bounded grant before sending it, expire the grant within five minutes, and return the existing active grant for repeated TaskId requests; the worker MUST authenticate the grant, bind it to its own WorkerId, re-check local readiness, draining, capabilities, and capacity, and acquire the lease through its local worker registry.",
       "coverage": {"positive": "required", "negative": "required", "edge": "required", "restart": "required"},
       "trace": {"upstream_refs": ["`docs/mini-app-roadmap.md`", "`specs/architecture/codex-telegram/ARC-CTG-SUPERVISION-0001.md`", "`src/Incursa.Codex.Telegram/Services/CodexCoordinatorLeaseHandoff.cs`", "`src/Incursa.Codex.Telegram/MiniApp/CodexCoordinatorWorkerEndpoints.cs`", "`tests/Incursa.Codex.Telegram.Tests/CodexCoordinatorLeaseHandoffTests.cs"]}
+    },
+    {
+      "id": "REQ-CTG-SUP-0012",
+      "title": "Record authenticated worker update completion evidence",
+      "statement": "A staged worker update MUST become active only after an authenticated external installer reports the running release version, SHA-256, and health result; the manager MUST compare the report with the staged target or rollback artifact and local ready state, record a bounded health-verification or health-failure outcome, and MUST NOT claim activation from staging alone.",
+      "coverage": {"positive": "required", "negative": "required", "edge": "required", "restart": "required"},
+      "trace": {"upstream_refs": ["`docs/mini-app-roadmap.md`", "`specs/architecture/codex-telegram/ARC-CTG-SUPERVISION-0001.md`", "`src/Incursa.Codex.Telegram/Services/CodexWorkerUpdateManager.cs`", "`src/Incursa.Codex.Telegram/MiniApp/CodexWorkerUpdateEndpoints.cs`", "`tests/Incursa.Codex.Telegram.Tests/CodexWorkerUpdateManagerTests.cs"]}
     }
   ],
   "non_goals": ["A competing task database or replacement for Codex history", "Browser prompts, approvals, steering, retries, cancellation, file writes, uploads, commits, merges, or deployments", "Blind replay of side-effecting work after a crash or timeout", "Autonomous merge, push, deploy, or release", "Public multi-tenant hosting or broad implicit Telegram authorization", "Bundling or synchronizing Codex authentication"]
