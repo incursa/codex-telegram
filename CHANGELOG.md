@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 1.0.50 - 2026-09-15
+
+- Fixed narrow Mini App layouts so worker and fleet-rollout metadata shrink and ellipsize instead of creating horizontal overflow.
+- Verified the combined Needs-attention, Workers, and Fleet rollouts view at compact, full-height, and fullscreen mobile-sized viewports.
+
 ## 1.0.49 - 2026-09-15
 
 - Added owner-scoped fleet rollout plans with persisted per-worker staging, activation, health-failure, and rollback evidence.

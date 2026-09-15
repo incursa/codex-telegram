@@ -75,6 +75,8 @@ The v1.0.48 R2.3 slice extends Mini App handoff preparation with bounded evidenc
 
 The v1.0.49 R5.4 slice adds owner-scoped fleet rollout coordination. An operator can plan a rollout for explicit workers and advance only one worker at a time after capability, admission, drain, and zero-lease checks. Worker staging uses the existing local update manager or authenticated remote worker control; status is refreshed from the worker, and the external installer remains responsible for package activation and health completion. A health failure requires explicit rollback staging in reverse order; finalize records completion only from worker-reported activation evidence.
 
+The v1.0.50 R4.2 slice hardens the combined Mini App surface at narrow mobile widths. Worker and fleet-rollout rows now honor their containing grid width, preserve readable status controls, and ellipsize long metadata without horizontal page overflow. Synthetic browser checks cover the compact, full-height, and fullscreen display contracts plus fullscreen enter/exit and activation refresh behavior.
+
 ## Identity and state vocabulary
 
 Until R1 introduces durable application records, a Mini App task is a Codex thread and its turns are the run history. The implementation must not imply stronger guarantees than the underlying thread state provides.
