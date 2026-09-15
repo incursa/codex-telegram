@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Incursa.Codex.Telegram.Models;
 using Incursa.Codex.Telegram.Options;
 using Incursa.Codex.Telegram.Services;
 using Microsoft.AspNetCore.Builder;
@@ -27,6 +28,10 @@ internal static class TelegramMiniAppTaskActionEndpoints
         ICodexSupervisionLedger supervisionLedger,
         ITelegramMiniAppBrowserPairingStore pairingStore,
         ITelegramMiniAppAcknowledgementStore acknowledgementStore,
+        ICodexGateway gateway,
+        ICodexTurnExecutionCoordinator turnCoordinator,
+        ICodexWorkerRegistry workerRegistry,
+        CodexRemoteTaskDetailRelay remoteTaskDetailRelay,
         CancellationToken cancellationToken)
     {
         if (!miniAppOptions.Value.Enabled)
@@ -131,6 +136,50 @@ internal static class TelegramMiniAppTaskActionEndpoints
         }
 
         string telegramCommand = $"/handoff {task.CodexThreadId}";
+        TelegramMiniAppReviewPacketVm? packet = null;
+        if (gateway is not null && turnCoordinator is not null && workerRegistry is not null && remoteTaskDetailRelay is not null)
+        {
+            try
+            {
+                CodexSupervisionTaskRecord? taskRecord = await supervisionLedger
+                    .GetTaskAsync(identity.UserId, task.TaskId, cancellationToken)
+                    .ConfigureAwait(false);
+                if (taskRecord is not null)
+                {
+                    bool assignedToRemoteWorker = false;
+                    if (task.WorkerId is { Length: > 0 })
+                    {
+                        CodexWorkerSnapshot localWorker = await workerRegistry
+                            .GetSnapshotAsync(cancellationToken)
+                            .ConfigureAwait(false);
+                        if (!string.Equals(task.WorkerId, localWorker.WorkerId, StringComparison.Ordinal))
+                        {
+                            assignedToRemoteWorker = true;
+                            packet = (await remoteTaskDetailRelay
+                                .GetAsync(taskRecord, cancellationToken)
+                                .ConfigureAwait(false)).ReviewPacket;
+                        }
+                    }
+
+                    if (!assignedToRemoteWorker && packet is null)
+                    {
+                        CodexThreadDetailVm detail = await gateway
+                            .GetThreadAsync(task.CodexThreadId, cancellationToken: cancellationToken)
+                            .ConfigureAwait(false);
+                        packet = TelegramMiniAppProjection.BuildReviewPacket(
+                            detail,
+                            TelegramMiniAppProjection.ToSupervisionTaskViewModel(task),
+                            DateTimeOffset.UtcNow);
+                    }
+                }
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            {
+                // The Telegram command remains useful when the runtime is temporarily unavailable.
+            }
+        }
+
+        TelegramMiniAppHandoffVm handoff = TelegramMiniAppHandoff.Create(task, packet);
         return Results.Ok(new TelegramMiniAppTaskActionResponse(
             request.Action,
             true,
@@ -140,7 +189,8 @@ internal static class TelegramMiniAppTaskActionEndpoints
             request.PacketId,
             telegramCommand,
             "telegram_handoff_ready",
-            null));
+            null,
+            handoff));
     }
 
     private static bool IsSafeToken(string? value, int maxLength)
@@ -163,4 +213,5 @@ internal sealed record TelegramMiniAppTaskActionResponse(
     string? PacketId,
     string? TelegramCommand,
     string OutcomeCode,
-    DateTimeOffset? AcknowledgedAtUtc);
+    DateTimeOffset? AcknowledgedAtUtc,
+    TelegramMiniAppHandoffVm? Handoff = null);

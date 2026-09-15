@@ -71,6 +71,8 @@ The v1.0.46 R2.2 slice adds the first authenticated Mini App task actions. A use
 
 The v1.0.47 R3.12 slice adds explicitly confirmed worker drain/resume actions to the Mini App. Local workers apply the change through their existing serialized registry; admitted remote workers receive an authenticated worker-identity-bound control request through the coordinator. Stale or unavailable workers fail closed, and draining changes admission only—existing Codex sessions and leases are not interrupted. The UI returns to the Telegram path for prompts, approvals, and other execution controls.
 
+The v1.0.48 R2.3 slice extends Mini App handoff preparation with bounded evidence from the same redacted review packet used by task detail. The response and UI include review status, changed-file metadata, artifact metadata, counts, and Codex turn provenance. If the runtime is unavailable, the command remains available but the response says explicitly that evidence could not be retrieved. No raw worker paths, file payloads, Telegram delivery, Codex execution, or approval semantics are added.
+
 ## Identity and state vocabulary
 
 Until R1 introduces durable application records, a Mini App task is a Codex thread and its turns are the run history. The implementation must not imply stronger guarantees than the underlying thread state provides.
@@ -89,7 +91,6 @@ Initial display states are `queued`, `running`, `waiting`, `failed`, `completed`
 
 ## Later slices
 
-1. Extend combined Mini App task actions with richer artifact handoff evidence.
-2. Add fleet-wide staged rollout coordination, compatibility gates, and safe rollback finalization.
+1. Add fleet-wide staged rollout coordination, compatibility gates, and safe rollback finalization.
 
 Full IDE behavior, arbitrary terminal/file-manager access, autonomous merge/push/deploy, public multi-tenant hosting, and blind replay of side-effecting work are out of scope.

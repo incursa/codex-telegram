@@ -76,6 +76,10 @@ public sealed class TelegramMiniAppTaskActionTests
             ledger,
             pairingStore,
             acknowledgementStore,
+            gateway: null!,
+            turnCoordinator: null!,
+            workerRegistry: null!,
+            remoteTaskDetailRelay: null!,
             CancellationToken.None);
         await unauthorizedResult.ExecuteAsync(unauthorized);
         Assert.Equal(StatusCodes.Status401Unauthorized, unauthorized.Response.StatusCode);
@@ -91,6 +95,10 @@ public sealed class TelegramMiniAppTaskActionTests
             ledger,
             pairingStore,
             acknowledgementStore,
+            gateway: null!,
+            turnCoordinator: null!,
+            workerRegistry: null!,
+            remoteTaskDetailRelay: null!,
             CancellationToken.None);
         await staleResult.ExecuteAsync(stale);
         Assert.Equal(StatusCodes.Status409Conflict, stale.Response.StatusCode);
@@ -133,6 +141,10 @@ public sealed class TelegramMiniAppTaskActionTests
             ledger,
             pairingStore,
             acknowledgementStore,
+            gateway: null!,
+            turnCoordinator: null!,
+            workerRegistry: null!,
+            remoteTaskDetailRelay: null!,
             CancellationToken.None);
         await acknowledgeResult.ExecuteAsync(acknowledge);
         Assert.Equal(StatusCodes.Status200OK, acknowledge.Response.StatusCode);
@@ -149,12 +161,18 @@ public sealed class TelegramMiniAppTaskActionTests
             ledger,
             pairingStore,
             acknowledgementStore,
+            gateway: null!,
+            turnCoordinator: null!,
+            workerRegistry: null!,
+            remoteTaskDetailRelay: null!,
             CancellationToken.None);
         await handoffResult.ExecuteAsync(handoff);
         string handoffBody = await ReadResponseAsync(handoff);
         Assert.Equal(StatusCodes.Status200OK, handoff.Response.StatusCode);
         Assert.Contains("/handoff thread:1", handoffBody, StringComparison.Ordinal);
         Assert.Contains("telegram_handoff_ready", handoffBody, StringComparison.Ordinal);
+        Assert.Contains("handoff", handoffBody, StringComparison.Ordinal);
+        Assert.Contains("evidenceAvailable", handoffBody, StringComparison.Ordinal);
     }
 
     private static TelegramMiniAppAcknowledgementStore CreateStore(string dataRoot, FixedTimeProvider clock)

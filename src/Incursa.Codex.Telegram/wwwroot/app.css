@@ -187,6 +187,9 @@ inc-card { display: block; }
 .review-packet-summary code { color: var(--inc-ink); font: 0.7rem "IBM Plex Mono", ui-monospace, monospace; }
 .review-packet-provenance, .review-packet-boundary { color: var(--inc-muted); font-size: 0.72rem; }
 .review-packet-boundary { padding-top: 0.15rem; color: var(--inc-primary); }
+.handoff-result { display: grid; gap: 0.35rem; margin-top: 0.75rem; padding: 0.75rem; border: 1px solid var(--inc-border); border-radius: 8px; background: #f4f5f8; }
+.handoff-summary { color: var(--inc-muted); font-size: 0.72rem; }
+.handoff-text { max-height: 18rem; overflow: auto; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 0.72rem; }
 .miniapp-action-row { display: flex; flex-wrap: wrap; gap: 0.5rem; padding-top: 0.35rem; }
 .detail-summary-item { min-width: 0; padding: 0.7rem; border-radius: 8px; background: #f4f5f8; }
 .detail-summary-label { display: block; margin-bottom: 0.22rem; color: var(--inc-muted); font-size: 0.68rem; font-weight: 650; text-transform: uppercase; }

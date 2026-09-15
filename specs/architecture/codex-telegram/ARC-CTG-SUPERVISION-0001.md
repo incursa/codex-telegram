@@ -164,7 +164,7 @@ Normal remote prompts may include up to eight attachments, with a 16 MiB per-fil
 
 `POST /api/mini-app/tasks/{taskId}/actions` authenticates through Telegram initialization data or an approved browser pairing session and accepts only `acknowledge` or `handoff`. Acknowledgement requires the user-scoped task, its current RunId, and the bounded review PacketId; the durable store records only those identifiers and the timestamp. The same tuple is idempotent, while a stale RunId is rejected so a changed task cannot be acknowledged accidentally. Bootstrap and detail projections expose the acknowledgement state, and the projection resumes attention when a later run is current.
 
-The `handoff` action returns only the existing `/handoff <CodexThreadId>` command and bounded task identity. It does not send a Telegram message or execute Codex; the user must return to the authorized Telegram conversation. This keeps the Mini App useful for review without making it a second control or approval authority.
+The `handoff` action returns the existing `/handoff <CodexThreadId>` command plus a bounded handoff projection derived from the same redacted review packet as task detail. It includes review status, changed-file metadata, artifact metadata, counts, and Codex turn provenance; unavailable runtime evidence is explicit. It does not send a Telegram message, execute Codex, transfer workspace files, expose worker paths, or approve an action; the user must return to the authorized Telegram conversation. This keeps the Mini App useful for review without making it a second control or approval authority.
 
 ## R3.12 Mini App worker operations
 
@@ -172,8 +172,7 @@ The `handoff` action returns only the existing `/handoff <CodexThreadId>` comman
 
 ## Later dependency sequence
 
-1. Extend combined Mini App task actions with richer artifact handoff evidence.
-2. Add fleet-wide staged rollout coordination, compatibility gates, and safe rollback finalization.
+1. Add fleet-wide staged rollout coordination, compatibility gates, and safe rollback finalization.
 
 Each step requires focused automated tests plus the repository release floor. Browser and Telegram-live checks remain separate evidence categories.
 

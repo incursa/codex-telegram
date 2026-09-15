@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 1.0.48 - 2026-09-15
+
+- Added bounded Mini App handoff evidence containing review status, changed-file metadata, and artifact metadata from the same redacted task packet.
+- Added a copyable handoff evidence panel while preserving the existing Telegram command as the only execution and approval path.
+- Added explicit unavailable-runtime handoff behavior and bounded handoff projection tests.
+
 ## 1.0.47 - 2026-09-15
 
 - Added explicit Mini App worker drain/resume actions for local and admitted remote workers.

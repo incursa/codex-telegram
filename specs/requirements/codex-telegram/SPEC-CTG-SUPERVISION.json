@@ -144,6 +144,13 @@
       "statement": "A Mini App worker drain or resume action MUST require the authenticated allowlisted user and explicit confirmation, MUST target an exact local or currently admitted remote WorkerId, MUST reject stale or unavailable remote workers, and MUST use the worker's serialized registry or authenticated control endpoint. Draining MUST prevent new leases without interrupting existing sessions or removing active leases.",
       "coverage": {"positive": "required", "negative": "required", "edge": "required", "restart": "required"},
       "trace": {"upstream_refs": ["`docs/mini-app-roadmap.md`", "`src/Incursa.Codex.Telegram/MiniApp/TelegramMiniAppWorkerActionEndpoints.cs`", "`src/Incursa.Codex.Telegram/MiniApp/CodexRemoteWorkerControlEndpoints.cs`", "`src/Incursa.Codex.Telegram/Services/CodexRemoteWorkerControl.cs`", "`src/Incursa.Codex.Telegram/Services/CodexWorkerRegistry.cs`", "`tests/Incursa.Codex.Telegram.Tests/CodexRemoteWorkerControlTests.cs`"]}
+    },
+    {
+      "id": "REQ-CTG-SUP-0020",
+      "title": "Keep Mini App handoffs evidence-backed and bounded",
+      "statement": "A Mini App handoff response MUST derive its changed-file and artifact metadata from the same redacted review packet as task detail, preserve TaskId, RunId, Codex thread, and Codex turn provenance, apply bounded counts and metadata lengths, and explicitly report unavailable runtime evidence. Handoff preparation MUST continue to return only the existing Telegram command and MUST NOT deliver a Telegram message, execute Codex, transfer workspace files, expose worker paths, or approve an action.",
+      "coverage": {"positive": "required", "negative": "required", "edge": "required", "restart": "required"},
+      "trace": {"upstream_refs": ["`docs/mini-app-roadmap.md`", "`src/Incursa.Codex.Telegram/MiniApp/TelegramMiniAppHandoff.cs`", "`src/Incursa.Codex.Telegram/MiniApp/TelegramMiniAppTaskActionEndpoints.cs`", "`src/Incursa.Codex.Telegram/wwwroot/app.js`", "`tests/Incursa.Codex.Telegram.Tests/TelegramMiniAppHandoffTests.cs`"]}
     }
   ],
   "non_goals": ["A competing task database or replacement for Codex history", "Browser prompts, approvals, steering, retries, cancellation, file writes, uploads, commits, merges, or deployments", "Blind replay of side-effecting work after a crash or timeout", "Autonomous merge, push, deploy, or release", "Public multi-tenant hosting or broad implicit Telegram authorization", "Bundling or synchronizing Codex authentication"]

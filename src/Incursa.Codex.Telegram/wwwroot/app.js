@@ -495,6 +495,8 @@
     byId("detail-status").setAttribute("variant", "neutral");
     byId("detail-summary").replaceChildren();
     byId("detail-review-packet").replaceChildren();
+    byId("handoff-result").hidden = true;
+    byId("handoff-result").replaceChildren();
     byId("review-packet-status").textContent = "Loading";
     byId("review-packet-status").setAttribute("variant", "neutral");
     byId("detail-timeline").replaceChildren();
@@ -528,6 +530,9 @@
 
   function renderReviewPacket(packet) {
     const list = byId("detail-review-packet");
+    const handoff = byId("handoff-result");
+    handoff.hidden = true;
+    handoff.replaceChildren();
     const badge = byId("review-packet-status");
     list.replaceChildren();
     if (!packet) {
@@ -585,6 +590,25 @@
       actions.append(handoff);
     }
     if (actions.childElementCount) list.append(actions);
+  }
+
+  function renderHandoffResult(result, command) {
+    const box = byId("handoff-result");
+    box.replaceChildren();
+    box.hidden = false;
+    const heading = document.createElement("strong");
+    heading.textContent = result?.evidenceAvailable ? "Handoff evidence ready" : "Handoff command ready; evidence unavailable";
+    box.append(heading);
+    const summary = document.createElement("div");
+    summary.className = "handoff-summary";
+    summary.textContent = result?.evidenceAvailable
+      ? `${result.changeCount || 0} changed-file preview(s) · ${result.artifactCount || 0} artifact record(s) · ${result.reviewStatus || "unknown"}`
+      : "The current Codex runtime did not return a review packet.";
+    box.append(summary);
+    const text = document.createElement("pre");
+    text.className = "handoff-text";
+    text.textContent = result?.text || command;
+    box.append(text);
   }
 
   function renderThreadDetail(detail) {
@@ -715,7 +739,11 @@
       if (action === "handoff") {
         const command = result.telegramCommand || `/handoff ${result.codexThreadId}`;
         try { await navigator.clipboard?.writeText(command); } catch { /* Clipboard permission is optional. */ }
-        showNotice(`Telegram handoff prepared: ${command}. ${navigator.clipboard ? "The command was copied when permitted." : "Copy it and send it in Telegram."}`);
+        renderHandoffResult(result.handoff, command);
+        const evidence = result.handoff?.evidenceAvailable
+          ? ` ${result.handoff.changeCount || 0} change(s) and ${result.handoff.artifactCount || 0} artifact(s) are attached as bounded evidence.`
+          : " Review evidence is currently unavailable.";
+        showNotice(`Telegram handoff prepared: ${command}.${evidence} ${navigator.clipboard ? "The command was copied when permitted." : "Copy it and send it in Telegram."}`);
         return;
       }
 
