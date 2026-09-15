@@ -150,10 +150,14 @@ The worker's existing realtime event seam forwards bounded timeline entries for 
 
 Remote `/task status`, `/task release <taskId> confirm`, and `/task discard <taskId> confirm` use `/api/worker/v1/tasks/workspace`. The worker validates the exact owner, TaskId, WorkerId, LeaseId, and Codex thread before reading or releasing its local task workspace. A live worker-owned session blocks release until it is stopped. The worker releases its local workspace and lease, then returns only bounded state, branch, development port, database namespace, and outcome evidence. Worktree and repository paths never cross the coordinator boundary; the coordinator clears its local selection only after a successful release response.
 
+## R3.10 remote Mini App task detail
+
+When the Mini App requests a thread whose supervision task is assigned to another worker, the coordinator resolves the user-scoped task and sends only its bounded TaskId, WorkerId, LeaseId, and Codex thread ID to `/api/worker/v1/tasks/detail`. The worker re-checks its identity, ready or draining state, exact task ownership, and thread binding, then reads the local Codex detail and applies the existing Mini App projection before returning it. The response contains bounded turns, timeline, review changes, artifact metadata, and display labels only; raw worker paths, repository paths, and unprojected Codex detail remain on the worker. Local threads continue using the existing gateway path.
+
 ## Later dependency sequence
 
-1. Complete remote session/control relay as separately authorized operations, including attachments, model/goal controls, and task status/release where worker-owned.
-2. Add combined Mini App task detail, attention, review-packet, artifact, and worker views backed by the coordinator's bounded projections.
+1. Complete remote session/control relay as separately authorized operations, including attachments and model/goal controls.
+2. Add combined Mini App task actions for attention, review-packet acknowledgement, artifact handoff, and worker operations backed by coordinator projections.
 3. Add fleet-wide staged rollout coordination, compatibility gates, and safe rollback finalization.
 
 Each step requires focused automated tests plus the repository release floor. Browser and Telegram-live checks remain separate evidence categories.

@@ -63,6 +63,8 @@ The v1.0.42 R3.8 slice adds authenticated remote steering and stop/kill controls
 
 The v1.0.43 R3.9 slice completes the currently supported remote task lifecycle. Remote status and confirmed release/discard now execute on the owning worker and return only bounded workspace evidence; local worktree paths never cross the coordinator boundary. The coordinator clears its local selection only after the worker reports a released workspace. Attachments, remote model/goal controls, and review/file actions remain separate capabilities.
 
+The v1.0.44 R3.10 slice makes worker-owned task detail available through the Mini App. The worker reads the authoritative Codex thread and builds the existing bounded detail, review, and artifact projection locally; the coordinator relays only that redacted view after exact user, task, worker, lease, and thread checks. Remote detail does not expose worker paths or create coordinator-side manifests.
+
 ## Identity and state vocabulary
 
 Until R1 introduces durable application records, a Mini App task is a Codex thread and its turns are the run history. The implementation must not imply stronger guarantees than the underlying thread state provides.
@@ -82,7 +84,7 @@ Initial display states are `queued`, `running`, `waiting`, `failed`, `completed`
 ## Later slices
 
 1. Add authenticated remote attachment transfer and remote model/goal controls with explicit bounded contracts.
-2. Add combined Mini App task detail, attention, review-packet, artifact, and worker actions backed by the coordinator's bounded projections.
+2. Add combined Mini App task actions for attention, review-packet acknowledgement, artifact handoff, and worker operations backed by coordinator projections.
 3. Add fleet-wide staged rollout coordination, compatibility gates, and safe rollback finalization.
 
 Full IDE behavior, arbitrary terminal/file-manager access, autonomous merge/push/deploy, public multi-tenant hosting, and blind replay of side-effecting work are out of scope.

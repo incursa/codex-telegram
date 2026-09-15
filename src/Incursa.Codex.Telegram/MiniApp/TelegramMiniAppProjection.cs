@@ -188,6 +188,30 @@ internal static class TelegramMiniAppProjection
         };
     }
 
+    public static TelegramMiniAppSupervisionTaskVm ToSupervisionTaskViewModel(CodexSupervisionTaskSnapshot task)
+    {
+        ArgumentNullException.ThrowIfNull(task);
+
+        CodexSupervisionRunSnapshot? run = task.LatestRun;
+        return new TelegramMiniAppSupervisionTaskVm(
+            task.TaskId,
+            task.CodexThreadId,
+            task.SessionName,
+            run?.State.ToString().ToLowerInvariant() ?? "not_started",
+            run?.RunId,
+            run?.CommandId,
+            run?.TurnId,
+            task.CreatedAt,
+            task.UpdatedAt,
+            run?.UpdatedAt ?? task.UpdatedAt,
+            task.RecipeId,
+            task.RecipeVersion,
+            task.RecipeDisplayName,
+            task.WorkerId,
+            task.LeaseId,
+            task.WorkspaceId);
+    }
+
     public static TelegramMiniAppReviewPacketVm BuildReviewPacket(
         CodexThreadDetailVm detail,
         TelegramMiniAppSupervisionTaskVm? supervision,

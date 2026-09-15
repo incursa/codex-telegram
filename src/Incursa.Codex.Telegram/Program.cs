@@ -369,6 +369,7 @@ builder.Services.AddHttpClient(nameof(CodexCoordinatorLeaseHandoffService));
 builder.Services.AddHttpClient(nameof(CodexRemoteTaskProvisioningService));
 builder.Services.AddHttpClient(nameof(CodexRemoteSessionRelay));
 builder.Services.AddHttpClient(nameof(CodexRemoteSessionControlRelay));
+builder.Services.AddHttpClient(nameof(CodexRemoteTaskDetailRelay));
 builder.Services.AddHttpClient(nameof(CodexRemoteTurnEventForwarder));
 builder.Services.AddSingleton<IAudioTranscriptionService>(sp => sp.GetRequiredService<OpenAiSpeechToTextService>());
 builder.Services.AddSingleton<ICodexRuntimeClientFactory, CodexRuntimeClientFactory>();
@@ -384,6 +385,7 @@ builder.Services.AddSingleton<ICodexCoordinatorTaskStore, CodexCoordinatorTaskSt
 builder.Services.AddSingleton<CodexRemoteTaskProvisioningService>();
 builder.Services.AddSingleton<CodexRemoteSessionRelay>();
 builder.Services.AddSingleton<CodexRemoteSessionControlRelay>();
+builder.Services.AddSingleton<CodexRemoteTaskDetailRelay>();
 builder.Services.AddSingleton<CodexWorkerUpdateManager>();
 builder.Services.AddSingleton<ICodexWorkerUpdateManager>(sp => sp.GetRequiredService<CodexWorkerUpdateManager>());
 builder.Services.AddSingleton<ICodexTaskRecipeCatalog, CodexTaskRecipeCatalog>();
@@ -439,6 +441,7 @@ CodexCoordinatorTurnEventEndpoints.Map(app);
 CodexRemoteTaskEndpoints.Map(app);
 CodexRemoteSessionEndpoints.Map(app);
 CodexRemoteSessionControlEndpoints.Map(app);
+CodexRemoteTaskDetailEndpoints.Map(app);
 CodexWorkerUpdateEndpoints.Map(app);
 TelegramMiniAppEndpoints.Map(app);
 

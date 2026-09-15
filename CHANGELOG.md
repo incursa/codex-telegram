@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 1.0.44 - 2026-09-15
+
+- Added authenticated remote Mini App task detail projection for worker-owned Codex threads.
+- Kept raw Codex detail and worker filesystem paths on the owning worker while preserving bounded review and artifact evidence.
+- Added coordinator relay and worker contract tests for exact task ownership, redaction, and provenance.
+
 ## 1.0.43 - 2026-09-15
 
 - Added authenticated remote task workspace status and confirmed release/discard operations.

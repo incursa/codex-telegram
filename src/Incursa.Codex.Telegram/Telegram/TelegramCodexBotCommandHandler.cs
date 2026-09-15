@@ -1662,7 +1662,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             $"Development port: {result.DevelopmentPort}",
             $"Database namespace: {result.DatabaseNamespace}",
             $"Recipe: {recipe?.RecipeKey ?? "(none)"}",
-            "The task is owned by the selected worker. Remote prompt/session relay is the next coordinator slice.",
+            "The task is owned by the selected worker. Use /send or /plan to run it there; /steer, /stop, confirmed /kill, /task status, and confirmed release/discard are also relayed to that worker.",
         ];
         await ReplyAsync(sender, message, string.Join(Environment.NewLine, responseLines), null, cancellationToken).ConfigureAwait(false);
     }

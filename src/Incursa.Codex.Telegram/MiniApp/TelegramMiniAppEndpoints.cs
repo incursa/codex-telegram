@@ -150,7 +150,7 @@ internal static class TelegramMiniAppEndpoints
         try
         {
             supervisionTasks = (await supervisionLedger.ListTasksAsync(identity.UserId, cancellationToken).ConfigureAwait(false))
-                .Select(ToSupervisionTaskViewModel)
+                .Select(TelegramMiniAppProjection.ToSupervisionTaskViewModel)
                 .ToArray();
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
@@ -216,6 +216,8 @@ internal static class TelegramMiniAppEndpoints
         ICodexTurnExecutionCoordinator turnCoordinator,
         ICodexSupervisionLedger supervisionLedger,
         ITelegramMiniAppBrowserPairingStore pairingStore,
+        ICodexWorkerRegistry workerRegistry,
+        CodexRemoteTaskDetailRelay remoteTaskDetailRelay,
         CancellationToken cancellationToken)
     {
         if (!miniAppOptions.Value.Enabled)
@@ -241,6 +243,35 @@ internal static class TelegramMiniAppEndpoints
 
         try
         {
+            CodexSupervisionTaskSnapshot? supervisionTask = null;
+            try
+            {
+                supervisionTask = await supervisionLedger
+                    .GetTaskForSessionAsync(identity.UserId, threadId, cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            {
+                // Local Codex detail remains useful when the optional task projection is unavailable.
+            }
+
+            if (supervisionTask?.WorkerId is { Length: > 0 } assignedWorkerId)
+            {
+                CodexWorkerSnapshot localWorker = await workerRegistry.GetSnapshotAsync(cancellationToken).ConfigureAwait(false);
+                if (!string.Equals(assignedWorkerId, localWorker.WorkerId, StringComparison.Ordinal))
+                {
+                    CodexSupervisionTaskRecord? remoteTask = await supervisionLedger
+                        .GetTaskAsync(identity.UserId, supervisionTask.TaskId, cancellationToken)
+                        .ConfigureAwait(false);
+                    if (remoteTask is null)
+                    {
+                        return Results.NotFound();
+                    }
+
+                    return Results.Ok(await remoteTaskDetailRelay.GetAsync(remoteTask, cancellationToken).ConfigureAwait(false));
+                }
+            }
+
             IReadOnlyList<CodexThreadListItemVm> threads = await gateway.ListThreadsAsync(
                 new CodexThreadListQuery(null, "all", "updatedAt", true, null, 200),
                 cancellationToken).ConfigureAwait(false);
@@ -260,7 +291,7 @@ internal static class TelegramMiniAppEndpoints
             try
             {
                 supervision = (await supervisionLedger.GetTaskForSessionAsync(identity.UserId, threadId, cancellationToken).ConfigureAwait(false)) is { } task
-                    ? ToSupervisionTaskViewModel(task)
+                    ? TelegramMiniAppProjection.ToSupervisionTaskViewModel(task)
                     : null;
             }
             catch (Exception exception) when (exception is not OperationCanceledException)
@@ -302,28 +333,6 @@ internal static class TelegramMiniAppEndpoints
 
     private static string BuildProjectId(string path)
         => "project-" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(path))).ToLowerInvariant()[..16];
-
-    private static TelegramMiniAppSupervisionTaskVm ToSupervisionTaskViewModel(CodexSupervisionTaskSnapshot task)
-    {
-        CodexSupervisionRunSnapshot? run = task.LatestRun;
-        return new TelegramMiniAppSupervisionTaskVm(
-            task.TaskId,
-            task.CodexThreadId,
-            task.SessionName,
-            run?.State.ToString().ToLowerInvariant() ?? "not_started",
-            run?.RunId,
-            run?.CommandId,
-            run?.TurnId,
-            task.CreatedAt,
-            task.UpdatedAt,
-            run?.UpdatedAt ?? task.UpdatedAt,
-            task.RecipeId,
-            task.RecipeVersion,
-            task.RecipeDisplayName,
-            task.WorkerId,
-            task.LeaseId,
-            task.WorkspaceId);
-    }
 
     private static TelegramMiniAppWorkerVm ToWorkerViewModel(CodexWorkerSnapshot worker)
         => new(

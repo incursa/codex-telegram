@@ -8,7 +8,7 @@
   "owner": "codex-telegram-maintainers",
   "tags": ["codex", "telegram", "supervision", "recovery", "workers", "mini-app"],
   "purpose": "Define the authority, identity, recovery, isolation, review, browser, recipe, and release contracts for supervising Codex work across private self-hosted workers.",
-  "scope": "This specification covers the staged supervision workspace roadmap. It establishes the durable Telegram update receipt and bounded Task/Run/Command, delivery, approval/input, claim, recovery-action, restart-reconciliation, review-packet, Telegram-handoff, task-workspace allocation, explicit Telegram task-flow, opt-in browser-pairing projection, local worker-boundary, authenticated coordinator registration, coordinator lease-handoff, remote task provisioning, remote prompt/event relay, recipe, and staged update slices.",
+  "scope": "This specification covers the staged supervision workspace roadmap. It establishes the durable Telegram update receipt and bounded Task/Run/Command, delivery, approval/input, claim, recovery-action, restart-reconciliation, review-packet, Telegram-handoff, task-workspace allocation, explicit Telegram task-flow, opt-in browser-pairing projection, local worker-boundary, authenticated coordinator registration, coordinator lease-handoff, remote task provisioning, remote prompt/event relay, remote workspace lifecycle, remote Mini App task detail, recipe, and staged update slices.",
   "authority": {
     "telegram": "authentication, operator control, and consequential approval",
     "codex": "thread and turn execution plus execution provenance",
@@ -116,6 +116,13 @@
       "statement": "Remote task status and confirmed release or discard MUST execute on the owning ready worker after exact task, worker, lease, and thread ownership checks; the coordinator MUST receive only bounded workspace state, branch, port, database namespace, and outcome evidence, MUST keep worker filesystem paths private, and MUST clear its local task selection only after the worker reports release.",
       "coverage": {"positive": "required", "negative": "required", "edge": "required", "restart": "required"},
       "trace": {"upstream_refs": ["`docs/mini-app-roadmap.md`", "`specs/architecture/codex-telegram/ARC-CTG-SUPERVISION-0001.md`", "`src/Incursa.Codex.Telegram/Services/CodexRemoteTaskWorkspaceRelay.cs`", "`src/Incursa.Codex.Telegram/MiniApp/CodexRemoteTaskWorkspaceEndpoints.cs`", "`tests/Incursa.Codex.Telegram.Tests/CodexRemoteTaskWorkspaceTests.cs"]}
+    },
+    {
+      "id": "REQ-CTG-SUP-0016",
+      "title": "Project remote task detail on the owning worker",
+      "statement": "A remote Mini App task detail request MUST use the authenticated user's exact owner-bound TaskId, WorkerId, LeaseId, and Codex thread ID; the worker MUST re-check those bindings and its ready or draining state before reading the local thread, MUST apply the bounded Mini App projection on the worker, and MUST return no raw worker filesystem or repository paths across the coordinator boundary.",
+      "coverage": {"positive": "required", "negative": "required", "edge": "required", "restart": "required"},
+      "trace": {"upstream_refs": ["`docs/mini-app-roadmap.md`", "`specs/architecture/codex-telegram/ARC-CTG-SUPERVISION-0001.md`", "`src/Incursa.Codex.Telegram/Services/CodexRemoteTaskDetailRelay.cs`", "`src/Incursa.Codex.Telegram/MiniApp/CodexRemoteTaskDetailEndpoints.cs`", "`src/Incursa.Codex.Telegram/MiniApp/TelegramMiniAppEndpoints.cs`", "`tests/Incursa.Codex.Telegram.Tests/CodexRemoteTaskDetailTests.cs`"]}
     }
   ],
   "non_goals": ["A competing task database or replacement for Codex history", "Browser prompts, approvals, steering, retries, cancellation, file writes, uploads, commits, merges, or deployments", "Blind replay of side-effecting work after a crash or timeout", "Autonomous merge, push, deploy, or release", "Public multi-tenant hosting or broad implicit Telegram authorization", "Bundling or synchronizing Codex authentication"]

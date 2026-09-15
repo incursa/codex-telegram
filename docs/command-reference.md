@@ -443,7 +443,7 @@ Expected behavior:
 2. Useful when Telegram privacy mode or an unsupported chat type prevents normal auto-routing.
 3. Keeps immediate send behavior for command fallback use; normal non-command input is captured into an input bundle by default and can be changed with `TelegramInput:DefaultCaptureMode`.
 
-Remote `/send` currently supports text only. Plan mode is relayed with the same worker-owned execution boundary. Attachments, steering, stopping, model/goal controls, and task workspace status/release remain local-only until their dedicated remote control contracts are added.
+Remote `/send` currently supports text only. Plan mode is relayed with the same worker-owned execution boundary. Attachments, model/goal controls, and write-oriented review actions remain local-only until their dedicated remote contracts are added. The Mini App can read a remote task's bounded detail, review packet, and artifact metadata through the owning worker.
 
 ### `/steer <text>`
 
@@ -685,7 +685,7 @@ Use /task status [taskId] to inspect the allocation. Stop the task session befor
 
 ### `/task remote <workerId> [name] [| baseRef] [| recipeId]`
 
-Creates a task on one explicitly selected registered worker. The coordinator first obtains an idempotent lease handoff, then asks the worker to validate its identity, repository admission, recipe version, and local readiness before creating the worktree and Codex session. The worker returns only bounded ownership and allocated-resource metadata; repository paths and Codex execution remain local to that worker. After creation, `/send <text>` and Plan mode can target the selected worker; the worker records the durable command before executing it and forwards bounded turn events back to the coordinator. Attachments and remote session controls remain separate capabilities.
+Creates a task on one explicitly selected registered worker. The coordinator first obtains an idempotent lease handoff, then asks the worker to validate its identity, repository admission, recipe version, and local readiness before creating the worktree and Codex session. The worker returns only bounded ownership and allocated-resource metadata; repository paths and Codex execution remain local to that worker. After creation, `/send <text>`, Plan mode, `/steer`, `/stop`, confirmed `/kill`, and task workspace status/release can target the selected worker through authenticated relays. The worker records durable command identity before execution and forwards bounded turn events back to the coordinator. Attachments and model/goal controls remain separate capabilities.
 
     /task remote worker:linux Codex review | main | review-branch
 
