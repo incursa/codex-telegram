@@ -123,6 +123,8 @@ internal interface ICodexSupervisionLedger
 
     Task<IReadOnlyList<CodexSupervisionTaskSnapshot>> ListTasksAsync(long userId, CancellationToken cancellationToken);
 
+    Task<CodexSupervisionTaskRecord?> GetTaskAsync(long userId, string taskId, CancellationToken cancellationToken);
+
     Task<CodexSupervisionTaskSnapshot?> GetTaskForSessionAsync(long userId, string codexThreadId, CancellationToken cancellationToken);
 }
 
@@ -1216,6 +1218,31 @@ internal sealed class CodexSupervisionLedger : ICodexSupervisionLedger, IDisposa
             .FirstOrDefault(task => string.Equals(task.CodexThreadId, codexThreadId, StringComparison.OrdinalIgnoreCase));
     }
 
+    public async Task<CodexSupervisionTaskRecord?> GetTaskAsync(
+        long userId,
+        string taskId,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(taskId))
+        {
+            return null;
+        }
+
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            LedgerState state = await LoadAsync(cancellationToken).ConfigureAwait(false);
+            return state.Tasks
+                .FirstOrDefault(task => task.OwnerUserId == userId
+                    && string.Equals(task.TaskId, taskId.Trim(), StringComparison.Ordinal))
+                ?.ToPublicRecord();
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
     public void Dispose()
     {
         _gate.Dispose();
@@ -1854,6 +1881,9 @@ internal sealed class NullCodexSupervisionLedger : ICodexSupervisionLedger
 
     public Task<IReadOnlyList<CodexSupervisionTaskSnapshot>> ListTasksAsync(long userId, CancellationToken cancellationToken)
         => Task.FromResult<IReadOnlyList<CodexSupervisionTaskSnapshot>>([]);
+
+    public Task<CodexSupervisionTaskRecord?> GetTaskAsync(long userId, string taskId, CancellationToken cancellationToken)
+        => Task.FromResult<CodexSupervisionTaskRecord?>(null);
 
     public Task<CodexSupervisionTaskSnapshot?> GetTaskForSessionAsync(long userId, string sessionId, CancellationToken cancellationToken)
         => Task.FromResult<CodexSupervisionTaskSnapshot?>(null);

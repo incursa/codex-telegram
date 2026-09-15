@@ -681,19 +681,25 @@ The command:
 
 Use /task status [taskId] to inspect the allocation. Stop the task session before releasing it. Then use /task release <taskId> confirm for a clean worktree, or /task discard <taskId> confirm only when explicitly discarding changes. A failed session creation is cleaned up when possible; no prompt is replayed and an existing session is never moved implicitly.
 
+### `/task remote <workerId> [name] [| baseRef] [| recipeId]`
+
+Creates a task on one explicitly selected registered worker. The coordinator first obtains an idempotent lease handoff, then asks the worker to validate its identity, repository admission, recipe version, and local readiness before creating the worktree and Codex session. The worker returns only bounded ownership and allocated-resource metadata; repository paths and Codex execution remain local to that worker. Remote prompt/session relay is a separate capability and is not implied by provisioning.
+
+    /task remote worker:linux Codex review | main | review-branch
+
 ### `/pair <code>` / `/pair status` / `/pair revoke`
 
 Manages the optional read-only standalone browser session. Open the Mini App URL in a browser and send its displayed pairing code as `/pair <code>` from the authorized private bot chat. `/pair status` lists the current user's browser sessions; `/pair revoke` revokes all of them. Pairing is disabled unless `TelegramMiniApp:BrowserPairingEnabled` is enabled, and it never creates a browser path for prompts, approvals, steering, or other Telegram control actions.
 
 ### `/worker status` / `/worker drain confirm` / `/worker resume confirm` / `/worker update ...`
 
-Shows the local worker's readiness, capabilities, heartbeat, and task-lease capacity. `drain` stops new task claims while allowing existing work to finish; `resume` permits new claims again. Drain and resume require an authorized private chat and explicit confirmation. Coordinator-issued lease handoff is an internal routing seam for remote task provisioning; it does not itself create a Codex session or transfer a prompt.
+Shows the local worker's readiness, capabilities, heartbeat, and task-lease capacity. `drain` stops new task claims while allowing existing work to finish; `resume` permits new claims again. Drain and resume require an authorized private chat and explicit confirmation. `/task remote` uses coordinator-issued lease handoff to provision a task on one explicitly selected worker; it does not itself transfer prompts or live turn events.
 
 `/worker update status` shows the persisted worker update state. When `CodexTelegram:Updates:Enabled` is enabled, `/worker update stage confirm` verifies the configured package path, SHA-256, release version, worker capabilities, and drained/idle state, then copies the package and current executable into the operator-owned staging root. `/worker update rollback confirm` stages the captured last-known-good executable after the worker is drained and idle. Both mutating commands require an authorized private chat and explicit confirmation. The external installer reports the running version, SHA-256, and health flag to `/api/worker/v1/update/complete` using `InstallerAuthenticationToken`; only a matching healthy process becomes `Active`, while failed health becomes `HealthFailed` and keeps rollback explicit. The application never replaces its protected installation.
 
 ### `/recipe list` / `/recipe <id>`
 
-Lists or inspects the configured task recipes. A recipe has a stable ID and version, an operator-visible objective, optional Codex session instructions, expected outputs, and required worker capabilities. Recipe configuration is copied into an immutable snapshot when selected by `/task new`.
+Lists or inspects the configured task recipes. A recipe has a stable ID and version, an operator-visible objective, optional Codex session instructions, expected outputs, and required worker capabilities. Recipe configuration is copied into an immutable snapshot when selected by `/task new` or `/task remote`.
 
 Use `/task new [name] [| baseRef] [| recipeId]` to create a task with a recipe. The recipe's Codex session instructions are applied when the session is created; the objective and version are retained in the supervision task record for review and handoff. Editing configuration never rewrites an existing task.
 

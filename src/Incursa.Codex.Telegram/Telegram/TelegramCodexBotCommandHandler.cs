@@ -204,6 +204,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
     private readonly ICodexWorkerRegistry? _workerRegistry;
     private readonly ICodexTaskRecipeCatalog? _recipeCatalog;
     private readonly ICodexWorkerUpdateManager? _workerUpdateManager;
+    private readonly CodexRemoteTaskProvisioningService? _remoteTaskProvisioner;
     private readonly bool _browserPairingEnabled;
     private readonly TelegramBotOptions _options;
     private readonly TelegramInputOptions _inputOptions;
@@ -255,7 +256,8 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         IOptions<TelegramMiniAppOptions>? miniAppOptions = null,
         ICodexWorkerRegistry? workerRegistry = null,
         ICodexTaskRecipeCatalog? recipeCatalog = null,
-        ICodexWorkerUpdateManager? workerUpdateManager = null)
+        ICodexWorkerUpdateManager? workerUpdateManager = null,
+        CodexRemoteTaskProvisioningService? remoteTaskProvisioner = null)
     {
         _parser = parser;
         _chunker = chunker;
@@ -300,6 +302,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         _workerRegistry = workerRegistry;
         _recipeCatalog = recipeCatalog;
         _workerUpdateManager = workerUpdateManager;
+        _remoteTaskProvisioner = remoteTaskProvisioner;
     }
 
     public async Task HandleMessageAsync(
@@ -1173,7 +1176,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         ITelegramBotMessageSender sender,
         CancellationToken cancellationToken)
     {
-        if (_taskWorkspaceManager is null)
+        if (_taskWorkspaceManager is null && _remoteTaskProvisioner is null)
         {
             await ReplyAsync(sender, message, "Managed task workspaces are not available in this host.", null, cancellationToken).ConfigureAwait(false);
             return;
@@ -1188,6 +1191,9 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             case "create":
                 await HandleTaskCreateAsync(message, details, sender, cancellationToken).ConfigureAwait(false);
                 return;
+            case "remote":
+                await HandleRemoteTaskCreateAsync(message, details, sender, cancellationToken).ConfigureAwait(false);
+                return;
             case "status":
                 await HandleTaskWorkspaceStatusAsync(message, details, sender, cancellationToken).ConfigureAwait(false);
                 return;
@@ -1201,7 +1207,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
                 await ReplyAsync(
                     sender,
                     message,
-                    "Usage: /task new [name] [| baseRef] [| recipeId], /task status [taskId], /task release <taskId> confirm, or /task discard <taskId> confirm",
+                    "Usage: /task new [name] [| baseRef] [| recipeId], /task remote <workerId> [name] [| baseRef] [| recipeId], /task status [taskId], /task release <taskId> confirm, or /task discard <taskId> confirm",
                     null,
                     cancellationToken).ConfigureAwait(false);
                 return;
@@ -1565,6 +1571,90 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         }
 
         responseLines.Add("The session is selected and ready. Use /send <text> to start Codex in this worktree.");
+        await ReplyAsync(sender, message, string.Join(Environment.NewLine, responseLines), null, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task HandleRemoteTaskCreateAsync(
+        TelegramInboundMessage message,
+        string details,
+        ITelegramBotMessageSender sender,
+        CancellationToken cancellationToken)
+    {
+        if (_remoteTaskProvisioner is null)
+        {
+            await ReplyAsync(sender, message, "Remote task provisioning is not available in this host.", null, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        string[] workerAndDetails = SplitArguments(details, 2);
+        if (workerAndDetails.Length < 2 || string.IsNullOrWhiteSpace(workerAndDetails[0]))
+        {
+            await ReplyAsync(sender, message, "Usage: /task remote <workerId> [name] [| baseRef] [| recipeId]", null, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        ResolvedProject resolvedProject = await ResolveActiveProjectAsync(message.ConversationScope, cancellationToken).ConfigureAwait(false);
+        if (resolvedProject.Project is null)
+        {
+            await ReplyAsync(sender, message, resolvedProject.Message, null, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        string[] nameAndRef = workerAndDetails[1].Split('|', StringSplitOptions.TrimEntries);
+        if (nameAndRef.Length > 3)
+        {
+            await ReplyAsync(sender, message, "Usage: /task remote <workerId> [name] [| baseRef] [| recipeId]", null, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        string sessionName = string.IsNullOrWhiteSpace(nameAndRef.FirstOrDefault())
+            ? BuildDefaultSessionName(resolvedProject.Project) + " task"
+            : nameAndRef[0].Trim();
+        string? baseRef = nameAndRef.Length > 1 && !string.IsNullOrWhiteSpace(nameAndRef[1])
+            ? nameAndRef[1].Trim()
+            : null;
+        string? recipeId = nameAndRef.Length > 2 && !string.IsNullOrWhiteSpace(nameAndRef[2])
+            ? nameAndRef[2].Trim()
+            : null;
+        CodexTaskRecipeSnapshot? recipe = recipeId is null ? null : _recipeCatalog?.Find(recipeId);
+        if (recipeId is not null && recipe is null)
+        {
+            await ReplyAsync(sender, message, $"Recipe '{recipeId}' was not found. Use /recipe list.", null, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        string taskId = $"task:{Guid.NewGuid():N}";
+        CodexRemoteTaskProvisionResponse result = await _remoteTaskProvisioner.ProvisionAsync(
+            new CodexRemoteTaskProvisionRequest(
+                taskId,
+                message.UserId,
+                message.ChatId,
+                message.MessageThreadId,
+                sessionName,
+                resolvedProject.Project.WorkingDirectory,
+                baseRef,
+                recipe,
+                workerAndDetails[0].Trim()),
+            cancellationToken).ConfigureAwait(false);
+        if (!result.Provisioned || string.IsNullOrWhiteSpace(result.CodexThreadId))
+        {
+            await ReplyAsync(sender, message, $"Remote task was not provisioned: {result.OutcomeCode}.", null, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        await _stateStore.SetActiveSessionIdAsync(message.ConversationScope, result.CodexThreadId, cancellationToken).ConfigureAwait(false);
+        List<string> responseLines = [
+            "Remote task workspace created",
+            $"Task: {result.TaskId}",
+            $"Worker: {result.WorkerId}",
+            $"Session: {result.SessionName} ({result.CodexThreadId})",
+            $"Workspace: {result.WorkspaceId}",
+            $"Branch: {result.Branch}",
+            $"Development port: {result.DevelopmentPort}",
+            $"Database namespace: {result.DatabaseNamespace}",
+            $"Recipe: {recipe?.RecipeKey ?? "(none)"}",
+            "The task is owned by the selected worker. Remote prompt/session relay is the next coordinator slice.",
+        ];
         await ReplyAsync(sender, message, string.Join(Environment.NewLine, responseLines), null, cancellationToken).ConfigureAwait(false);
     }
 
@@ -5309,7 +5399,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             "/sessions - show active and Telegram-managed sessions",
             "/sessions all [count] - show recent Codex history",
             "/new [name] - create and select a Codex session in this conversation",
-            "/task <new|status|release|discard> ... - manage an isolated task workspace",
+            "/task <new|remote|status|release|discard> ... - manage an isolated task workspace",
             "/use <sessionId> - select the active session for this conversation",
             "/resume <sessionId> - resume a session in this conversation",
             "/send <text> - send text to the active session",

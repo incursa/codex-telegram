@@ -366,8 +366,9 @@ internal sealed class CodexCoordinatorLeaseHandoffService
 
         try
         {
-            using HttpClient client = _httpClientFactory.CreateClient(nameof(CodexCoordinatorLeaseHandoffService));
-            client.Timeout = TimeSpan.FromSeconds(coordinator.RequestTimeoutSeconds);
+            HttpClient client = _httpClientFactory.CreateClient(nameof(CodexCoordinatorLeaseHandoffService));
+            using CancellationTokenSource requestTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            requestTimeout.CancelAfter(TimeSpan.FromSeconds(coordinator.RequestTimeoutSeconds));
             using HttpRequestMessage httpRequest = new(
                 HttpMethod.Post,
                 new Uri(new Uri(worker.ControlPlaneUrl!.TrimEnd('/') + "/", UriKind.Absolute), AcceptPath))
@@ -375,9 +376,9 @@ internal sealed class CodexCoordinatorLeaseHandoffService
                 Content = JsonContent.Create(grant, options: JsonOptions),
             };
             httpRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", coordinator.AuthenticationToken);
-            using HttpResponseMessage response = await client.SendAsync(httpRequest, cancellationToken).ConfigureAwait(false);
+            using HttpResponseMessage response = await client.SendAsync(httpRequest, requestTimeout.Token).ConfigureAwait(false);
             CodexWorkerLeaseAcceptance? acceptance = response.IsSuccessStatusCode
-                ? await response.Content.ReadFromJsonAsync<CodexWorkerLeaseAcceptance>(JsonOptions, cancellationToken).ConfigureAwait(false)
+                ? await response.Content.ReadFromJsonAsync<CodexWorkerLeaseAcceptance>(JsonOptions, requestTimeout.Token).ConfigureAwait(false)
                 : null;
             if (acceptance is { Accepted: true } && string.Equals(acceptance.WorkerId, worker.WorkerId, StringComparison.Ordinal))
             {

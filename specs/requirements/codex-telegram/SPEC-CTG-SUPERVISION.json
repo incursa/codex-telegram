@@ -8,7 +8,7 @@
   "owner": "codex-telegram-maintainers",
   "tags": ["codex", "telegram", "supervision", "recovery", "workers", "mini-app"],
   "purpose": "Define the authority, identity, recovery, isolation, review, browser, recipe, and release contracts for supervising Codex work across private self-hosted workers.",
-  "scope": "This specification covers the staged supervision workspace roadmap. It establishes the durable Telegram update receipt and bounded Task/Run/Command, delivery, approval/input, claim, recovery-action, restart-reconciliation, review-packet, Telegram-handoff, task-workspace allocation, explicit Telegram task-flow, opt-in browser-pairing projection, local worker-boundary, authenticated coordinator registration, coordinator lease-handoff, recipe, and staged update slices.",
+  "scope": "This specification covers the staged supervision workspace roadmap. It establishes the durable Telegram update receipt and bounded Task/Run/Command, delivery, approval/input, claim, recovery-action, restart-reconciliation, review-packet, Telegram-handoff, task-workspace allocation, explicit Telegram task-flow, opt-in browser-pairing projection, local worker-boundary, authenticated coordinator registration, coordinator lease-handoff, remote task provisioning, recipe, and staged update slices.",
   "authority": {
     "telegram": "authentication, operator control, and consequential approval",
     "codex": "thread and turn execution plus execution provenance",
@@ -95,6 +95,13 @@
       "statement": "A staged worker update MUST become active only after an authenticated external installer reports the running release version, SHA-256, and health result; the manager MUST compare the report with the staged target or rollback artifact and local ready state, record a bounded health-verification or health-failure outcome, and MUST NOT claim activation from staging alone.",
       "coverage": {"positive": "required", "negative": "required", "edge": "required", "restart": "required"},
       "trace": {"upstream_refs": ["`docs/mini-app-roadmap.md`", "`specs/architecture/codex-telegram/ARC-CTG-SUPERVISION-0001.md`", "`src/Incursa.Codex.Telegram/Services/CodexWorkerUpdateManager.cs`", "`src/Incursa.Codex.Telegram/MiniApp/CodexWorkerUpdateEndpoints.cs`", "`tests/Incursa.Codex.Telegram.Tests/CodexWorkerUpdateManagerTests.cs"]}
+    },
+    {
+      "id": "REQ-CTG-SUP-0013",
+      "title": "Provision remote tasks only on an explicitly admitted worker",
+      "statement": "A remote task provisioning operation MUST use an authenticated coordinator lease for the explicitly requested WorkerId, and the worker MUST re-check the WorkerId and LeaseId, local ready state, exact admitted repository root, recipe version, and local lease before creating its own worktree and Codex session; the coordinator MUST persist only bounded task ownership/resource metadata and MUST NOT claim that provisioning transfers prompts or execution authority.",
+      "coverage": {"positive": "required", "negative": "required", "edge": "required", "restart": "required"},
+      "trace": {"upstream_refs": ["`docs/mini-app-roadmap.md`", "`specs/architecture/codex-telegram/ARC-CTG-SUPERVISION-0001.md`", "`src/Incursa.Codex.Telegram/Services/CodexRemoteTaskProvisioning.cs`", "`src/Incursa.Codex.Telegram/MiniApp/CodexRemoteTaskEndpoints.cs`", "`tests/Incursa.Codex.Telegram.Tests/CodexRemoteTaskEndpointTests.cs`"]}
     }
   ],
   "non_goals": ["A competing task database or replacement for Codex history", "Browser prompts, approvals, steering, retries, cancellation, file writes, uploads, commits, merges, or deployments", "Blind replay of side-effecting work after a crash or timeout", "Autonomous merge, push, deploy, or release", "Public multi-tenant hosting or broad implicit Telegram authorization", "Bundling or synchronizing Codex authentication"]

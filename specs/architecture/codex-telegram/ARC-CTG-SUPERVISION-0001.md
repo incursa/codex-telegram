@@ -136,11 +136,14 @@ The worker-side endpoint requires the same exact bearer token, checks the grant 
 
 The external installer reports completion only through the authenticated `/api/worker/v1/update/complete` endpoint using a token separate from coordinator worker registration. The request contains the running release version, binary SHA-256, and a health flag. The manager compares those fields with the currently staged target or rollback artifact and re-reads local worker readiness. A positive result records `Active` or `RollbackActive`; a mismatch, unhealthy flag, or non-ready worker records `HealthFailed` without claiming activation. This endpoint is an acknowledgement after an actual restart, not a Telegram-controlled stop/start path.
 
+## R3.6 remote task provisioning
+
+`/task remote` is an explicit coordinator operation. The coordinator first obtains a bounded lease handoff for the requested worker and then sends authenticated provisioning metadata to `/api/worker/v1/tasks/provision`. The worker re-checks the grant's WorkerId and LeaseId, its local ready state, its configured Repository mode and exact repository root, and the recipe version before creating the task worktree and Codex session. The worker registers the task locally and the coordinator records only the returned WorkerId, LeaseId, WorkspaceId, Codex thread ID, branch, port, and database namespace. No private filesystem path, credential, prompt body, or transcript is transferred. The endpoint is idempotent by owner and TaskId; it provisions ownership and execution placement but does not yet relay prompts or live turn events.
+
 ## Later dependency sequence
 
-1. Use the lease handoff during remote task provisioning and bind the returned WorkerId/LeaseId to the durable task projection.
-2. Add cross-worker task ownership to the combined Mini App worker/attention projection.
-3. Add fleet-wide staged rollout coordination, compatibility gates, and safe rollback finalization.
+1. Add remote task/session relay and cross-worker task ownership to the combined Mini App worker/attention projection.
+2. Add fleet-wide staged rollout coordination, compatibility gates, and safe rollback finalization.
 
 Each step requires focused automated tests plus the repository release floor. Browser and Telegram-live checks remain separate evidence categories.
 

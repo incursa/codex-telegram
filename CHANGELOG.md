@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 1.0.40 - 2026-09-15
+
+- Added explicit coordinator-selected remote task provisioning through an authenticated worker endpoint.
+- Added worker-local worktree/session creation with lease, repository, recipe, and supervision ownership checks.
+- Persisted a bounded coordinator task projection without transferring paths, credentials, prompts, or Codex transcripts.
+
 ## 1.0.39 - 2026-09-15
 
 - Added an authenticated external-installer completion endpoint for staged worker updates.

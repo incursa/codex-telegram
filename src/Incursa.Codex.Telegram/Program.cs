@@ -365,6 +365,7 @@ builder.Services.AddSingleton<ITelegramTurnOutputRelay, TelegramTurnOutputRelay>
 builder.Services.AddHttpClient<OpenAiSpeechToTextService>();
 builder.Services.AddHttpClient(nameof(CodexWorkerCoordinatorHostedService));
 builder.Services.AddHttpClient(nameof(CodexCoordinatorLeaseHandoffService));
+builder.Services.AddHttpClient(nameof(CodexRemoteTaskProvisioningService));
 builder.Services.AddSingleton<IAudioTranscriptionService>(sp => sp.GetRequiredService<OpenAiSpeechToTextService>());
 builder.Services.AddSingleton<ICodexRuntimeClientFactory, CodexRuntimeClientFactory>();
 builder.Services.AddSingleton<ICodexSessionEventLog, CodexSessionEventLog>();
@@ -375,6 +376,8 @@ builder.Services.AddSingleton<ICodexWorkerRegistry>(sp => sp.GetRequiredService<
 builder.Services.AddSingleton<ICodexCoordinatorWorkerStore, CodexCoordinatorWorkerStore>();
 builder.Services.AddSingleton<ICodexCoordinatorLeaseStore, CodexCoordinatorLeaseStore>();
 builder.Services.AddSingleton<CodexCoordinatorLeaseHandoffService>();
+builder.Services.AddSingleton<ICodexCoordinatorTaskStore, CodexCoordinatorTaskStore>();
+builder.Services.AddSingleton<CodexRemoteTaskProvisioningService>();
 builder.Services.AddSingleton<CodexWorkerUpdateManager>();
 builder.Services.AddSingleton<ICodexWorkerUpdateManager>(sp => sp.GetRequiredService<CodexWorkerUpdateManager>());
 builder.Services.AddSingleton<ICodexTaskRecipeCatalog, CodexTaskRecipeCatalog>();
@@ -426,6 +429,7 @@ catch (InvalidOperationException exception)
 app.UseDefaultFiles();
 app.UseStaticFiles();
 CodexCoordinatorWorkerEndpoints.Map(app);
+CodexRemoteTaskEndpoints.Map(app);
 CodexWorkerUpdateEndpoints.Map(app);
 TelegramMiniAppEndpoints.Map(app);
 
