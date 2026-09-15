@@ -12,7 +12,7 @@ internal sealed class CodexTelegramOptionsValidator : IValidateOptions<CodexTele
 {
     public ValidateOptionsResult Validate(string? name, CodexTelegramOptions options)
     {
-        IReadOnlyList<string> failures = [.. ValidateRepository(options), .. ValidateTaskWorkspace(options), .. ValidateWorker(options), .. ValidateRecipes(options), .. ValidateCoordinator(options)];
+        IReadOnlyList<string> failures = [.. ValidateRepository(options), .. ValidateTaskWorkspace(options), .. ValidateWorker(options), .. ValidateRecipes(options), .. ValidateCoordinator(options), .. ValidateUpdates(options)];
         return failures.Count == 0
             ? ValidateOptionsResult.Success
             : ValidateOptionsResult.Fail(failures);
@@ -119,6 +119,32 @@ internal sealed class CodexTelegramOptionsValidator : IValidateOptions<CodexTele
             ? ["CodexTelegram:Coordinator:AllowedWorkerIds must contain only safe IDs of at most 120 characters."]
             : [];
     }
+
+    private static IReadOnlyList<string> ValidateUpdates(CodexTelegramOptions options)
+    {
+        CodexWorkerUpdateOptions updates = options.Updates;
+        if (!updates.Enabled)
+        {
+            return [];
+        }
+
+        if (string.IsNullOrWhiteSpace(updates.PackagePath)
+            || string.IsNullOrWhiteSpace(updates.TargetVersion)
+            || !IsSafeRecipeToken(updates.TargetVersion, 40)
+            || !RegexLikeSha256(updates.ExpectedSha256))
+        {
+            return ["CodexTelegram:Updates requires a package path, safe target version, and 64-character hexadecimal ExpectedSha256."];
+        }
+
+        return updates.RequiredCapabilities.Any(capability => !IsSafeRecipeToken(capability, 120))
+            ? ["CodexTelegram:Updates:RequiredCapabilities must contain only safe IDs of at most 120 characters."]
+            : [];
+    }
+
+    private static bool RegexLikeSha256(string? value)
+        => !string.IsNullOrWhiteSpace(value)
+            && value.Trim().Length == 64
+            && value.All(character => char.IsAsciiHexDigit(character));
 
     internal static IReadOnlyList<string> ValidateRepository(CodexTelegramOptions options)
     {

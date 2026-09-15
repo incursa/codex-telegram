@@ -117,6 +117,11 @@ public sealed class CodexTelegramOptions
     /// Gets or sets the optional authenticated coordinator control-plane options.
     /// </summary>
     public CodexCoordinatorOptions Coordinator { get; set; } = new();
+
+    /// <summary>
+    /// Gets or sets the operator-controlled worker update options.
+    /// </summary>
+    public CodexWorkerUpdateOptions Updates { get; set; } = new();
 }
 
 /// <summary>
@@ -204,6 +209,30 @@ public sealed class CodexCoordinatorOptions
 
     /// <summary>Gets or sets the worker IDs permitted to register; empty permits any holder of the token.</summary>
     public List<string> AllowedWorkerIds { get; set; } = [];
+}
+
+/// <summary>
+/// Describes a package that may be staged for an explicitly controlled worker update.
+/// </summary>
+public sealed class CodexWorkerUpdateOptions
+{
+    /// <summary>Gets or sets whether worker update staging is enabled.</summary>
+    public bool Enabled { get; set; }
+
+    /// <summary>Gets or sets the exact local package path supplied by the operator.</summary>
+    public string? PackagePath { get; set; }
+
+    /// <summary>Gets or sets the expected release version of the package.</summary>
+    public string? TargetVersion { get; set; }
+
+    /// <summary>Gets or sets the expected SHA-256 digest of the package.</summary>
+    public string? ExpectedSha256 { get; set; }
+
+    /// <summary>Gets or sets the operator-owned staging directory.</summary>
+    public string? StageRoot { get; set; }
+
+    /// <summary>Gets the worker capabilities required before staging is allowed.</summary>
+    public List<string> RequiredCapabilities { get; set; } = [];
 }
 
 /// <summary>

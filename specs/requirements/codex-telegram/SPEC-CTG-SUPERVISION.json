@@ -74,6 +74,13 @@
       "statement": "An optional coordinator MUST accept only exact bearer-token worker heartbeats, optionally bind admission to configured WorkerIds, cap persisted remote workers, retain only bounded worker status metadata, and project missed heartbeats as unavailable; the coordinator MUST NOT receive Codex credentials or become the local worker's execution authority.",
       "coverage": {"positive": "required", "negative": "required", "edge": "required", "restart": "required"},
       "trace": {"upstream_refs": ["`docs/mini-app-roadmap.md`", "`specs/architecture/codex-telegram/ARC-CTG-SUPERVISION-0001.md`", "`src/Incursa.Codex.Telegram/MiniApp/CodexCoordinatorWorkerEndpoints.cs`", "`src/Incursa.Codex.Telegram/Services/CodexCoordinatorWorkerStore.cs`", "`tests/Incursa.Codex.Telegram.Tests/CodexCoordinatorWorkerStoreTests.cs`"]}
+    },
+    {
+      "id": "REQ-CTG-SUP-0010",
+      "title": "Stage worker updates without replacing the protected installation",
+      "statement": "An enabled worker update MUST require an explicitly configured package path, target release version, SHA-256 digest, and operator-owned staging root; staging MUST require the local worker to be drained with zero active leases, verify the package digest, version, and required capabilities, persist bounded outcome evidence, and capture a last-known-good executable for explicit rollback; the application MUST NOT overwrite its protected running installation or claim post-install health before an external installer verifies it.",
+      "coverage": {"positive": "required", "negative": "required", "edge": "required", "restart": "required"},
+      "trace": {"upstream_refs": ["`docs/mini-app-roadmap.md`", "`specs/architecture/codex-telegram/ARC-CTG-SUPERVISION-0001.md`", "`src/Incursa.Codex.Telegram/Services/CodexWorkerUpdateManager.cs`", "`tests/Incursa.Codex.Telegram.Tests/CodexWorkerUpdateManagerTests.cs`"]}
     }
   ],
   "non_goals": ["A competing task database or replacement for Codex history", "Browser prompts, approvals, steering, retries, cancellation, file writes, uploads, commits, merges, or deployments", "Blind replay of side-effecting work after a crash or timeout", "Autonomous merge, push, deploy, or release", "Public multi-tenant hosting or broad implicit Telegram authorization", "Bundling or synchronizing Codex authentication"]

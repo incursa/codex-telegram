@@ -685,9 +685,11 @@ Use /task status [taskId] to inspect the allocation. Stop the task session befor
 
 Manages the optional read-only standalone browser session. Open the Mini App URL in a browser and send its displayed pairing code as `/pair <code>` from the authorized private bot chat. `/pair status` lists the current user's browser sessions; `/pair revoke` revokes all of them. Pairing is disabled unless `TelegramMiniApp:BrowserPairingEnabled` is enabled, and it never creates a browser path for prompts, approvals, steering, or other Telegram control actions.
 
-### `/worker status` / `/worker drain confirm` / `/worker resume confirm`
+### `/worker status` / `/worker drain confirm` / `/worker resume confirm` / `/worker update ...`
 
-Shows the local worker's readiness, capabilities, heartbeat, and task-lease capacity. `drain` stops new task claims while allowing existing work to finish; `resume` permits new claims again. Drain and resume require an authorized private chat and explicit confirmation. These commands manage only this host; coordinator routing and fleet updates remain separate roadmap capabilities.
+Shows the local worker's readiness, capabilities, heartbeat, and task-lease capacity. `drain` stops new task claims while allowing existing work to finish; `resume` permits new claims again. Drain and resume require an authorized private chat and explicit confirmation.
+
+`/worker update status` shows the persisted worker update state. When `CodexTelegram:Updates:Enabled` is enabled, `/worker update stage confirm` verifies the configured package path, SHA-256, release version, worker capabilities, and drained/idle state, then copies the package and current executable into the operator-owned staging root. `/worker update rollback confirm` stages the captured last-known-good executable after the worker is drained and idle. Both mutating commands require an authorized private chat and explicit confirmation. The application never replaces its protected installation; the external service installer must consume the staged package and report post-install health separately.
 
 ### `/recipe list` / `/recipe <id>`
 

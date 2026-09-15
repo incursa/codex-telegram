@@ -460,7 +460,7 @@
       name.textContent = worker.displayName || worker.workerId || "Worker";
       const meta = document.createElement("div");
       meta.className = "worker-meta";
-      meta.textContent = `${worker.readiness || "unknown"} · ${worker.activeLeaseCount || 0}/${worker.maximumConcurrentTasks || 0} leases · ${worker.version || "unknown"}`;
+      meta.textContent = `${worker.isRemote ? "remote" : "local"} · ${worker.readiness || "unknown"} · ${worker.activeLeaseCount || 0}/${worker.maximumConcurrentTasks || 0} leases · ${worker.version || "unknown"}`;
       copy.append(name, meta);
       const badge = document.createElement("inc-badge");
       badge.setAttribute("variant", workerVariant(worker));

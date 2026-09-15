@@ -203,6 +203,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
     private readonly ITelegramMiniAppBrowserPairingStore? _browserPairingStore;
     private readonly ICodexWorkerRegistry? _workerRegistry;
     private readonly ICodexTaskRecipeCatalog? _recipeCatalog;
+    private readonly ICodexWorkerUpdateManager? _workerUpdateManager;
     private readonly bool _browserPairingEnabled;
     private readonly TelegramBotOptions _options;
     private readonly TelegramInputOptions _inputOptions;
@@ -253,7 +254,8 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         ITelegramMiniAppBrowserPairingStore? browserPairingStore = null,
         IOptions<TelegramMiniAppOptions>? miniAppOptions = null,
         ICodexWorkerRegistry? workerRegistry = null,
-        ICodexTaskRecipeCatalog? recipeCatalog = null)
+        ICodexTaskRecipeCatalog? recipeCatalog = null,
+        ICodexWorkerUpdateManager? workerUpdateManager = null)
     {
         _parser = parser;
         _chunker = chunker;
@@ -297,6 +299,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         _browserPairingEnabled = miniAppOptions?.Value.BrowserPairingEnabled ?? true;
         _workerRegistry = workerRegistry;
         _recipeCatalog = recipeCatalog;
+        _workerUpdateManager = workerUpdateManager;
     }
 
     public async Task HandleMessageAsync(
@@ -1278,6 +1281,11 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
 
         string[] parts = SplitArguments(arguments, 2);
         string operation = parts.FirstOrDefault()?.ToLowerInvariant() ?? "status";
+        if (operation == "update")
+        {
+            await HandleWorkerUpdateAsync(message, parts.Length > 1 ? parts[1] : string.Empty, sender, cancellationToken).ConfigureAwait(false);
+            return;
+        }
         if (operation is "drain" or "resume")
         {
             if (!IsPrivateChat(message))
@@ -1305,6 +1313,46 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         }
 
         await ReplyAsync(sender, message, FormatWorker(await _workerRegistry.GetSnapshotAsync(cancellationToken).ConfigureAwait(false)), null, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task HandleWorkerUpdateAsync(
+        TelegramInboundMessage message,
+        string arguments,
+        ITelegramBotMessageSender sender,
+        CancellationToken cancellationToken)
+    {
+        if (_workerUpdateManager is null)
+        {
+            await ReplyAsync(sender, message, "Worker updates are not available in this host.", null, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        string[] parts = SplitArguments(arguments, 2);
+        string operation = parts.FirstOrDefault()?.ToLowerInvariant() ?? "status";
+        if (operation == "status")
+        {
+            await ReplyAsync(sender, message, FormatWorkerUpdate(await _workerUpdateManager.GetStatusAsync(cancellationToken).ConfigureAwait(false)), null, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        if (operation is not ("stage" or "rollback")
+            || parts.Length != 2
+            || !parts[1].Equals("confirm", StringComparison.OrdinalIgnoreCase))
+        {
+            await ReplyAsync(sender, message, "Usage: /worker update status, /worker update stage confirm, or /worker update rollback confirm", null, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        if (!IsPrivateChat(message))
+        {
+            await ReplyAsync(sender, message, "Worker updates are available only from an authorized private chat.", null, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        CodexWorkerUpdateSnapshot result = operation == "stage"
+            ? await _workerUpdateManager.StageAsync(cancellationToken).ConfigureAwait(false)
+            : await _workerUpdateManager.StageRollbackAsync(cancellationToken).ConfigureAwait(false);
+        await ReplyAsync(sender, message, FormatWorkerUpdate(result), null, cancellationToken).ConfigureAwait(false);
     }
 
     private async Task HandleRecipeAsync(
@@ -1370,6 +1418,16 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             $"Heartbeat: {worker.LastHeartbeatUtc:O}",
             $"Capabilities: {string.Join(", ", worker.Capabilities)}",
             worker.Issues.Count == 0 ? "Issues: none" : $"Issues: {string.Join("; ", worker.Issues)}",
+        ]);
+
+    private static string FormatWorkerUpdate(CodexWorkerUpdateSnapshot update)
+        => string.Join(Environment.NewLine, [
+            $"Update state: {update.State}",
+            $"Target version: {update.TargetVersion ?? "(none)"}",
+            $"Package: {update.StagedPackageName ?? "(none)"}",
+            $"Rollback package: {update.RollbackPackageName ?? "(none)"}",
+            $"Outcome: {update.OutcomeCode ?? "(none)"}",
+            "Staged packages are consumed by the external service installer after the worker is drained; this process never overwrites its protected installation.",
         ]);
 
     private async Task HandleTaskCreateAsync(

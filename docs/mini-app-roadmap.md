@@ -49,6 +49,8 @@ The v1.0.35 R5.1 slice adds inspectable task recipes alongside the local worker 
 
 The v1.0.36 R3.4 control-plane slice adds authenticated outbound worker heartbeats and a bounded coordinator worker registry. The coordinator admits only token-authenticated, optionally allowlisted worker IDs, persists redacted status, and projects stale heartbeats as unavailable. It is an observation and admission layer; workers retain their own Codex execution, state, credentials, and task isolation. A coordinator-issued task lease handoff is deliberately still separate.
 
+The v1.0.37 R5.2 slice adds drain-aware worker update staging. An authorized private Telegram command verifies a package's exact digest, release version, and required capabilities while the local worker is drained and idle, then stages the package and a last-known-good executable under an operator-owned writable root. The protected installation is never overwritten by the application; an external service installer owns activation and post-install health. Rollback staging is explicit and persisted as bounded evidence.
+
 ## Identity and state vocabulary
 
 Until R1 introduces durable application records, a Mini App task is a Codex thread and its turns are the run history. The implementation must not imply stronger guarantees than the underlying thread state provides.
@@ -67,8 +69,8 @@ Initial display states are `queued`, `running`, `waiting`, `failed`, `completed`
 
 ## Later slices
 
-1. Add outbound authenticated coordinator connections, multi-worker routing, lease handoff, and isolation enforcement around the task workspace boundary.
-2. Expand the combined worker/attention view with cross-worker task ownership and recovery state. Browser access remains read-only until a separate authorization contract exists.
-3. Add inspectable recipes and controlled worker updates with capability checks, staged rollout, drain, health/version verification, rollback, and provenance evidence.
+1. Add a coordinator-issued lease handoff and worker-side acceptance/rejection protocol for cross-worker task routing.
+2. Expand the combined worker/attention view with cross-worker task ownership and recovery state, including explicit worker selection and reconciliation.
+3. Add external-installer completion acknowledgements, post-install health/version evidence, and safe rollback finalization.
 
 Full IDE behavior, arbitrary terminal/file-manager access, autonomous merge/push/deploy, public multi-tenant hosting, and blind replay of side-effecting work are out of scope.

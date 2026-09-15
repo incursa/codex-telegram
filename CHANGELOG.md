@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 1.0.37 - 2026-09-15
+
+- Added drain-aware, hash- and version-verified worker package staging with persisted outcome evidence.
+- Added operator-confirmed worker update status, staging, and rollback staging commands without overwriting the protected running installation.
+- Added required capability checks and rollback artifact capture for externally applied worker updates.
+
 ## 1.0.36 - 2026-09-15
 
 - Added the optional authenticated coordinator worker-heartbeat endpoint and outbound worker registration service.

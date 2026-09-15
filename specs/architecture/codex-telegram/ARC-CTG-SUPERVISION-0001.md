@@ -119,13 +119,17 @@ This is an admission and observation boundary, not yet a full task-dispatch prot
 
 Recipes are configuration-owned definitions with a stable `RecipeId` and `RecipeVersion`, bounded objective and expected-output text, optional Codex session instructions, and required worker capabilities. `/recipe` is read-only. Selecting a recipe during `/task new` passes only its session-policy fields to the new Codex thread and records the ID, version, and display name in the application-owned task record. The selected snapshot is immutable for that task; later configuration reloads do not rewrite its provenance. Recipe text does not authorize a user, approve a Codex action, or create a browser mutation path.
 
+## R5.2 staged worker updates
+
+When enabled, `CodexWorkerUpdateManager` accepts an operator-configured package path only after the local worker is explicitly draining and has zero active leases. It verifies the exact SHA-256 digest, the package assembly major/minor/build version, and configured worker capabilities before copying the package into an operator-owned staging root. It also captures the current executable as a last-known-good rollback artifact. The manager persists only bounded package names, target version, digest, timestamps, and outcome codes in `codex-worker-update-state.json`; it does not persist source paths, credentials, or transcripts.
+
+Staging is not activation. The protected installation is never overwritten by the application, and the running process is not stopped from Telegram. An external service or fleet installer consumes the staged package, performs the stop/start and post-install version/health checks, and decides whether to complete the update or apply the explicitly staged rollback artifact. Until that acknowledgement exists, the application reports the package as staged rather than healthy or active. This preserves rollback and release provenance without weakening `ProtectSystem` or making the coordinator a second execution authority.
+
 ## Later dependency sequence
 
-1. Add authenticated outbound coordinator connections, cross-worker routing, and isolation enforcement around the task workspace boundary.
+1. Add a coordinator-issued lease handoff and worker-side acceptance/rejection protocol for cross-worker task routing.
 2. Add cross-worker task ownership to the combined Mini App worker/attention projection.
-3. Add a coordinator-issued task lease handoff and worker-isolation enforcement for cross-worker execution.
-4. Add staged, drain-aware worker updates with capability checks, health/version verification, rollback, and provenance evidence.
-3. Add immutable task recipes and staged, drain-aware, health-verified worker updates with rollback evidence.
+3. Add external-installer completion acknowledgements, post-install health/version evidence, and safe rollback finalization.
 
 Each step requires focused automated tests plus the repository release floor. Browser and Telegram-live checks remain separate evidence categories.
 

@@ -372,6 +372,8 @@ builder.Services.AddSingleton<ICodexTaskWorkspaceManager, CodexTaskWorkspaceMana
 builder.Services.AddSingleton<CodexWorkerRegistry>();
 builder.Services.AddSingleton<ICodexWorkerRegistry>(sp => sp.GetRequiredService<CodexWorkerRegistry>());
 builder.Services.AddSingleton<ICodexCoordinatorWorkerStore, CodexCoordinatorWorkerStore>();
+builder.Services.AddSingleton<CodexWorkerUpdateManager>();
+builder.Services.AddSingleton<ICodexWorkerUpdateManager>(sp => sp.GetRequiredService<CodexWorkerUpdateManager>());
 builder.Services.AddSingleton<ICodexTaskRecipeCatalog, CodexTaskRecipeCatalog>();
 builder.Services.AddSingleton<CodexSessionRuntimeRegistry>();
 builder.Services.AddSingleton<ICodexTurnExecutionCoordinator>(sp => sp.GetRequiredService<CodexSessionRuntimeRegistry>());
