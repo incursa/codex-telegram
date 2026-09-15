@@ -468,7 +468,7 @@ Expected behavior:
 3. Replies with an error if there is no live turn to steer.
 4. If Codex does not accept the steer request quickly, posts a durable pending message and later reports success or failure.
 
-Use `/send` for normal new work. Use `/steer` only while Codex is already working. Steering text is sent immediately and cannot be edited after the bot hands it to Codex; edit queued text first with `/queue edit <id> <new text>`.
+Use `/send` for normal new work. Use `/steer` only while Codex is already working. Steering text is sent immediately and cannot be edited after the bot hands it to Codex; edit queued text first with `/queue edit <id> <new text>`. For a selected remote task, steering is authenticated and executed by the owning worker, with duplicate command IDs suppressed at that worker.
 
 ### `/queue`
 
@@ -695,7 +695,7 @@ Manages the optional read-only standalone browser session. Open the Mini App URL
 
 ### `/worker status` / `/worker drain confirm` / `/worker resume confirm` / `/worker update ...`
 
-Shows the local worker's readiness, capabilities, heartbeat, and task-lease capacity. `drain` stops new task claims while allowing existing work to finish; `resume` permits new claims again. Drain and resume require an authorized private chat and explicit confirmation. `/task remote` uses coordinator-issued lease handoff to provision a task on one explicitly selected worker; it does not itself transfer prompts or live turn events.
+Shows the local worker's readiness, capabilities, heartbeat, and task-lease capacity. `drain` stops new task claims while allowing existing work to finish; `resume` permits new claims again. Drain and resume require an authorized private chat and explicit confirmation. `/task remote` uses coordinator-issued lease handoff to provision a task on one explicitly selected worker. `/send`, Plan mode, `/steer`, `/stop`, and confirmed `/kill` can then use the authenticated worker relay; attachments, model/goal controls, and remote workspace status/release remain unsupported.
 
 `/worker update status` shows the persisted worker update state. When `CodexTelegram:Updates:Enabled` is enabled, `/worker update stage confirm` verifies the configured package path, SHA-256, release version, worker capabilities, and drained/idle state, then copies the package and current executable into the operator-owned staging root. `/worker update rollback confirm` stages the captured last-known-good executable after the worker is drained and idle. Both mutating commands require an authorized private chat and explicit confirmation. The external installer reports the running version, SHA-256, and health flag to `/api/worker/v1/update/complete` using `InstallerAuthenticationToken`; only a matching healthy process becomes `Active`, while failed health becomes `HealthFailed` and keeps rollback explicit. The application never replaces its protected installation.
 

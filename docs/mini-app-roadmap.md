@@ -59,6 +59,8 @@ The v1.0.40 R3.6 slice uses the coordinator lease handoff for explicit remote ta
 
 The v1.0.41 R3.7 slice adds authenticated Telegram text and Plan mode relay for a selected remote task. The coordinator sends a bounded command with the durable CommandId and an exact callback URL; the worker re-checks task ownership, local readiness, callback configuration, and command idempotency before invoking its local Codex session. Worker timeline events are forwarded to the coordinator over the authenticated callback and projected to Telegram, while terminal events reconcile the coordinator's supervision run. Attachments, remote steering/stopping, model/goal controls, and file/review actions remain separate capabilities.
 
+The v1.0.42 R3.8 slice adds authenticated remote steering and stop/kill controls. These operations use a separate worker control endpoint, task ownership checks, durable CommandIds, and bounded completion/unknown/interrupted outcomes. A ready worker may accept stop/kill while draining, but draining still prevents new task claims. Attachments, model/goal controls, remote workspace lifecycle, and review/file actions remain separate capabilities.
+
 ## Identity and state vocabulary
 
 Until R1 introduces durable application records, a Mini App task is a Codex thread and its turns are the run history. The implementation must not imply stronger guarantees than the underlying thread state provides.
@@ -77,7 +79,7 @@ Initial display states are `queued`, `running`, `waiting`, `failed`, `completed`
 
 ## Later slices
 
-1. Complete remote session/control relay as separately authorized operations, including steering, stop, attachments, model/goal controls, and task status/release where worker-owned.
+1. Complete remote session/control relay as separately authorized operations, including attachments, model/goal controls, and task status/release where worker-owned.
 2. Add combined Mini App task detail, attention, review-packet, artifact, and worker views backed by the coordinator's bounded projections.
 3. Add fleet-wide staged rollout coordination, compatibility gates, and safe rollback finalization.
 

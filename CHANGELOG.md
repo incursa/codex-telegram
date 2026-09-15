@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 1.0.42 - 2026-09-15
+
+- Added authenticated remote steering and stop/kill controls for explicitly selected tasks.
+- Added worker-side command receipts and bounded outcome states for remote control operations, including interruption during worker drain.
+- Kept remote attachments, model/goal controls, and workspace lifecycle operations out of this slice.
+
 ## 1.0.41 - 2026-09-15
 
 - Added authenticated remote text and Plan mode relay to the worker that owns a task.

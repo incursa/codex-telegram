@@ -7,9 +7,9 @@
     <Nullable>enable</Nullable>
     <AssemblyName>Incursa.Codex.Telegram</AssemblyName>
     <RootNamespace>Incursa.Codex.Telegram</RootNamespace>
-    <Version>1.0.41</Version>
-    <AssemblyVersion>1.0.41.0</AssemblyVersion>
-    <FileVersion>1.0.41.0</FileVersion>
+    <Version>1.0.42</Version>
+    <AssemblyVersion>1.0.42.0</AssemblyVersion>
+    <FileVersion>1.0.42.0</FileVersion>
     <UserSecretsId>incursa-codex-telegram</UserSecretsId>
     <PublishSingleFile>true</PublishSingleFile>
     <SelfContained Condition="'$(RuntimeIdentifier)' != ''">true</SelfContained>
