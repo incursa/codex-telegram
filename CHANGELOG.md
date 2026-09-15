@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 1.0.36 - 2026-09-15
+
+- Added the optional authenticated coordinator worker-heartbeat endpoint and outbound worker registration service.
+- Added bounded persisted remote-worker admission with exact bearer-token authentication, optional worker ID allowlisting, capacity limits, and stale-heartbeat projection.
+- Enforced local worker leases during task workspace creation and release, and exposed local/remote worker state in the read-only Mini App.
+
 ## 1.0.35 - 2026-09-15
 
 - Added persisted local worker identity, readiness, bounded task leases, and drain/resume state for the task-workspace boundary.

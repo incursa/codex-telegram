@@ -67,6 +67,13 @@
       "statement": "A task recipe MUST expose a stable RecipeId and RecipeVersion plus bounded objective, session policy, expected outputs, and required capabilities; selecting a recipe MUST snapshot its identity into the task provenance and MUST NOT rewrite an existing task when configuration changes.",
       "coverage": {"positive": "required", "negative": "required", "edge": "required", "restart": "required"},
       "trace": {"upstream_refs": ["`docs/mini-app-roadmap.md`", "`specs/architecture/codex-telegram/ARC-CTG-SUPERVISION-0001.md`", "`src/Incursa.Codex.Telegram/Services/CodexTaskRecipeCatalog.cs`", "`tests/Incursa.Codex.Telegram.Tests/CodexTaskRecipeCatalogTests.cs`"]}
+    },
+    {
+      "id": "REQ-CTG-SUP-0009",
+      "title": "Authenticate and bound coordinator worker registration",
+      "statement": "An optional coordinator MUST accept only exact bearer-token worker heartbeats, optionally bind admission to configured WorkerIds, cap persisted remote workers, retain only bounded worker status metadata, and project missed heartbeats as unavailable; the coordinator MUST NOT receive Codex credentials or become the local worker's execution authority.",
+      "coverage": {"positive": "required", "negative": "required", "edge": "required", "restart": "required"},
+      "trace": {"upstream_refs": ["`docs/mini-app-roadmap.md`", "`specs/architecture/codex-telegram/ARC-CTG-SUPERVISION-0001.md`", "`src/Incursa.Codex.Telegram/MiniApp/CodexCoordinatorWorkerEndpoints.cs`", "`src/Incursa.Codex.Telegram/Services/CodexCoordinatorWorkerStore.cs`", "`tests/Incursa.Codex.Telegram.Tests/CodexCoordinatorWorkerStoreTests.cs`"]}
     }
   ],
   "non_goals": ["A competing task database or replacement for Codex history", "Browser prompts, approvals, steering, retries, cancellation, file writes, uploads, commits, merges, or deployments", "Blind replay of side-effecting work after a crash or timeout", "Autonomous merge, push, deploy, or release", "Public multi-tenant hosting or broad implicit Telegram authorization", "Bundling or synchronizing Codex authentication"]

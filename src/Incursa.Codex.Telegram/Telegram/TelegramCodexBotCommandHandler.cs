@@ -1408,11 +1408,35 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             return;
         }
         string taskId = $"task:{Guid.NewGuid():N}";
-        CodexTaskWorkspaceRecord workspace = await _taskWorkspaceManager!.CreateAsync(
-            taskId,
-            resolvedProject.Project.WorkingDirectory,
-            baseRef,
-            cancellationToken).ConfigureAwait(false);
+        CodexWorkerLease? workerLease = null;
+        if (_workerRegistry is not null)
+        {
+            workerLease = await _workerRegistry.TryAcquireLeaseAsync(taskId, TimeSpan.FromHours(24), cancellationToken).ConfigureAwait(false);
+            if (workerLease is null)
+            {
+                await ReplyAsync(sender, message, "The local worker is draining or at task capacity. Try again after existing work finishes or the worker resumes.", null, cancellationToken).ConfigureAwait(false);
+                return;
+            }
+        }
+
+        CodexTaskWorkspaceRecord workspace;
+        try
+        {
+            workspace = await _taskWorkspaceManager!.CreateAsync(
+                taskId,
+                resolvedProject.Project.WorkingDirectory,
+                baseRef,
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch
+        {
+            if (workerLease is not null)
+            {
+                await _workerRegistry!.ReleaseLeaseAsync(taskId, CancellationToken.None).ConfigureAwait(false);
+            }
+
+            throw;
+        }
 
         CodexSessionSummary session;
         try
@@ -1445,6 +1469,11 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             catch (Exception cleanupException)
             {
                 _logger.LogWarning(cleanupException, "Could not clean up task workspace {TaskId} after session creation failed.", taskId);
+            }
+
+            if (workerLease is not null)
+            {
+                await _workerRegistry!.ReleaseLeaseAsync(taskId, CancellationToken.None).ConfigureAwait(false);
             }
 
             throw;
@@ -1540,6 +1569,11 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
                 : FormatTaskWorkspace(task, released),
             null,
             cancellationToken).ConfigureAwait(false);
+
+        if (released is not null && _workerRegistry is not null)
+        {
+            await _workerRegistry.ReleaseLeaseAsync(task.TaskId, cancellationToken).ConfigureAwait(false);
+        }
     }
 
     private async Task<CodexSupervisionTaskRecord?> ResolveTaskForConversationAsync(
@@ -4401,6 +4435,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             message.UserId,
             null,
             cancellationToken).ConfigureAwait(false);
+
         if (prompts.Count == 0)
         {
             return new ResolvedQueuedPrompt(null, "You do not have any queued prompts.");

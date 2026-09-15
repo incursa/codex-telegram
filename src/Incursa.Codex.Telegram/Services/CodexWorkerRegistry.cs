@@ -35,7 +35,8 @@ internal sealed record CodexWorkerSnapshot(
     DateTimeOffset RegisteredAtUtc,
     DateTimeOffset LastHeartbeatUtc,
     IReadOnlyList<string> Capabilities,
-    IReadOnlyList<string> Issues);
+    IReadOnlyList<string> Issues,
+    bool IsRemote = false);
 
 internal sealed record CodexWorkerLease(
     string LeaseId,

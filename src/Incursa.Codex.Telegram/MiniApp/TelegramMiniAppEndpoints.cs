@@ -64,6 +64,7 @@ internal static class TelegramMiniAppEndpoints
         ICodexSupervisionLedger supervisionLedger,
         ITelegramMiniAppBrowserPairingStore pairingStore,
         ICodexWorkerRegistry workerRegistry,
+        ICodexCoordinatorWorkerStore coordinatorWorkerStore,
         CancellationToken cancellationToken)
     {
         if (!miniAppOptions.Value.Enabled)
@@ -167,6 +168,15 @@ internal static class TelegramMiniAppEndpoints
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
             workersError = "Worker status is currently unavailable.";
+        }
+        try
+        {
+            IReadOnlyList<CodexWorkerSnapshot> remoteWorkers = await coordinatorWorkerStore.ListAsync(cancellationToken).ConfigureAwait(false);
+            workers = [.. workers, .. remoteWorkers.Select(ToWorkerViewModel)];
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            workersError ??= "Coordinator worker status is currently unavailable.";
         }
 
         TelegramMiniAppThreadVm[] projectedThreads = threads
@@ -323,7 +333,8 @@ internal static class TelegramMiniAppEndpoints
             worker.MaximumConcurrentTasks,
             worker.LastHeartbeatUtc,
             worker.Capabilities,
-            worker.Issues);
+            worker.Issues,
+            worker.IsRemote);
 
     private static async Task<TelegramMiniAppIdentity?> TryAuthenticateAsync(
         HttpContext context,
@@ -396,7 +407,8 @@ internal sealed record TelegramMiniAppWorkerVm(
     int MaximumConcurrentTasks,
     DateTimeOffset LastHeartbeatUtc,
     IReadOnlyList<string> Capabilities,
-    IReadOnlyList<string> Issues);
+    IReadOnlyList<string> Issues,
+    bool IsRemote = false);
 
 internal sealed record TelegramMiniAppThreadVm(
     string Id,

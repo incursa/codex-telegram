@@ -213,6 +213,34 @@ public sealed class TelegramCommandHandlerTests
     }
 
     [Fact]
+    public async Task HandleMessageAsync_TaskCreationFailsClosedWhenWorkerIsDraining()
+    {
+        using TemporaryDirectory workspaceTemp = TemporaryDirectory.Create();
+        FakeWorkerRegistry worker = new() { Draining = true };
+        using CommandHandlerHarness harness = CommandHandlerHarness.Create(
+            taskWorkspaceManager: new FakeCodexTaskWorkspaceManager(workspaceTemp.CreateDirectory("worktrees")),
+            workerRegistry: worker);
+        string projectPath = harness.Temp.CreateDirectory("repo");
+        harness.ProjectCatalog.Projects.Add(new CodexProjectCatalogRecord
+        {
+            WorkingDirectory = projectPath,
+            AddedAt = DateTimeOffset.UtcNow,
+        });
+        TelegramConversationScope conversation = new(5555, null);
+        await harness.StateStore.SetActiveProjectWorkingDirectoryAsync(conversation, projectPath, CancellationToken.None);
+
+        await harness.Handler.HandleMessageAsync(
+            new TelegramInboundMessage(1234, conversation.ChatId, "private", "/task new Blocked task"),
+            harness.Sender,
+            CancellationToken.None);
+
+        Assert.Contains("capacity", Assert.Single(harness.Sender.Sent).Text, StringComparison.OrdinalIgnoreCase);
+        Assert.Empty(harness.SessionManager.CreateRequests);
+        Assert.Empty(harness.TaskWorkspaceManager!.Records);
+        Assert.Empty(worker.ActiveTaskIds);
+    }
+
+    [Fact]
     public async Task HandleMessageAsync_IgnoresUnauthorizedNonWhoamiMessages()
     {
         using CommandHandlerHarness harness = CommandHandlerHarness.Create(new TelegramBotOptions
@@ -3083,6 +3111,7 @@ public sealed class TelegramCommandHandlerTests
             FakeCodexTaskWorkspaceManager? taskWorkspaceManager,
             ITelegramMiniAppBrowserPairingStore? browserPairingStore,
             ICodexTaskRecipeCatalog? recipeCatalog,
+            ICodexWorkerRegistry? workerRegistry,
             FakeTelegramForumTopicService topicService,
             FakeAudioTranscriptionService audioTranscription,
             TestTelegramBotMessageSender sender,
@@ -3107,6 +3136,7 @@ public sealed class TelegramCommandHandlerTests
             TaskWorkspaceManager = taskWorkspaceManager;
             BrowserPairingStore = browserPairingStore;
             RecipeCatalog = recipeCatalog;
+            WorkerRegistry = workerRegistry;
             TopicService = topicService;
             AudioTranscription = audioTranscription;
             Sender = sender;
@@ -3151,6 +3181,8 @@ public sealed class TelegramCommandHandlerTests
 
         public ICodexTaskRecipeCatalog? RecipeCatalog { get; }
 
+        public ICodexWorkerRegistry? WorkerRegistry { get; }
+
         public FakeTelegramForumTopicService TopicService { get; }
 
         public FakeAudioTranscriptionService AudioTranscription { get; }
@@ -3166,7 +3198,8 @@ public sealed class TelegramCommandHandlerTests
             CodexTelegramOptions? codexOptionsOverride = null,
             FakeCodexTaskWorkspaceManager? taskWorkspaceManager = null,
             ITelegramMiniAppBrowserPairingStore? browserPairingStore = null,
-            ICodexTaskRecipeCatalog? recipeCatalog = null)
+            ICodexTaskRecipeCatalog? recipeCatalog = null,
+            ICodexWorkerRegistry? workerRegistry = null)
         {
             TemporaryDirectory temp = TemporaryDirectory.Create();
             IOptions<CodexTelegramOptions> codexOptions = Microsoft.Extensions.Options.Options.Create(new CodexTelegramOptions
@@ -3243,9 +3276,10 @@ public sealed class TelegramCommandHandlerTests
                 supervisionLedger: supervisionLedger,
                 taskWorkspaceManager: taskWorkspaceManager,
                 browserPairingStore: browserPairingStore,
-                recipeCatalog: recipeCatalog);
+                recipeCatalog: recipeCatalog,
+                workerRegistry: workerRegistry);
 
-            return new CommandHandlerHarness(temp, sessionManager, accountUsage, projectCatalog, stateStore, outboundQueue, turnCoordinator, turnOutputRelay, inputBundleStore, typingIndicatorRegistry, turnReactionRegistry, debugPreambleMode, outputModeState, traceStore, eventLog, supervisionLedger, taskWorkspaceManager, browserPairingStore, recipeCatalog, topicService, audioTranscription, sender, handler);
+            return new CommandHandlerHarness(temp, sessionManager, accountUsage, projectCatalog, stateStore, outboundQueue, turnCoordinator, turnOutputRelay, inputBundleStore, typingIndicatorRegistry, turnReactionRegistry, debugPreambleMode, outputModeState, traceStore, eventLog, supervisionLedger, taskWorkspaceManager, browserPairingStore, recipeCatalog, workerRegistry, topicService, audioTranscription, sender, handler);
         }
 
 
@@ -3550,6 +3584,44 @@ public sealed class TelegramCommandHandlerTests
 
         public CodexTaskRecipeSnapshot? Find(string id)
             => recipe.Id.Equals(id, StringComparison.OrdinalIgnoreCase) ? recipe : null;
+    }
+
+    private sealed class FakeWorkerRegistry : ICodexWorkerRegistry
+    {
+        public bool Draining { get; set; }
+
+        public HashSet<string> ActiveTaskIds { get; } = new(StringComparer.Ordinal);
+
+        public Task<CodexWorkerSnapshot> GetSnapshotAsync(CancellationToken cancellationToken)
+            => Task.FromResult(new CodexWorkerSnapshot(
+                "worker:test",
+                "Test worker",
+                Draining ? CodexWorkerState.Draining : CodexWorkerState.Online,
+                "ready",
+                "test",
+                ActiveTaskIds.Count,
+                2,
+                DateTimeOffset.UtcNow,
+                DateTimeOffset.UtcNow,
+                ["task-workspaces"],
+                []));
+
+        public Task<CodexWorkerLease?> TryAcquireLeaseAsync(string taskId, TimeSpan lifetime, CancellationToken cancellationToken)
+            => Draining
+                ? Task.FromResult<CodexWorkerLease?>(null)
+                : Task.FromResult<CodexWorkerLease?>(ActiveTaskIds.Add(taskId)
+                    ? new CodexWorkerLease($"lease:{taskId}", taskId, "worker:test", DateTimeOffset.UtcNow, DateTimeOffset.UtcNow.AddHours(1))
+                    : null);
+
+        public Task<bool> ReleaseLeaseAsync(string taskId, CancellationToken cancellationToken)
+            => Task.FromResult(ActiveTaskIds.Remove(taskId));
+
+        public Task<bool> SetDrainingAsync(bool draining, CancellationToken cancellationToken)
+        {
+            bool changed = Draining != draining;
+            Draining = draining;
+            return Task.FromResult(changed);
+        }
     }
 
     private sealed class FakeBrowserPairingStore(string expectedCode) : ITelegramMiniAppBrowserPairingStore

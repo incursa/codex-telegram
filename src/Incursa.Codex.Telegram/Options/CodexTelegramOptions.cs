@@ -112,6 +112,11 @@ public sealed class CodexTelegramOptions
     /// Gets the operator-defined task recipes. Empty configuration uses the built-in recipes.
     /// </summary>
     public List<CodexTaskRecipeDefinition> Recipes { get; set; } = [];
+
+    /// <summary>
+    /// Gets or sets the optional authenticated coordinator control-plane options.
+    /// </summary>
+    public CodexCoordinatorOptions Coordinator { get; set; } = new();
 }
 
 /// <summary>
@@ -169,6 +174,36 @@ public sealed class CodexTaskRecipeDefinition
 
     /// <summary>Gets the worker capabilities required by the recipe.</summary>
     public List<string> RequiredCapabilities { get; set; } = [];
+}
+
+/// <summary>
+/// Controls optional worker heartbeat registration with a self-hosted coordinator.
+/// </summary>
+public sealed class CodexCoordinatorOptions
+{
+    /// <summary>Gets or sets whether this host accepts authenticated worker heartbeats.</summary>
+    public bool Enabled { get; set; }
+
+    /// <summary>Gets or sets whether this host sends its worker heartbeat to a coordinator.</summary>
+    public bool WorkerRegistrationEnabled { get; set; }
+
+    /// <summary>Gets or sets the coordinator base URL used for worker heartbeats.</summary>
+    public string? Url { get; set; }
+
+    /// <summary>Gets or sets the shared private bearer token for this self-hosted control plane.</summary>
+    public string? AuthenticationToken { get; set; }
+
+    /// <summary>Gets or sets the heartbeat interval in seconds.</summary>
+    public int HeartbeatIntervalSeconds { get; set; } = 15;
+
+    /// <summary>Gets or sets the coordinator request timeout in seconds.</summary>
+    public int RequestTimeoutSeconds { get; set; } = 10;
+
+    /// <summary>Gets or sets the maximum number of registered remote workers.</summary>
+    public int MaximumRegisteredWorkers { get; set; } = 32;
+
+    /// <summary>Gets or sets the worker IDs permitted to register; empty permits any holder of the token.</summary>
+    public List<string> AllowedWorkerIds { get; set; } = [];
 }
 
 /// <summary>

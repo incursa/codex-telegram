@@ -363,6 +363,7 @@ builder.Services.AddSingleton<IOutboundTelegramQueue>(sp => sp.GetRequiredServic
 builder.Services.AddSingleton<IOutboundTelegramDeliveryStream>(sp => sp.GetRequiredService<OutboundTelegramScheduler>());
 builder.Services.AddSingleton<ITelegramTurnOutputRelay, TelegramTurnOutputRelay>();
 builder.Services.AddHttpClient<OpenAiSpeechToTextService>();
+builder.Services.AddHttpClient(nameof(CodexWorkerCoordinatorHostedService));
 builder.Services.AddSingleton<IAudioTranscriptionService>(sp => sp.GetRequiredService<OpenAiSpeechToTextService>());
 builder.Services.AddSingleton<ICodexRuntimeClientFactory, CodexRuntimeClientFactory>();
 builder.Services.AddSingleton<ICodexSessionEventLog, CodexSessionEventLog>();
@@ -370,6 +371,7 @@ builder.Services.AddSingleton<ICodexSupervisionLedger, CodexSupervisionLedger>()
 builder.Services.AddSingleton<ICodexTaskWorkspaceManager, CodexTaskWorkspaceManager>();
 builder.Services.AddSingleton<CodexWorkerRegistry>();
 builder.Services.AddSingleton<ICodexWorkerRegistry>(sp => sp.GetRequiredService<CodexWorkerRegistry>());
+builder.Services.AddSingleton<ICodexCoordinatorWorkerStore, CodexCoordinatorWorkerStore>();
 builder.Services.AddSingleton<ICodexTaskRecipeCatalog, CodexTaskRecipeCatalog>();
 builder.Services.AddSingleton<CodexSessionRuntimeRegistry>();
 builder.Services.AddSingleton<ICodexTurnExecutionCoordinator>(sp => sp.GetRequiredService<CodexSessionRuntimeRegistry>());
@@ -386,6 +388,7 @@ builder.Services.AddSingleton<ITelegramQueuedPromptProcessor, TelegramQueuedProm
 builder.Services.AddSingleton<TelegramCodexBotCommandHandler>();
 builder.Services.AddSingleton<ITelegramCodexBotUpdateHandler>(sp => sp.GetRequiredService<TelegramCodexBotCommandHandler>());
 builder.Services.AddHostedService<CodexWarmupHostedService>();
+builder.Services.AddHostedService<CodexWorkerCoordinatorHostedService>();
 builder.Services.AddHostedService<TelegramCodexBotHostedService>();
 builder.Services.AddHostedService<TelegramInputBundleAutoDispatchHostedService>();
 builder.Services.AddHostedService<TelegramQueuedPromptProcessorHostedService>();
@@ -417,6 +420,7 @@ catch (InvalidOperationException exception)
 
 app.UseDefaultFiles();
 app.UseStaticFiles();
+CodexCoordinatorWorkerEndpoints.Map(app);
 TelegramMiniAppEndpoints.Map(app);
 
 await RehydrateTelegramThreadFollowsAsync(app.Services, CancellationToken.None);

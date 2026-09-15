@@ -12,7 +12,7 @@ internal sealed class CodexTelegramOptionsValidator : IValidateOptions<CodexTele
 {
     public ValidateOptionsResult Validate(string? name, CodexTelegramOptions options)
     {
-        IReadOnlyList<string> failures = [.. ValidateRepository(options), .. ValidateTaskWorkspace(options), .. ValidateWorker(options), .. ValidateRecipes(options)];
+        IReadOnlyList<string> failures = [.. ValidateRepository(options), .. ValidateTaskWorkspace(options), .. ValidateWorker(options), .. ValidateRecipes(options), .. ValidateCoordinator(options)];
         return failures.Count == 0
             ? ValidateOptionsResult.Success
             : ValidateOptionsResult.Fail(failures);
@@ -88,6 +88,37 @@ internal sealed class CodexTelegramOptionsValidator : IValidateOptions<CodexTele
         => !string.IsNullOrWhiteSpace(value)
             && value.Trim().Length <= maxLength
             && value.All(character => char.IsLetterOrDigit(character) || character is '-' or '_' or '.');
+
+    private static IReadOnlyList<string> ValidateCoordinator(CodexTelegramOptions options)
+    {
+        CodexCoordinatorOptions coordinator = options.Coordinator;
+        if (coordinator.HeartbeatIntervalSeconds is < 5 or > 300
+            || coordinator.RequestTimeoutSeconds is < 1 or > 60
+            || coordinator.MaximumRegisteredWorkers is < 1 or > 256)
+        {
+            return ["CodexTelegram:Coordinator timing values or MaximumRegisteredWorkers are outside their supported bounds."];
+        }
+
+        if (coordinator.Enabled || coordinator.WorkerRegistrationEnabled)
+        {
+            if (string.IsNullOrWhiteSpace(coordinator.AuthenticationToken) || coordinator.AuthenticationToken.Trim().Length < 32)
+            {
+                return ["CodexTelegram:Coordinator:AuthenticationToken must be at least 32 characters when coordinator features are enabled."];
+            }
+        }
+
+        if (coordinator.WorkerRegistrationEnabled)
+        {
+            if (!Uri.TryCreate(coordinator.Url, UriKind.Absolute, out Uri? uri) || uri.Scheme is not ("http" or "https"))
+            {
+                return ["CodexTelegram:Coordinator:Url must be an absolute HTTP or HTTPS URL when worker registration is enabled."];
+            }
+        }
+
+        return coordinator.AllowedWorkerIds.Any(id => !IsSafeRecipeToken(id, 120))
+            ? ["CodexTelegram:Coordinator:AllowedWorkerIds must contain only safe IDs of at most 120 characters."]
+            : [];
+    }
 
     internal static IReadOnlyList<string> ValidateRepository(CodexTelegramOptions options)
     {

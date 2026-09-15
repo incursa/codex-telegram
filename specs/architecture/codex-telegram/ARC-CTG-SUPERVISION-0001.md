@@ -109,6 +109,12 @@ The host owns one local worker identity persisted in `codex-worker-state.json`. 
 
 This slice is intentionally single-host. It does not accept arbitrary worker registration, expose a public coordinator endpoint, share credentials between containers, or route a task across processes. Authenticated outbound coordinator connections and cross-worker routing require a later contract with worker identity binding, endpoint authentication, lease ownership, and isolation enforcement.
 
+## R3.4 authenticated coordinator worker registry
+
+An operator may enable a coordinator control-plane endpoint and configure workers to send bounded heartbeat snapshots over HTTP(S). The request uses an operator-managed bearer token, optional exact `AllowedWorkerIds`, and no Codex credentials. The coordinator persists only redacted worker capability, readiness, lease, version, and heartbeat metadata, caps registered workers, and projects a worker as unavailable after a bounded missed-heartbeat window. The worker's own local registry remains the authority for its leases and Codex execution; the coordinator cannot claim a task or interrupt a session merely by receiving a heartbeat.
+
+This is an admission and observation boundary, not yet a full task-dispatch protocol. Cross-worker assignment still requires a later lease-handoff contract that binds a task, workspace, worker, and coordinator-issued command without making the coordinator a second Codex authority.
+
 ## R5.1 inspectable task recipes
 
 Recipes are configuration-owned definitions with a stable `RecipeId` and `RecipeVersion`, bounded objective and expected-output text, optional Codex session instructions, and required worker capabilities. `/recipe` is read-only. Selecting a recipe during `/task new` passes only its session-policy fields to the new Codex thread and records the ID, version, and display name in the application-owned task record. The selected snapshot is immutable for that task; later configuration reloads do not rewrite its provenance. Recipe text does not authorize a user, approve a Codex action, or create a browser mutation path.
@@ -117,7 +123,8 @@ Recipes are configuration-owned definitions with a stable `RecipeId` and `Recipe
 
 1. Add authenticated outbound coordinator connections, cross-worker routing, and isolation enforcement around the task workspace boundary.
 2. Add cross-worker task ownership to the combined Mini App worker/attention projection.
-3. Add staged, drain-aware worker updates with capability checks, health/version verification, rollback, and provenance evidence.
+3. Add a coordinator-issued task lease handoff and worker-isolation enforcement for cross-worker execution.
+4. Add staged, drain-aware worker updates with capability checks, health/version verification, rollback, and provenance evidence.
 3. Add immutable task recipes and staged, drain-aware, health-verified worker updates with rollback evidence.
 
 Each step requires focused automated tests plus the repository release floor. Browser and Telegram-live checks remain separate evidence categories.

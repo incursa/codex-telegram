@@ -43,9 +43,11 @@ The v1.0.33 R3.2 slice binds that allocator to an explicit Telegram `/task` flow
 
 The v1.0.34 R4.1 slice adds opt-in browser pairing. A browser receives a high-entropy challenge and short-lived code, an allowlisted private Telegram command approves it, and the resulting browser session is read-only, time-limited, hash-persisted, and revocable with `/pair revoke`. Telegram initialization remains the preferred identity path; browser pairing does not add control or approval endpoints.
 
-The v1.0.35 R3.3 slice adds the local worker boundary. Each host has a persisted worker identity, bounded task leases, Codex-backed readiness, a private-chat drain/resume control, and a read-only Workers card in the Mini App. Draining prevents new claims but does not interrupt existing Codex sessions. The registry is deliberately local and does not pretend to provide coordinator routing, cross-container authentication, or fleet updates.
+The v1.0.35 R3.3 slice adds the local worker boundary. Each host has a persisted worker identity, bounded task leases, Codex-backed readiness, a private-chat drain/resume control, and a read-only Workers card in the Mini App. Draining prevents new task claims and task creation releases its lease on cleanup or explicit workspace release; it does not interrupt existing Codex sessions. The registry is local and does not pretend to provide coordinator routing, cross-container task execution, or fleet updates.
 
 The v1.0.35 R5.1 slice adds inspectable task recipes alongside the local worker boundary. Built-in or operator-configured recipes carry a stable ID/version, objective, optional Codex session policy, expected outputs, and required capabilities. `/recipe` exposes bounded definitions; `/task new ... | recipeId` applies the selected session policy and snapshots the recipe identity in the supervision record. Existing tasks are not rewritten when configuration changes.
+
+The v1.0.36 R3.4 control-plane slice adds authenticated outbound worker heartbeats and a bounded coordinator worker registry. The coordinator admits only token-authenticated, optionally allowlisted worker IDs, persists redacted status, and projects stale heartbeats as unavailable. It is an observation and admission layer; workers retain their own Codex execution, state, credentials, and task isolation. A coordinator-issued task lease handoff is deliberately still separate.
 
 ## Identity and state vocabulary
 

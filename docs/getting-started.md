@@ -81,6 +81,8 @@ Each host also has a local worker identity used by task-workspace scheduling. Co
 
 Task recipes are inspectable, versioned configuration under `CodexTelegram:Recipes`. The built-in recipes are `investigate-tests`, `review-branch`, and `implement-issue`; inspect them with `/recipe list` and `/recipe <id>`. Select one while creating an isolated task, for example `/task new Fix login | main | implement-issue`. The selected recipe's session instructions are applied at Codex session creation and its ID/version/objective are retained with the task. Recipes do not grant authorization or bypass Telegram approvals.
 
+To register several isolated hosts with one self-hosted coordinator, enable `CodexTelegram:Coordinator:Enabled` on the coordinator and provide a private token. On each worker, enable `WorkerRegistrationEnabled`, point `Url` at the coordinator's base HTTPS URL, and provide the same token. Configure exact `AllowedWorkerIds` on the coordinator when you want explicit worker admission. The coordinator shows fresh worker readiness and lease capacity in the read-only Mini App; it does not receive Codex credentials or execute tasks on behalf of a worker. Cross-worker task assignment is still operator-controlled; the next slice will add a coordinator-issued lease handoff.
+
 ## Before You Start
 
 Have these ready before you touch the config:
