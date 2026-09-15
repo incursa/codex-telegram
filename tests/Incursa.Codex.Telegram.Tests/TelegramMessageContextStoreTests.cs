@@ -24,13 +24,13 @@ public sealed class TelegramMessageContextStoreTests
         Updates 55 | Progress 1987
         Latest:
         I'm checking the local RFC source text now.
-        --- /live card ---
+        --- end live card ---
         """)]
     [InlineData(
         """
         --- codex status ---
         Codex produced report.zip, but it is too large for Telegram file delivery.
-        --- /codex status ---
+        --- end codex status ---
         """)]
     [InlineData(
         """
@@ -56,7 +56,7 @@ public sealed class TelegramMessageContextStoreTests
             --- live card: interrupted ---
             Codex interrupted
             Updates 0 | Progress 0
-            --- /live card ---
+            --- end live card ---
             """,
             CancellationToken.None);
 
@@ -73,7 +73,7 @@ public sealed class TelegramMessageContextStoreTests
             --- live card: failed ---
             Codex failed
             Updates 0 | Progress 0
-            --- /live card ---
+            --- end live card ---
             """, DateTimeOffset.Parse("2026-05-10T12:01:00Z")), CancellationToken.None);
         await store.RecordAsync(new TelegramMessageContextRecord(conversation, 12, TelegramMessageAuthor.User, "Do not delete that.", DateTimeOffset.Parse("2026-05-10T12:02:00Z")), CancellationToken.None);
 

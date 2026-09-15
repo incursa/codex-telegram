@@ -4011,7 +4011,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             return;
         }
 
-        await _inputBundleStore.TryCompleteBundleAsync(
+        TelegramInputBundle? completed = await _inputBundleStore.TryCompleteBundleAsync(
             bundle.Id,
             message.UserId,
             message.ConversationScope,
@@ -4019,6 +4019,14 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             TelegramInputBundleStatus.Sent,
             deleteAttachments: false,
             cancellationToken).ConfigureAwait(false);
+        if (completed is not null)
+        {
+            await PublishInputBundleCardAsync(
+                completed,
+                await BuildInputBundleCardContextAsync(completed, cancellationToken).ConfigureAwait(false),
+                sender,
+                cancellationToken).ConfigureAwait(false);
+        }
     }
 
     private async Task HandleBundleQueueCallbackAsync(
@@ -4063,7 +4071,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             return;
         }
 
-        await _inputBundleStore.TryCompleteBundleAsync(
+        TelegramInputBundle? completed = await _inputBundleStore.TryCompleteBundleAsync(
             bundle.Id,
             message.UserId,
             message.ConversationScope,
@@ -4071,6 +4079,14 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             TelegramInputBundleStatus.Queued,
             deleteAttachments: false,
             cancellationToken).ConfigureAwait(false);
+        if (completed is not null)
+        {
+            await PublishInputBundleCardAsync(
+                completed,
+                await BuildInputBundleCardContextAsync(completed, cancellationToken).ConfigureAwait(false),
+                sender,
+                cancellationToken).ConfigureAwait(false);
+        }
     }
 
     private async Task HandleBundleSteerCallbackAsync(
@@ -4274,7 +4290,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             return;
         }
 
-        await _inputBundleStore.TryCompleteBundleAsync(
+        TelegramInputBundle? completed = await _inputBundleStore.TryCompleteBundleAsync(
             bundle.Id,
             message.UserId,
             message.ConversationScope,
@@ -4282,6 +4298,14 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             TelegramInputBundleStatus.Steered,
             deleteAttachments: false,
             cancellationToken).ConfigureAwait(false);
+        if (completed is not null)
+        {
+            await PublishInputBundleCardAsync(
+                completed,
+                await BuildInputBundleCardContextAsync(completed, cancellationToken).ConfigureAwait(false),
+                sender,
+                cancellationToken).ConfigureAwait(false);
+        }
         _followRegistry.FollowThread(bundle.ConversationScope, session.Id);
         await ReplyAsync(sender, message, $"Steered {session.Name} with the input bundle.", BuildSessionButtons([session], includeUse: false), cancellationToken).ConfigureAwait(false);
     }
@@ -4376,6 +4400,14 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         if (updated is null)
         {
             await ReplyAsync(sender, message, "That input bundle is already being sent, was already sent, or is no longer active.", null, cancellationToken).ConfigureAwait(false);
+        }
+        else
+        {
+            await PublishInputBundleCardAsync(
+                updated,
+                await BuildInputBundleCardContextAsync(updated, cancellationToken).ConfigureAwait(false),
+                sender,
+                cancellationToken).ConfigureAwait(false);
         }
 
         return updated;

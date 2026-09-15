@@ -41,13 +41,23 @@ internal sealed class TelegramInputBundleCardRenderer : ITelegramInputBundleCard
             return builder.ToString().TrimEnd();
         }
 
-        builder.Append(bundle.HasContent ? "Input ready" : "Add input");
+        builder.AppendLine(bundle.HasContent ? "Input ready" : "Add input");
+        if (!string.IsNullOrWhiteSpace(bundle.SessionId))
+        {
+            builder.AppendLine(CultureInfo.InvariantCulture, $"Session: {bundle.SessionName} ({ShortId(bundle.SessionId)})");
+        }
+
+        builder.AppendLine(CultureInfo.InvariantCulture, $"Action: {behavior.PrimaryActionText}");
         int autoDispatchAfterSeconds = _options.Value.AutoDispatchAfterSeconds;
         if (bundle.Status is TelegramInputBundleStatus.Capturing && bundle.HasContent && autoDispatchAfterSeconds > 0)
         {
-            builder.Append(CultureInfo.InvariantCulture, $" · auto-dispatches after {autoDispatchAfterSeconds.ToString(CultureInfo.InvariantCulture)}s idle");
+            builder.AppendLine(CultureInfo.InvariantCulture, $"Auto: {behavior.AutoDispatchActionText} after {autoDispatchAfterSeconds.ToString(CultureInfo.InvariantCulture)}s idle");
         }
-        builder.AppendLine();
+
+        if (bundle.TextParts.Count > 0)
+        {
+            builder.AppendLine(CultureInfo.InvariantCulture, $"Text: {FormatCount(bundle.TextParts.Count, "part")}, {bundle.CombinedText.Length.ToString(CultureInfo.InvariantCulture)} chars");
+        }
 
         if (bundle.Attachments.Count > 0)
         {
@@ -57,6 +67,8 @@ internal sealed class TelegramInputBundleCardRenderer : ITelegramInputBundleCard
         string combinedText = bundle.CombinedText;
         if (!string.IsNullOrWhiteSpace(combinedText))
         {
+            builder.AppendLine();
+            builder.AppendLine("Preview:");
             builder.AppendLine(TrimPreview(combinedText, GetPreviewCharacters()));
         }
 
@@ -100,6 +112,9 @@ internal sealed class TelegramInputBundleCardRenderer : ITelegramInputBundleCard
 
         return string.Concat(value.AsSpan(0, maxLength).TrimEnd(), "...");
     }
+
+    private static string ShortId(string value)
+        => value.Length <= 8 ? value : value[..8];
 
     private static string FormatCount(int count, string singular)
         => count == 1

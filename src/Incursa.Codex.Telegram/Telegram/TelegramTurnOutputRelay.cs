@@ -617,7 +617,7 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
             builder.AppendLine("Latest:");
             builder.AppendLine(snapshot.Latest);
         }
-        builder.AppendLine("--- /live card ---");
+        builder.AppendLine("--- end live card ---");
         return builder.ToString().TrimEnd();
     }
 
@@ -1208,7 +1208,7 @@ internal sealed class TelegramTurnOutputRelay : ITelegramTurnOutputRelay
         }
 
         string normalized = text.Trim();
-        return $"--- {boundary} ---{Environment.NewLine}{normalized}{Environment.NewLine}--- /{boundary} ---";
+        return $"--- {boundary} ---{Environment.NewLine}{normalized}{Environment.NewLine}--- end {boundary} ---";
     }
 
     private static string? ResolveSpecialMessageBoundary(string eventType, CodexOutboundMessageKind kind, string text)

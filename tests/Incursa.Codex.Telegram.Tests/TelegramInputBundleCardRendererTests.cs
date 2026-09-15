@@ -40,14 +40,13 @@ public sealed class TelegramInputBundleCardRendererTests
                 AllowAttachmentSteering: true));
 
         Assert.Contains("Input ready", card.Text);
-        Assert.Contains("Input ready · auto-dispatches after 25s idle", card.Text);
+        Assert.Contains("Input ready", card.Text);
+        Assert.Contains("Action: Steer current turn", card.Text);
+        Assert.Contains("Auto: Queue next after 25s idle", card.Text);
+        Assert.Contains("Text: 1 part", card.Text);
         Assert.Contains("Attachments: 1 file (image)", card.Text);
-        Assert.DoesNotContain("Session:", card.Text);
-        Assert.DoesNotContain("Action:", card.Text);
-        Assert.DoesNotContain("Auto:", card.Text);
-        Assert.DoesNotContain("Text:", card.Text);
-        Assert.DoesNotContain("Preview:", card.Text);
         Assert.DoesNotContain("Sources:", card.Text);
+        Assert.Contains("Preview:", card.Text);
         Assert.Contains(string.Concat(new string('x', 80), "..."), card.Text);
         Assert.DoesNotContain("Trace:", card.Text);
 
@@ -93,10 +92,12 @@ public sealed class TelegramInputBundleCardRendererTests
                 AllowAttachmentSteering: true));
 
         Assert.Contains("Input ready", card.Text);
-        Assert.Contains("Input ready · auto-dispatches after 25s idle", card.Text);
+        Assert.Contains("Input ready", card.Text);
+        Assert.Contains("Action: Send now", card.Text);
+        Assert.Contains("Auto: Send now after 25s idle", card.Text);
+        Assert.Contains("Text: 1 part", card.Text);
+        Assert.Contains("Preview:", card.Text);
         Assert.Contains("ready to send", card.Text);
-        Assert.DoesNotContain("Action:", card.Text);
-        Assert.DoesNotContain("Preview:", card.Text);
         Assert.DoesNotContain("Trace:", card.Text);
         Assert.Equal(
             ["Send now", "Add more", "Clear", "Cancel"],
@@ -141,7 +142,7 @@ public sealed class TelegramInputBundleCardRendererTests
                 ShouldQueueForLater: false,
                 AllowAttachmentSteering: false));
 
-        Assert.DoesNotContain("Action:", card.Text);
+        Assert.Contains("Action: Queue next", card.Text);
         Assert.Contains("Attachment steering is not supported", card.Text);
         Assert.Equal(
             ["Queue next", "Text-only steer", "Add more", "Clear", "Cancel"],
@@ -170,10 +171,41 @@ public sealed class TelegramInputBundleCardRendererTests
                 ShouldQueueForLater: true,
                 AllowAttachmentSteering: true));
 
-        Assert.DoesNotContain("Action:", card.Text);
+        Assert.Contains("Action: Queue next", card.Text);
         Assert.Equal(
             ["Queue next", "Add more", "Clear", "Cancel"],
             card.Buttons.SelectMany(row => row.Select(button => button.Text)).ToArray());
+    }
+
+    [Fact]
+    public void Render_WhenBundleIsTerminal_ReturnsStatusWithoutActionsOrPrompt()
+    {
+        TelegramInputBundleCardRenderer renderer = CreateRenderer(previewCharacters: 80);
+        TelegramInputBundle bundle = new()
+        {
+            Id = "bundle-1",
+            UserId = 42,
+            Conversation = new TelegramConversationScope(1234, 55),
+            Intent = TelegramInputBundleIntent.SendNow,
+            Status = TelegramInputBundleStatus.Sent,
+            TextParts =
+            [
+                new TelegramInputTextPart("sent prompt", "text", 10, DateTimeOffset.Parse("2026-05-23T10:00:00Z")),
+            ],
+            CreatedAt = DateTimeOffset.Parse("2026-05-23T10:00:00Z"),
+            UpdatedAt = DateTimeOffset.Parse("2026-05-23T10:00:00Z"),
+        };
+
+        TelegramInputBundleCard card = renderer.Render(
+            bundle,
+            new TelegramInputBundleCardContext(
+                HasSteerableTurn: false,
+                ShouldQueueForLater: false,
+                AllowAttachmentSteering: true));
+
+        Assert.Equal("Sent to Codex", card.Text);
+        Assert.Empty(card.Buttons);
+        Assert.DoesNotContain("sent prompt", card.Text);
     }
 
     private static TelegramInputBundleCardRenderer CreateRenderer(int previewCharacters)

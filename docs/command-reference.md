@@ -414,7 +414,7 @@ Expected behavior:
 3. Sends attachments with the prompt when attachments are present.
 4. With the default `TelegramInput:DefaultCaptureMode` of `BundleAlways`, creates or updates an editable input bundle before starting Codex.
 5. If an operator chooses `ImmediateText`, very long plain-text messages still open an input bundle before a turn starts, which keeps Telegram-split prompts together.
-6. The input bundle card keeps the status, auto-dispatch timing, attachment summary, and prompt text compact; its buttons show only the current useful actions, such as Send now, Queue next, Steer current turn, Add more, Clear, and Cancel.
+6. While capturing, the input bundle card keeps the session, selected action, auto-dispatch timing, text and attachment counts, a short preview, and the current useful actions, such as Send now, Queue next, Steer current turn, Add more, Clear, and Cancel. When dispatch starts, it changes to `Bundle submitted` and removes its buttons; completion changes it to a terminal status without repeating the prompt.
 7. If `TelegramInput:AutoDispatchAfterSeconds` is greater than 0, an open bundle is automatically sent or queued after that many idle seconds with no new captured input.
 8. Telegram albums/media groups are debounced by `TelegramInput:MediaGroupDebounceMilliseconds` and forwarded as one inbound bundle candidate with all collected media.
 9. Slash commands remain available as fallbacks.

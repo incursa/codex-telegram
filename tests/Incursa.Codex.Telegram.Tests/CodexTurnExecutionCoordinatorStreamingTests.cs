@@ -61,7 +61,7 @@ public sealed class CodexTurnExecutionCoordinatorStreamingTests
 
         SentTelegramMessage card = Assert.Single(sender.Sent);
         Assert.StartsWith("--- live card: working ---", card.Text, StringComparison.Ordinal);
-        Assert.EndsWith("--- /live card ---", card.Text, StringComparison.Ordinal);
+        Assert.EndsWith("--- end live card ---", card.Text, StringComparison.Ordinal);
         Assert.Contains("Codex is working", card.Text);
         Assert.Contains("Updates 0 | Progress 1", card.Text);
         Assert.DoesNotContain("Activity:", card.Text, StringComparison.OrdinalIgnoreCase);

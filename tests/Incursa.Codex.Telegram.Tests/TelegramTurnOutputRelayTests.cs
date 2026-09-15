@@ -1560,7 +1560,7 @@ public sealed class TelegramTurnOutputRelayTests
     private static void AssertLiveCardShell(string text, string status = "working")
     {
         Assert.StartsWith($"--- live card: {status} ---", text, StringComparison.Ordinal);
-        Assert.EndsWith("--- /live card ---", text, StringComparison.Ordinal);
+        Assert.EndsWith("--- end live card ---", text, StringComparison.Ordinal);
         Assert.DoesNotContain("Session:", text, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("Mode:", text, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("Activity:", text, StringComparison.OrdinalIgnoreCase);
@@ -1571,7 +1571,7 @@ public sealed class TelegramTurnOutputRelayTests
 
     private static void AssertWrappedSpecialMessage(string text, string boundary, string body)
         => Assert.Equal(
-            $"--- {boundary} ---{Environment.NewLine}{body}{Environment.NewLine}--- /{boundary} ---",
+            $"--- {boundary} ---{Environment.NewLine}{body}{Environment.NewLine}--- end {boundary} ---",
             text);
 
     private static CodexTimelineEntryVm CreateEntry(

@@ -14,6 +14,8 @@ internal sealed record TelegramInputBundleAction(
 
 internal sealed record TelegramInputBundleCardBehavior(
     string StatusText,
+    string PrimaryActionText,
+    string AutoDispatchActionText,
     string? AdvisoryText,
     IReadOnlyList<IReadOnlyList<TelegramInputBundleAction>> ActionRows)
 {
@@ -27,14 +29,17 @@ internal sealed record TelegramInputBundleCardBehavior(
         if (bundle.Status is not TelegramInputBundleStatus.Capturing)
         {
             string statusText = FormatTerminalStatus(bundle.Status);
-            return new TelegramInputBundleCardBehavior(statusText, null, []);
+            return new TelegramInputBundleCardBehavior(statusText, statusText, statusText, null, []);
         }
 
         List<IReadOnlyList<TelegramInputBundleAction>> rows = [];
         string? advisory = null;
+        string primaryAction;
+        string autoDispatchAction;
 
         if (context.HasSteerableTurn)
         {
+            autoDispatchAction = "Queue next";
             if (bundle.Intent is TelegramInputBundleIntent.QueueNext)
             {
                 List<TelegramInputBundleAction> firstRow =
@@ -52,6 +57,7 @@ internal sealed record TelegramInputBundleCardBehavior(
                 }
 
                 rows.Add(firstRow);
+                primaryAction = "Queue next";
             }
             else
             {
@@ -68,6 +74,7 @@ internal sealed record TelegramInputBundleCardBehavior(
                     }
 
                     rows.Add(firstRow);
+                    primaryAction = "Queue next";
                     advisory = "Attachment steering is not supported; queue the full bundle or steer text only.";
                 }
                 else
@@ -77,17 +84,22 @@ internal sealed record TelegramInputBundleCardBehavior(
                             new TelegramInputBundleAction("Steer current turn", "bsteer", Primary: true),
                             new TelegramInputBundleAction("Queue next", "bqueue"),
                         ]);
+                    primaryAction = "Steer current turn";
                 }
             }
         }
         else if (context.ShouldQueueForLater)
         {
             rows.Add([new TelegramInputBundleAction("Queue next", "bqueue", Primary: true)]);
+            primaryAction = "Queue next";
+            autoDispatchAction = "Queue next";
             advisory = "Codex or Telegram delivery is busy; this bundle will wait for the next turn.";
         }
         else
         {
             rows.Add([new TelegramInputBundleAction("Send now", "bsend", Primary: true)]);
+            primaryAction = "Send now";
+            autoDispatchAction = "Send now";
         }
 
         rows.Add(
@@ -98,7 +110,7 @@ internal sealed record TelegramInputBundleCardBehavior(
             ]);
 
         string status = bundle.HasContent ? "Bundle ready" : "Capturing";
-        return new TelegramInputBundleCardBehavior(status, advisory, rows);
+        return new TelegramInputBundleCardBehavior(status, primaryAction, autoDispatchAction, advisory, rows);
     }
 
     public static string Revision(TelegramInputBundle bundle)

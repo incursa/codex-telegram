@@ -658,7 +658,7 @@ public sealed class TelegramCommandHandlerTests
 
         SentTelegramMessage sent = Assert.Single(harness.Sender.Sent);
         Assert.Contains("Input ready", sent.Text);
-        Assert.DoesNotContain("Text:", sent.Text);
+        Assert.Contains("Text: 1 part", sent.Text);
         Assert.Empty(harness.SessionManager.SendRequests);
 
         await harness.Handler.HandleMessageAsync(
@@ -667,7 +667,7 @@ public sealed class TelegramCommandHandlerTests
             CancellationToken.None);
 
         EditedTelegramMessage edited = Assert.Single(harness.Sender.Edited);
-        Assert.DoesNotContain("Text:", edited.Text);
+        Assert.Contains("Text: 2 parts", edited.Text);
         Assert.Empty(harness.SessionManager.SendRequests);
 
         TelegramInputBundle bundle = Assert.Single(await harness.InputBundleStore.ListAsync(conversation, CancellationToken.None));
@@ -815,6 +815,42 @@ public sealed class TelegramCommandHandlerTests
             ["Send now", "Add more", "Clear", "Cancel"],
             card.Buttons!.SelectMany(row => row.Select(button => button.Text)).ToArray());
         Assert.Empty(harness.SessionManager.SendRequests);
+    }
+
+    [Fact]
+    public async Task HandleCallbackAsync_BundleSendTransitionsLiveCardToButtonlessTerminalState()
+    {
+        using CommandHandlerHarness harness = CommandHandlerHarness.Create(
+            inputOptionsOverride: new TelegramInputOptions
+            {
+                DefaultCaptureMode = TelegramInputCaptureMode.BundleAlways,
+            });
+        TelegramConversationScope conversation = new(5555, null);
+        harness.SessionManager.Sessions.Add(CreateSession("thread-1", "Demo session", harness.Temp.Path));
+        await harness.StateStore.SetActiveSessionIdAsync(conversation, "thread-1", CancellationToken.None);
+
+        await harness.Handler.HandleMessageAsync(
+            new TelegramInboundMessage(1234, conversation.ChatId, "private", "send this bundle", SourceMessageId: 30),
+            harness.Sender,
+            CancellationToken.None);
+
+        SentTelegramMessage card = Assert.Single(harness.Sender.Sent);
+        string sendCallback = Assert.Single(card.Buttons!.SelectMany(row => row), button => button.Text == "Send now").CallbackData;
+
+        await harness.Handler.HandleCallbackAsync(
+            new TelegramInboundCallback("bundle-send", 1234, conversation.ChatId, "private", sendCallback, SourceMessageId: 1),
+            harness.Sender,
+            CancellationToken.None);
+
+        Assert.Contains(harness.Sender.Edited, edited =>
+            edited.Text == "Bundle submitted"
+            && edited.Buttons is not null
+            && edited.Buttons.Count == 0);
+        Assert.Contains(harness.Sender.Edited, edited =>
+            edited.Text == "Sent to Codex"
+            && edited.Buttons is not null
+            && edited.Buttons.Count == 0);
+        Assert.Equal("send this bundle", Assert.Single(harness.SessionManager.SendRequests));
     }
 
     [Fact]

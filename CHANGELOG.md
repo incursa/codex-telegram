@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.54 - 2026-09-15
+
+- Reconciled the compact input-bundle card and button-clearing updates into the release source.
+- Changed special-message and live-card closing boundaries to use `--- end <boundary> ---`, preventing Telegram from interpreting the closing line as a slash command.
+
 ## 1.0.53 - 2026-09-15
 
 - Kept editable input bundles as the default while compacting their cards to show the prompt once with only the useful controls and timing.

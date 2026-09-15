@@ -1037,9 +1037,14 @@ internal sealed class TelegramBotClientMessageSender : ITelegramBotMessageSender
 
     private static InlineKeyboardMarkup? ToInlineKeyboardMarkup(IReadOnlyList<IReadOnlyList<TelegramReplyButton>>? buttons)
     {
-        if (buttons is null || buttons.Count == 0)
+        if (buttons is null)
         {
             return null;
+        }
+
+        if (buttons.Count == 0)
+        {
+            return InlineKeyboardMarkup.Empty();
         }
 
         return new InlineKeyboardMarkup(buttons.Select(row =>

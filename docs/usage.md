@@ -223,7 +223,7 @@ Images and documents can be sent with a prompt. Voice notes are transcribed befo
 
 By default, the bot captures text, voice transcripts, images, and documents into an input bundle before starting Codex. Each new item resets the bundle's idle timer. The bundle automatically sends or queues after 25 seconds with no additional input, so a forgotten Send tap does not leave the transcript stranded. Use the buttons when you want to send, queue, steer, clear, or cancel earlier.
 
-The editable card is intentionally compact: it shows the draft text once, a short attachment summary when needed, and the available controls. After dispatch, the same card becomes a short status such as `Sent to Codex` instead of repeating the prompt.
+The editable card keeps the useful preamble visible while you are composing: session, selected action, auto-dispatch timing, text and attachment counts, a short preview, and the available controls. When dispatch starts, the same live card changes to `Bundle submitted` and removes its buttons; completion changes it to a terminal status such as `Sent to Codex`, `Queued for next turn`, or `Bundle steered`, without repeating the prompt.
 
 If the selected Codex thread has disappeared from the local rollout store before the bundle is dispatched, the bot clears that stale binding, starts a replacement session in the selected project, and retries the bundle once. This preserves the bundle while avoiding an unsafe repeated send to an uncertain external thread.
 

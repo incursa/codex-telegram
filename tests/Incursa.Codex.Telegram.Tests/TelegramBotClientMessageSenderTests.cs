@@ -479,6 +479,24 @@ public sealed class TelegramBotClientMessageSenderTests
     }
 
     [Fact]
+    public async Task EditTextMessageAsync_WithEmptyButtonsClearsInlineKeyboard()
+    {
+        FakeTelegramBotApiClient client = new();
+        TelegramBotClientMessageSender sender = CreateSender(client);
+
+        await sender.EditTextMessageAsync(
+            new TelegramConversationScope(1234, null),
+            42,
+            "completed",
+            [],
+            CancellationToken.None);
+
+        EditedTelegramApiMessage edit = Assert.Single(client.EditedMessages);
+        Assert.NotNull(edit.ReplyMarkup);
+        Assert.Empty(edit.ReplyMarkup!.InlineKeyboard);
+    }
+
+    [Fact]
     public async Task SendTextMessageAsync_TopicThreadFailureDoesNotRetryInMainChat()
     {
         FakeTelegramBotApiClient client = new();
