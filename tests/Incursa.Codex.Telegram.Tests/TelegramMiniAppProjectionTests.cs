@@ -48,6 +48,26 @@ public sealed class TelegramMiniAppProjectionTests
     }
 
     [Fact]
+    public void AcknowledgedSupervisionTaskIsRemovedFromAttentionUntilItsRunChanges()
+    {
+        DateTimeOffset now = DateTimeOffset.UtcNow;
+        TelegramMiniAppSupervisionTaskVm task = CreateSupervisionTask("acknowledged", "waiting_for_input", now) with
+        {
+            AttentionAcknowledged = true,
+        };
+        TelegramMiniAppThreadVm thread = TelegramMiniAppProjection.ToThreadViewModel(
+            CreateThread("acknowledged", "active", now),
+            null);
+
+        IReadOnlyList<TelegramMiniAppAttentionVm> result = TelegramMiniAppProjection.BuildNeedsAttention(
+            [thread],
+            null,
+            supervisionTasks: [task]);
+
+        Assert.Empty(result);
+    }
+
+    [Fact]
     public void InterruptedLocalTurnIsShownAsAttention()
     {
         TelegramMiniAppThreadVm interrupted = TelegramMiniAppProjection.ToThreadViewModel(

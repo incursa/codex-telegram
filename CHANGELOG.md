@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 1.0.46 - 2026-09-15
+
+- Added a user-scoped durable Mini App acknowledgement for an exact task, run, and review packet.
+- Added authenticated Mini App task actions for review acknowledgement and bounded Telegram handoff preparation.
+- Kept prompts, approvals, steering, retries, cancellation, and other execution-changing actions in Telegram.
+- Added stale-run, authentication, persistence, idempotency, and handoff contract coverage.
+
 ## 1.0.45 - 2026-09-15
 
 - Added authenticated remote model and reasoning controls plus goal lifecycle operations for owner-bound tasks.

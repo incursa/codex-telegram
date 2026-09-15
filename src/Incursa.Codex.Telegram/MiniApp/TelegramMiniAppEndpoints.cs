@@ -21,6 +21,7 @@ internal static class TelegramMiniAppEndpoints
         app.MapGet("/api/mini-app/pairing/status", GetBrowserPairingStatusAsync);
         app.MapGet("/api/mini-app/bootstrap", GetBootstrapAsync);
         app.MapGet("/api/mini-app/threads/{threadId}", GetThreadAsync);
+        TelegramMiniAppTaskActionEndpoints.Map(app);
     }
 
     private static async Task<IResult> StartBrowserPairingAsync(
@@ -63,6 +64,7 @@ internal static class TelegramMiniAppEndpoints
         ICodexAccountUsageService usageService,
         ICodexSupervisionLedger supervisionLedger,
         ITelegramMiniAppBrowserPairingStore pairingStore,
+        ITelegramMiniAppAcknowledgementStore acknowledgementStore,
         ICodexWorkerRegistry workerRegistry,
         ICodexCoordinatorWorkerStore coordinatorWorkerStore,
         CancellationToken cancellationToken)
@@ -149,8 +151,19 @@ internal static class TelegramMiniAppEndpoints
         string? supervisionError = null;
         try
         {
-            supervisionTasks = (await supervisionLedger.ListTasksAsync(identity.UserId, cancellationToken).ConfigureAwait(false))
-                .Select(TelegramMiniAppProjection.ToSupervisionTaskViewModel)
+            IReadOnlyList<CodexSupervisionTaskSnapshot> taskSnapshots = await supervisionLedger
+                .ListTasksAsync(identity.UserId, cancellationToken)
+                .ConfigureAwait(false);
+            IReadOnlyList<TelegramMiniAppAcknowledgementSnapshot> acknowledgements = await acknowledgementStore
+                .ListAsync(identity.UserId, cancellationToken)
+                .ConfigureAwait(false);
+            supervisionTasks = taskSnapshots
+                .Select(task => TelegramMiniAppProjection.ToSupervisionTaskViewModel(
+                    task,
+                    task.LatestRun is { RunId: { Length: > 0 } runId }
+                        && acknowledgements.Any(acknowledgement =>
+                            string.Equals(acknowledgement.TaskId, task.TaskId, StringComparison.Ordinal)
+                            && string.Equals(acknowledgement.RunId, runId, StringComparison.Ordinal))))
                 .ToArray();
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
@@ -216,6 +229,7 @@ internal static class TelegramMiniAppEndpoints
         ICodexTurnExecutionCoordinator turnCoordinator,
         ICodexSupervisionLedger supervisionLedger,
         ITelegramMiniAppBrowserPairingStore pairingStore,
+        ITelegramMiniAppAcknowledgementStore acknowledgementStore,
         ICodexWorkerRegistry workerRegistry,
         CodexRemoteTaskDetailRelay remoteTaskDetailRelay,
         CancellationToken cancellationToken)
@@ -268,7 +282,14 @@ internal static class TelegramMiniAppEndpoints
                         return Results.NotFound();
                     }
 
-                    return Results.Ok(await remoteTaskDetailRelay.GetAsync(remoteTask, cancellationToken).ConfigureAwait(false));
+                    TelegramMiniAppThreadDetailVm remoteDetail = await remoteTaskDetailRelay
+                        .GetAsync(remoteTask, cancellationToken)
+                        .ConfigureAwait(false);
+                    return Results.Ok(await ApplyAcknowledgementAsync(
+                        remoteDetail,
+                        identity.UserId,
+                        acknowledgementStore,
+                        cancellationToken).ConfigureAwait(false));
                 }
             }
 
@@ -304,6 +325,12 @@ internal static class TelegramMiniAppEndpoints
                 Supervision = supervision,
                 ReviewPacket = TelegramMiniAppProjection.BuildReviewPacket(detail, supervision, projected.RetrievedAtUtc),
             };
+
+            projected = await ApplyAcknowledgementAsync(
+                projected,
+                identity.UserId,
+                acknowledgementStore,
+                cancellationToken).ConfigureAwait(false);
 
             return Results.Ok(projected);
         }
@@ -348,7 +375,7 @@ internal static class TelegramMiniAppEndpoints
             worker.Issues,
             worker.IsRemote);
 
-    private static async Task<TelegramMiniAppIdentity?> TryAuthenticateAsync(
+    internal static async Task<TelegramMiniAppIdentity?> TryAuthenticateAsync(
         HttpContext context,
         TelegramMiniAppAuth auth,
         TelegramMiniAppOptions miniAppOptions,
@@ -370,6 +397,47 @@ internal static class TelegramMiniAppEndpoints
         return userId.HasValue && auth.IsAllowlisted(userId.Value)
             ? new TelegramMiniAppIdentity(userId.Value, null, null, null)
             : null;
+    }
+
+    private static async Task<TelegramMiniAppThreadDetailVm> ApplyAcknowledgementAsync(
+        TelegramMiniAppThreadDetailVm detail,
+        long userId,
+        ITelegramMiniAppAcknowledgementStore acknowledgementStore,
+        CancellationToken cancellationToken)
+    {
+        TelegramMiniAppReviewPacketVm? packet = detail.ReviewPacket;
+        if (packet?.TaskId is not { Length: > 0 } taskId
+            || packet.RunId is not { Length: > 0 } runId)
+        {
+            return detail;
+        }
+
+        try
+        {
+            TelegramMiniAppAcknowledgementSnapshot? acknowledgement = (await acknowledgementStore
+                .ListAsync(userId, cancellationToken)
+                .ConfigureAwait(false))
+                .FirstOrDefault(record => string.Equals(record.TaskId, taskId, StringComparison.Ordinal)
+                    && string.Equals(record.RunId, runId, StringComparison.Ordinal)
+                    && string.Equals(record.PacketId, packet.PacketId, StringComparison.Ordinal));
+            bool acknowledged = acknowledgement is not null;
+            return detail with
+            {
+                Supervision = detail.Supervision is { } supervision
+                    ? supervision with { AttentionAcknowledged = acknowledged }
+                    : null,
+                ReviewPacket = packet with
+                {
+                    Acknowledged = acknowledged,
+                    AcknowledgedAtUtc = acknowledgement?.AcknowledgedAtUtc,
+                },
+            };
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            // Evidence remains readable if acknowledgement state is temporarily unavailable.
+            return detail;
+        }
     }
 
 }
@@ -460,4 +528,5 @@ internal sealed record TelegramMiniAppSupervisionTaskVm(
     string? RecipeDisplayName = null,
     string? WorkerId = null,
     string? LeaseId = null,
-    string? WorkspaceId = null);
+    string? WorkspaceId = null,
+    bool AttentionAcknowledged = false);

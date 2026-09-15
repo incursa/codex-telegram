@@ -57,6 +57,12 @@ internal static class TelegramMiniAppProjection
 
         foreach (TelegramMiniAppThreadVm thread in threads)
         {
+            if ((supervisionTasks ?? []).Any(task => task.AttentionAcknowledged
+                && string.Equals(task.CodexThreadId, thread.Id, StringComparison.OrdinalIgnoreCase)))
+            {
+                continue;
+            }
+
             if (!thread.NeedsAttention || string.IsNullOrWhiteSpace(thread.AttentionKind))
             {
                 continue;
@@ -75,11 +81,18 @@ internal static class TelegramMiniAppProjection
         }
 
         HashSet<string> representedSessions = threads
-            .Where(thread => thread.NeedsAttention)
+            .Where(thread => thread.NeedsAttention
+                && !(supervisionTasks ?? []).Any(task => task.AttentionAcknowledged
+                    && string.Equals(task.CodexThreadId, thread.Id, StringComparison.OrdinalIgnoreCase)))
             .Select(thread => thread.Id)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         foreach (TelegramMiniAppSupervisionTaskVm task in supervisionTasks ?? [])
         {
+            if (task.AttentionAcknowledged)
+            {
+                continue;
+            }
+
             string? attentionKind = ResolveSupervisionAttentionKind(task.State);
             if (attentionKind is null || representedSessions.Contains(task.CodexThreadId))
             {
@@ -188,7 +201,9 @@ internal static class TelegramMiniAppProjection
         };
     }
 
-    public static TelegramMiniAppSupervisionTaskVm ToSupervisionTaskViewModel(CodexSupervisionTaskSnapshot task)
+    public static TelegramMiniAppSupervisionTaskVm ToSupervisionTaskViewModel(
+        CodexSupervisionTaskSnapshot task,
+        bool attentionAcknowledged = false)
     {
         ArgumentNullException.ThrowIfNull(task);
 
@@ -209,7 +224,8 @@ internal static class TelegramMiniAppProjection
             task.RecipeDisplayName,
             task.WorkerId,
             task.LeaseId,
-            task.WorkspaceId);
+            task.WorkspaceId,
+            attentionAcknowledged);
     }
 
     public static TelegramMiniAppReviewPacketVm BuildReviewPacket(
@@ -581,6 +597,10 @@ internal sealed record TelegramMiniAppReviewPacketVm(
     public bool ReadOnly { get; init; } = true;
 
     public bool RequiresTelegramApproval { get; init; } = true;
+
+    public bool Acknowledged { get; init; }
+
+    public DateTimeOffset? AcknowledgedAtUtc { get; init; }
 }
 
 internal sealed record TelegramMiniAppReviewChangeVm(

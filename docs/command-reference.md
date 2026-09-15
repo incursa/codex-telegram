@@ -691,7 +691,7 @@ Creates a task on one explicitly selected registered worker. The coordinator fir
 
 ### `/pair <code>` / `/pair status` / `/pair revoke`
 
-Manages the optional read-only standalone browser session. Open the Mini App URL in a browser and send its displayed pairing code as `/pair <code>` from the authorized private bot chat. `/pair status` lists the current user's browser sessions; `/pair revoke` revokes all of them. Pairing is disabled unless `TelegramMiniApp:BrowserPairingEnabled` is enabled, and it never creates a browser path for prompts, approvals, steering, or other Telegram control actions.
+Manages the optional standalone browser session. Open the Mini App URL in a browser and send its displayed pairing code as `/pair <code>` from the authorized private bot chat. `/pair status` lists the current user's browser sessions; `/pair revoke` revokes all of them. Pairing is disabled unless `TelegramMiniApp:BrowserPairingEnabled` is enabled. Browser sessions may use the same bounded review acknowledgement and handoff preparation as the Mini App, but never create a browser path for prompts, approvals, steering, or other Telegram control actions.
 
 ### `/worker status` / `/worker drain confirm` / `/worker resume confirm` / `/worker update ...`
 

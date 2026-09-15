@@ -1,7 +1,7 @@
 (() => {
   const telegram = window.Telegram?.WebApp;
   const explicitPreview = new URLSearchParams(window.location.search).get("preview") === "1";
-  const state = { data: null, preview: explicitPreview, stale: false };
+  const state = { data: null, preview: explicitPreview, stale: false, detail: null, detailThreadId: null };
   let lastLiveData = null;
   let loadController = null;
   let detailController = null;
@@ -524,8 +524,8 @@
     }
 
     const status = packet.reviewStatus || "unknown";
-    badge.textContent = status === "ready" ? "Ready" : status === "partial" ? "Partial" : "No evidence";
-    badge.setAttribute("variant", status === "ready" ? "success" : status === "partial" ? "warning" : "neutral");
+    badge.textContent = packet.acknowledged ? "Acknowledged" : status === "ready" ? "Ready" : status === "partial" ? "Partial" : "No evidence";
+    badge.setAttribute("variant", packet.acknowledged ? "success" : status === "ready" ? "success" : status === "partial" ? "warning" : "neutral");
     const summary = document.createElement("div");
     summary.className = "review-packet-summary";
     const packetId = document.createElement("code");
@@ -542,13 +542,37 @@
 
     const boundary = document.createElement("div");
     boundary.className = "review-packet-boundary";
-    boundary.textContent = packet.requiresTelegramApproval === false
-      ? "This packet is informational."
-      : "Read-only evidence. Send decisions and follow-up instructions in Telegram.";
+    boundary.textContent = packet.acknowledged
+      ? `Acknowledged ${formatDate(packet.acknowledgedAtUtc)}. New runs will appear again.`
+      : packet.requiresTelegramApproval === false
+        ? "This packet is informational."
+        : "Review evidence here. Send decisions and follow-up instructions in Telegram.";
     list.append(boundary);
+
+    const actions = document.createElement("div");
+    actions.className = "miniapp-action-row";
+    if (packet.taskId && packet.runId && !packet.acknowledged) {
+      const acknowledge = document.createElement("button");
+      acknowledge.type = "button";
+      acknowledge.className = "secondary-button";
+      acknowledge.textContent = "Acknowledge review";
+      acknowledge.addEventListener("click", () => postTaskAction("acknowledge", packet));
+      actions.append(acknowledge);
+    }
+    if (packet.taskId) {
+      const handoff = document.createElement("button");
+      handoff.type = "button";
+      handoff.className = "secondary-button";
+      handoff.textContent = "Prepare Telegram handoff";
+      handoff.addEventListener("click", () => postTaskAction("handoff", packet));
+      actions.append(handoff);
+    }
+    if (actions.childElementCount) list.append(actions);
   }
 
   function renderThreadDetail(detail) {
+    state.detail = detail;
+    state.detailThreadId = detail.thread?.id || null;
     const thread = detail.thread;
     byId("detail-card").hidden = false;
     byId("detail-title").textContent = thread.name || "Unnamed task";
@@ -655,6 +679,35 @@
       });
     }
     byId("detail-card").scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }
+
+  async function postTaskAction(action, packet) {
+    if (!packet?.taskId) return;
+    const body = { action, runId: packet.runId || null, packetId: packet.packetId || null };
+    try {
+      const response = await fetch(`/api/mini-app/tasks/${encodeURIComponent(packet.taskId)}/actions`, {
+        method: "POST",
+        headers: { ...authHeaders(), "Content-Type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify(body)
+      });
+      if (response.status === 401) throw new Error("Open this Mini App from Telegram to connect your account.");
+      if (response.status === 409) throw new Error("This task changed. Refresh the task before trying that action again.");
+      if (!response.ok) throw new Error("The Mini App task action could not be completed.");
+      const result = await response.json();
+      if (action === "handoff") {
+        const command = result.telegramCommand || `/handoff ${result.codexThreadId}`;
+        try { await navigator.clipboard?.writeText(command); } catch { /* Clipboard permission is optional. */ }
+        showNotice(`Telegram handoff prepared: ${command}. ${navigator.clipboard ? "The command was copied when permitted." : "Copy it and send it in Telegram."}`);
+        return;
+      }
+
+      showNotice("Review packet acknowledged. New runs will still appear in Needs attention.");
+      await load();
+      if (state.detailThreadId) await openThread(state.detailThreadId);
+    } catch (error) {
+      showNotice(error.message || "The Mini App task action could not be completed.", true);
+    }
   }
 
   function renderChanges(changes) {
@@ -831,6 +884,8 @@
     detailHistoryActive = false;
     setTelegramBackButton(false);
     byId("detail-card").hidden = true;
+    state.detail = null;
+    state.detailThreadId = null;
     detailPreviousFocus?.focus?.();
     detailPreviousFocus = null;
   }

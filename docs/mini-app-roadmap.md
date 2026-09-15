@@ -21,13 +21,13 @@ The roadmap is delivered in independently verifiable releases:
 
 ## Current release
 
-The current Mini App foundation is the first R2/R4-compatible read-only slice:
+The current Mini App foundation is the first R2/R4-compatible evidence and decision slice:
 
 - `Needs attention` is derived from existing Codex thread and active-turn state. It reports operator input requests, failures, unavailable sessions, and runtime failures with deterministic ordering.
 - `Recent activity` and task detail use stable Codex thread identity. Detail includes bounded turns, timeline entries, Codex-reported file diffs, and redacted artifact metadata.
 - Live refresh failures preserve the last confirmed workspace snapshot as stale. Synthetic preview data is available only with the explicit `?preview=1` query string.
 - Opening task detail does not create a missing local manifest or state directory.
-- The surface has no Mini App mutation endpoints. Prompts, steering, approvals, retries, cancellation, file edits, uploads, commits, merges, and deployment remain in Telegram or their existing operator authority. Codex command and file-change approvals fail closed when no explicit Telegram decision exists.
+- The surface has one bounded Mini App mutation capability: an authenticated user may acknowledge an exact task/run/review packet, and may prepare (but not execute) the existing Telegram `/handoff <thread>` command. Prompts, steering, approvals, retries, cancellation, file edits, uploads, commits, merges, and deployment remain in Telegram or their existing operator authority. Codex command and file-change approvals fail closed when no explicit Telegram decision exists.
 
 The v1.0.28 R1.0 slice is the update-boundary foundation. Its contract is recorded in [`SPEC-CTG-SUPERVISION`](../specs/requirements/codex-telegram/SPEC-CTG-SUPERVISION.json) and [`ARC-CTG-SUPERVISION-0001`](../specs/architecture/codex-telegram/ARC-CTG-SUPERVISION-0001.md). Telegram `UpdateId` receipts provide bounded replay protection at the transport boundary; this is not yet the application-owned `CommandId` or full Task/Run lifecycle. Handler failures remain retryable, stale in-flight receipts are reclaimable, and completed receipts are retained only for the documented window.
 
@@ -67,6 +67,8 @@ The v1.0.44 R3.10 slice makes worker-owned task detail available through the Min
 
 The v1.0.45 R3.11 slice completes the next remote execution boundary. Model/reasoning controls and goal lifecycle operations relay through an owner- and lease-bound worker contract. Normal remote prompts can carry bounded attachment content; the coordinator never sends a local path, and the worker persists the content before constructing Codex input items. Queued remote prompts use the same relay after the task becomes available. Plan mode with attachments remains explicitly rejected because it has a separate Codex execution contract.
 
+The v1.0.46 R2.2 slice adds the first authenticated Mini App task actions. A user-scoped acknowledgement store records only the exact TaskId, RunId, PacketId, and timestamp; stale runs and cross-user tasks fail closed, and repeated acknowledgement is idempotent. The Mini App can also prepare a bounded `/handoff <thread>` command for the existing Telegram handoff flow. These actions do not execute Codex, grant approval, or bypass Telegram authorization. Bootstrap and detail projections show acknowledgement state, and a newer run makes attention visible again.
+
 ## Identity and state vocabulary
 
 Until R1 introduces durable application records, a Mini App task is a Codex thread and its turns are the run history. The implementation must not imply stronger guarantees than the underlying thread state provides.
@@ -85,7 +87,7 @@ Initial display states are `queued`, `running`, `waiting`, `failed`, `completed`
 
 ## Later slices
 
-1. Add combined Mini App task actions for attention, review-packet acknowledgement, artifact handoff, and worker operations backed by coordinator projections.
+1. Extend combined Mini App task actions with coordinator-backed worker operations and richer artifact handoff evidence.
 2. Add fleet-wide staged rollout coordination, compatibility gates, and safe rollback finalization.
 
 Full IDE behavior, arbitrary terminal/file-manager access, autonomous merge/push/deploy, public multi-tenant hosting, and blind replay of side-effecting work are out of scope.

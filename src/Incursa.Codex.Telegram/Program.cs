@@ -398,6 +398,8 @@ builder.Services.AddSingleton<ICodexAccountUsageService, CodexAccountUsageServic
 builder.Services.AddSingleton<TelegramMiniAppAuth>();
 builder.Services.AddSingleton<TelegramMiniAppBrowserPairingStore>();
 builder.Services.AddSingleton<ITelegramMiniAppBrowserPairingStore>(sp => sp.GetRequiredService<TelegramMiniAppBrowserPairingStore>());
+builder.Services.AddSingleton<TelegramMiniAppAcknowledgementStore>();
+builder.Services.AddSingleton<ITelegramMiniAppAcknowledgementStore>(sp => sp.GetRequiredService<TelegramMiniAppAcknowledgementStore>());
 builder.Services.AddSingleton<TelegramCommandParser>();
 builder.Services.AddSingleton<TelegramMessageChunker>();
 builder.Services.AddSingleton<ITelegramBotStateStore, TelegramBotStateStore>();

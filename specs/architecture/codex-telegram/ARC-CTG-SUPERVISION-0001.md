@@ -82,13 +82,13 @@ On startup, accepted or in-flight runs are reconciled atomically to non-terminal
 - Completed Telegram delivery or failed Telegram delivery is never used as proof of Codex execution.
 - An ambiguous Codex execution is visible as recovery-required evidence and is never silently resent.
 - `Needs attention` remains a derived display category, not a persisted lifecycle.
-- Mini App and browser endpoints remain GET-only and read-only.
+- Mini App and browser projections remain read-only for Codex execution; the separately authorized task-action endpoint may only acknowledge an exact review packet or prepare an existing Telegram handoff command.
 
 ## R2.1 review packet and handoff
 
 Review packets are deterministic, bounded projections of Codex-reported file changes and safe artifact metadata. Each packet retains the application Task/Run identity plus the Codex thread and last-turn identifiers. Absolute local paths are reduced to a safe leaf representation; binary and unsupported evidence is labeled rather than rendered as an actionable diff. Packet identity is derived from canonical bounded fields so refreshes are stable without persisting a second review database.
 
-The Mini App renders the packet read-only and states that decisions remain in Telegram. `/handoff [sessionId]` emits the same bounded task/run/command/review identity through the already authorized Telegram conversation. It does not transfer a workspace, replay a command, approve a Codex action, or create a new side-effecting route.
+The Mini App renders the packet as bounded evidence. An authenticated user may acknowledge the exact TaskId/RunId/PacketId tuple; the acknowledgement is persisted without transcript or artifact payloads and is idempotent. A newer run is not hidden by an earlier acknowledgement. The Mini App may also prepare a bounded `/handoff [sessionId]` command, but the existing authorized Telegram conversation performs the handoff. These actions do not transfer a workspace, replay a command, approve a Codex action, or create a browser execution route.
 
 ## R3.1 task workspace allocation
 
@@ -102,7 +102,7 @@ The Telegram `/task new [name] [| baseRef]` command resolves the already-authori
 
 ## R4.1 browser pairing
 
-When `TelegramMiniApp:BrowserPairingEnabled` is enabled, an anonymous browser may request a one-time high-entropy pairing challenge. The challenge displays a short-lived code and is approved only by `/pair <code>` from an allowlisted private Telegram chat. The state file stores hashes of the code and token, never their plaintext values. After approval, the browser presents the high-entropy token as a session header; the session is time-limited and `/pair revoke` records revocation for all sessions belonging to that Telegram user. Browser-authenticated requests use the same read-only Mini App projections as Telegram-authenticated requests; no browser mutation or approval endpoint is introduced.
+When `TelegramMiniApp:BrowserPairingEnabled` is enabled, an anonymous browser may request a one-time high-entropy pairing challenge. The challenge displays a short-lived code and is approved only by `/pair <code>` from an allowlisted private Telegram chat. The state file stores hashes of the code and token, never their plaintext values. After approval, the browser presents the high-entropy token as a session header; the session is time-limited and `/pair revoke` records revocation for all sessions belonging to that Telegram user. Browser-authenticated requests use the same user-scoped Mini App projections and the same bounded acknowledgement/handoff preparation contract as Telegram-authenticated requests; no browser prompt, approval, steering, retry, cancellation, file, upload, or deployment endpoint is introduced.
 
 ## R3.3 local worker boundary
 
@@ -160,9 +160,15 @@ Model/reasoning reads and updates plus goal reads, creation, status changes, and
 
 Normal remote prompts may include up to eight attachments, with a 16 MiB per-file and 32 MiB total decoded-content limit. The coordinator validates filename/content-type metadata, reads the file bytes, and sends bounded base64 content; it never sends a local path. The worker validates and decodes the payload again, writes temporary worker-local files, persists them through the existing attachment store, and builds the same image/mention Codex input items used by local Telegram sends. Temporary transfer files are deleted after persistence. Plan mode with attachments is rejected explicitly. Queued remote prompts use the same relay after dequeue and delete only the coordinator's durable copies once transfer succeeds.
 
+## R2.2 Mini App evidence actions
+
+`POST /api/mini-app/tasks/{taskId}/actions` authenticates through Telegram initialization data or an approved browser pairing session and accepts only `acknowledge` or `handoff`. Acknowledgement requires the user-scoped task, its current RunId, and the bounded review PacketId; the durable store records only those identifiers and the timestamp. The same tuple is idempotent, while a stale RunId is rejected so a changed task cannot be acknowledged accidentally. Bootstrap and detail projections expose the acknowledgement state, and the projection resumes attention when a later run is current.
+
+The `handoff` action returns only the existing `/handoff <CodexThreadId>` command and bounded task identity. It does not send a Telegram message or execute Codex; the user must return to the authorized Telegram conversation. This keeps the Mini App useful for review without making it a second control or approval authority.
+
 ## Later dependency sequence
 
-1. Add combined Mini App task actions for attention, review-packet acknowledgement, artifact handoff, and worker operations backed by coordinator projections.
+1. Extend combined Mini App task actions with coordinator-backed worker operations and richer artifact handoff evidence.
 2. Add fleet-wide staged rollout coordination, compatibility gates, and safe rollback finalization.
 
 Each step requires focused automated tests plus the repository release floor. Browser and Telegram-live checks remain separate evidence categories.
