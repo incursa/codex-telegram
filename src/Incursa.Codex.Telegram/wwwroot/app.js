@@ -13,11 +13,10 @@
   const previewData = {
     user: { id: 0, firstName: "Preview", username: "local" },
     activeSessionId: "preview-session",
-    activeProjectWorkingDirectory: "/workspace/codex-telegram",
-    projects: [{ workingDirectory: "/workspace/codex-telegram", displayName: "codex-telegram", addedAt: new Date().toISOString() }],
+    projects: [{ id: "project-preview", displayName: "codex-telegram", isActive: true, addedAt: new Date().toISOString() }],
     threads: [
-      { id: "preview-session", name: "Mini App spike", preview: "Read-only dashboard surface", status: "idle", lifecycleState: "completed", updatedAt: new Date().toISOString(), workingDirectory: "/workspace/codex-telegram" },
-      { id: "preview-second", name: "UIKit integration", preview: "Published web component runtime", status: "idle", lifecycleState: "completed", updatedAt: new Date(Date.now() - 86400000).toISOString(), workingDirectory: "/workspace/codex-telegram" }
+      { id: "preview-session", name: "Mini App spike", preview: "Read-only dashboard surface", status: "idle", lifecycleState: "completed", updatedAt: new Date().toISOString(), workingDirectory: "codex-telegram" },
+      { id: "preview-second", name: "UIKit integration", preview: "Published web component runtime", status: "idle", lifecycleState: "completed", updatedAt: new Date(Date.now() - 86400000).toISOString(), workingDirectory: "codex-telegram" }
     ],
     recentActivity: [],
     needsAttention: [],
@@ -283,11 +282,11 @@
       name.textContent = project.displayName || "Project";
       const path = document.createElement("div");
       path.className = "workspace-path";
-      path.textContent = shortPath(project.workingDirectory);
+      path.textContent = project.displayName || "Workspace";
       copy.append(name, path);
       const badge = document.createElement("inc-badge");
-      badge.setAttribute("variant", project.workingDirectory === data.activeProjectWorkingDirectory ? "success" : "neutral");
-      badge.textContent = project.workingDirectory === data.activeProjectWorkingDirectory ? "Active" : "Saved";
+      badge.setAttribute("variant", project.isActive ? "success" : "neutral");
+      badge.textContent = project.isActive ? "Active" : "Saved";
       row.append(copy, badge);
       list.append(row);
     });

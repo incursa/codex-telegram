@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using Incursa.Codex.Telegram.Models;
 using Incursa.Codex.Telegram.Options;
 using Incursa.Codex.Telegram.Services;
@@ -54,12 +56,12 @@ internal static class TelegramMiniAppEndpoints
             stateError = "Conversation context is currently unavailable.";
         }
 
-        IReadOnlyList<CodexProjectCatalogEntryVm> projects = Array.Empty<CodexProjectCatalogEntryVm>();
+        IReadOnlyList<TelegramMiniAppProjectVm> projects = Array.Empty<TelegramMiniAppProjectVm>();
         string? projectsError = null;
         try
         {
             projects = (await projectCatalog.ListAsync(cancellationToken).ConfigureAwait(false))
-                .Select(ToProjectViewModel)
+                .Select(project => ToProjectViewModel(project, activeProject))
                 .ToArray();
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
@@ -106,10 +108,10 @@ internal static class TelegramMiniAppEndpoints
             .Select(thread => TelegramMiniAppProjection.ToThreadViewModel(thread, turnCoordinator.TryGetActiveTurnState(thread.Id)))
             .ToArray();
 
+        DateTimeOffset serverTime = DateTimeOffset.UtcNow;
         return Results.Ok(new TelegramMiniAppBootstrapVm(
             new TelegramMiniAppUserVm(identity.UserId, identity.Username, identity.FirstName, identity.LastName),
             activeSessionId,
-            activeProject,
             projects,
             projectedThreads,
             runtime,
@@ -117,9 +119,9 @@ internal static class TelegramMiniAppEndpoints
             runtimeError,
             threadsError,
             usageError,
-            DateTimeOffset.UtcNow) with
+            serverTime) with
         {
-            NeedsAttention = TelegramMiniAppProjection.BuildNeedsAttention(projectedThreads, runtimeError, threadsError, projectsError, stateError),
+            NeedsAttention = TelegramMiniAppProjection.BuildNeedsAttention(projectedThreads, runtimeError, threadsError, projectsError, stateError, serverTime),
             RecentActivity = projectedThreads,
             ProjectsError = projectsError,
             StateError = stateError,
@@ -176,25 +178,31 @@ internal static class TelegramMiniAppEndpoints
         }
     }
 
-    private static CodexProjectCatalogEntryVm ToProjectViewModel(CodexProjectCatalogRecord project)
+    private static TelegramMiniAppProjectVm ToProjectViewModel(CodexProjectCatalogRecord project, string? activeProject)
     {
         string normalizedPath = project.WorkingDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
         string displayName = Path.GetFileName(normalizedPath);
         if (string.IsNullOrWhiteSpace(displayName))
         {
-            displayName = normalizedPath;
+            displayName = "Workspace";
         }
 
-        return new CodexProjectCatalogEntryVm(project.WorkingDirectory, displayName, project.AddedAt);
+        return new TelegramMiniAppProjectVm(
+            BuildProjectId(project.WorkingDirectory),
+            displayName,
+            string.Equals(project.WorkingDirectory, activeProject, StringComparison.OrdinalIgnoreCase),
+            project.AddedAt);
     }
+
+    private static string BuildProjectId(string path)
+        => "project-" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(path))).ToLowerInvariant()[..16];
 
 }
 
 internal sealed record TelegramMiniAppBootstrapVm(
     TelegramMiniAppUserVm User,
     string? ActiveSessionId,
-    string? ActiveProjectWorkingDirectory,
-    IReadOnlyList<CodexProjectCatalogEntryVm> Projects,
+    IReadOnlyList<TelegramMiniAppProjectVm> Projects,
     IReadOnlyList<TelegramMiniAppThreadVm> Threads,
     CodexRuntimeStateVm? Runtime,
     CodexAccountUsageVm? Usage,
@@ -211,6 +219,12 @@ internal sealed record TelegramMiniAppBootstrapVm(
 
     public string? StateError { get; init; }
 }
+
+internal sealed record TelegramMiniAppProjectVm(
+    string Id,
+    string DisplayName,
+    bool IsActive,
+    DateTimeOffset AddedAt);
 
 internal sealed record TelegramMiniAppThreadVm(
     string Id,

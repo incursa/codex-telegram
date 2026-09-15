@@ -27,7 +27,7 @@ internal static class TelegramMiniAppProjection
             thread.CreatedAt,
             thread.UpdatedAt,
             thread.Archived,
-            thread.WorkingDirectory,
+            DirectoryLabel(thread.WorkingDirectory),
             lifecycleState,
             attentionKind is not null,
             attentionKind,
@@ -40,15 +40,17 @@ internal static class TelegramMiniAppProjection
         string? runtimeError,
         string? threadsError = null,
         string? projectsError = null,
-        string? stateError = null)
+        string? stateError = null,
+        DateTimeOffset? now = null)
     {
         ArgumentNullException.ThrowIfNull(threads);
 
+        DateTimeOffset observedAt = now ?? DateTimeOffset.UtcNow;
         List<TelegramMiniAppAttentionVm> attention = new();
-        AddUnavailable(attention, "runtime", "Codex runtime unavailable", runtimeError, 100);
-        AddUnavailable(attention, "threads", "Codex sessions unavailable", threadsError, 95);
-        AddUnavailable(attention, "projects", "Workspace context unavailable", projectsError, 90);
-        AddUnavailable(attention, "state", "Conversation context unavailable", stateError, 90);
+        AddUnavailable(attention, "runtime", "Codex runtime unavailable", runtimeError, 100, observedAt);
+        AddUnavailable(attention, "threads", "Codex sessions unavailable", threadsError, 95, observedAt);
+        AddUnavailable(attention, "projects", "Workspace context unavailable", projectsError, 90, observedAt);
+        AddUnavailable(attention, "state", "Conversation context unavailable", stateError, 90, observedAt);
 
         foreach (TelegramMiniAppThreadVm thread in threads)
         {
@@ -63,7 +65,7 @@ internal static class TelegramMiniAppProjection
                 thread.AttentionTitle ?? "Needs attention",
                 ResolveAttentionDetail(thread),
                 thread.Id,
-                thread.WorkingDirectory,
+                DirectoryLabel(thread.WorkingDirectory),
                 thread.LifecycleState,
                 thread.UpdatedAt,
                 ResolveAttentionPriority(thread.AttentionKind)));
@@ -81,7 +83,8 @@ internal static class TelegramMiniAppProjection
         string id,
         string title,
         string? detail,
-        int priority)
+        int priority,
+        DateTimeOffset observedAt)
     {
         if (string.IsNullOrWhiteSpace(detail))
         {
@@ -96,7 +99,7 @@ internal static class TelegramMiniAppProjection
             null,
             null,
             "unavailable",
-            DateTimeOffset.UtcNow,
+            observedAt,
             priority));
     }
 
@@ -147,6 +150,8 @@ internal static class TelegramMiniAppProjection
                 Limit(change.Diff, 16000) ?? string.Empty))
             .OrderBy(change => change.Path, StringComparer.Ordinal)
             .ThenBy(change => change.Kind, StringComparer.Ordinal)
+            .ThenBy(change => change.Diff, StringComparer.Ordinal)
+            .Take(200)
             .ToArray();
 
         IReadOnlyList<TelegramMiniAppArtifactVm> artifacts = detail.Turns
@@ -160,6 +165,11 @@ internal static class TelegramMiniAppProjection
                 Limit(item.Title, 240) ?? "Artifact",
                 item.Metadata.TryGetValue("status", out string? status) ? Limit(status, 80) : null,
                 item.Timestamp))
+            .OrderByDescending(artifact => artifact.Timestamp)
+            .ThenBy(artifact => artifact.Id, StringComparer.Ordinal)
+            .ThenBy(artifact => artifact.Kind, StringComparer.Ordinal)
+            .ThenBy(artifact => artifact.Title, StringComparer.Ordinal)
+            .Take(100)
             .ToArray();
 
         return new TelegramMiniAppThreadDetailVm(
@@ -169,7 +179,7 @@ internal static class TelegramMiniAppProjection
             detail.Runtime,
             detail.ActiveTurnId,
             detail.ThreadModel,
-            detail.ThreadWorkingDirectory,
+            DirectoryLabel(detail.ThreadWorkingDirectory),
             changes,
             artifacts,
             retrievedAtUtc);
@@ -216,6 +226,24 @@ internal static class TelegramMiniAppProjection
         }
 
         return "completed";
+    }
+
+    private static string? DirectoryLabel(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return null;
+        }
+
+        string trimmed = path.TrimEnd('/', '\\');
+        if (trimmed.Length == 0)
+        {
+            return "Workspace";
+        }
+
+        int separatorIndex = Math.Max(trimmed.LastIndexOf('/'), trimmed.LastIndexOf('\\'));
+        string label = separatorIndex >= 0 ? trimmed[(separatorIndex + 1)..] : trimmed;
+        return string.IsNullOrWhiteSpace(label) ? "Workspace" : Limit(label, 120);
     }
 
     private static string? ResolveAttentionKind(

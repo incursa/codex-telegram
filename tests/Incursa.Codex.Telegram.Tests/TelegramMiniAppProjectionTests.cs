@@ -1,5 +1,6 @@
 using Incursa.Codex.Telegram.MiniApp;
 using Incursa.Codex.Telegram.Models;
+using Incursa.OpenAI.Codex;
 
 namespace Incursa.Codex.Telegram.Tests;
 
@@ -93,6 +94,98 @@ public sealed class TelegramMiniAppProjectionTests
         Assert.Equal(["a", "b"], result.Select(item => item.Id).ToArray());
     }
 
+    [Fact]
+    public void UnavailableItemsUseOneObservationTimeAndStableIdTieBreak()
+    {
+        DateTimeOffset observedAt = DateTimeOffset.Parse("2026-09-14T12:00:00Z");
+
+        IReadOnlyList<TelegramMiniAppAttentionVm> result = TelegramMiniAppProjection.BuildNeedsAttention(
+            [],
+            null,
+            threadsError: null,
+            projectsError: "Projects unavailable",
+            stateError: "Conversation unavailable",
+            now: observedAt);
+
+        Assert.Equal(["projects", "state"], result.Select(item => item.Id).ToArray());
+        Assert.All(result, item => Assert.Equal(observedAt, item.UpdatedAt));
+    }
+
+    [Fact]
+    public void ThreadDirectoryIsReducedToADisplayLabel()
+    {
+        TelegramMiniAppThreadVm thread = TelegramMiniAppProjection.ToThreadViewModel(
+            CreateThread("private", "idle", DateTimeOffset.UtcNow),
+            null);
+
+        Assert.Equal("private", thread.WorkingDirectory);
+    }
+
+    [Fact]
+    public void DetailProjectionSortsAndBoundsChangesAndRedactsArtifactPayloads()
+    {
+        DateTimeOffset now = DateTimeOffset.Parse("2026-09-14T12:00:00Z");
+        CodexThreadListItemVm summary = CreateThread("review", "idle", now);
+        CodexTimelineEntryVm[] artifacts = Enumerable.Range(0, 101)
+            .Select(index => new CodexTimelineEntryVm(
+                "image_view",
+                $"Artifact {index}",
+                null,
+                null,
+                "info",
+                now.AddSeconds(index),
+                summary.Id,
+                "turn-1",
+                new Dictionary<string, string?>
+                {
+                    ["explicitMediaKind"] = "image-view",
+                    ["itemId"] = $"artifact-{index:000}",
+                    ["path"] = @"C:\private\secret.png",
+                    ["result"] = "base64-secret",
+                },
+                true))
+            .ToArray();
+        CodexTurnVm turn = new(
+            "turn-1",
+            "Completed",
+            null,
+            "Done",
+            null,
+            artifacts)
+        {
+            Changes = Enumerable.Range(0, 198)
+                .Select(index => new CodexFileChangePreviewVm($"src/file-{index:000}.cs", "Update", $"diff-{index:000}"))
+                .Concat(
+                [
+                    new CodexFileChangePreviewVm("src/same.cs", "Update", "z"),
+                    new CodexFileChangePreviewVm("src/same.cs", "Update", "a"),
+                ])
+                .ToArray(),
+        };
+        CodexThreadDetailVm detail = new(
+            summary,
+            [turn],
+            [],
+            [],
+            [],
+            CreateRuntime(),
+            null,
+            null,
+            @"C:\Users\Samuel\private-repo",
+            null,
+            null,
+            []);
+
+        TelegramMiniAppThreadDetailVm result = TelegramMiniAppProjection.ToThreadDetailViewModel(detail, null, now);
+
+        Assert.Equal(200, result.Changes.Count);
+        Assert.Equal(["a", "z"], result.Changes.Where(change => change.Path == "src/same.cs").Select(change => change.Diff).ToArray());
+        Assert.Equal(100, result.Artifacts.Count);
+        Assert.DoesNotContain("C:\\private\\secret.png", System.Text.Json.JsonSerializer.Serialize(result.Artifacts), StringComparison.Ordinal);
+        Assert.DoesNotContain("base64-secret", System.Text.Json.JsonSerializer.Serialize(result.Artifacts), StringComparison.Ordinal);
+        Assert.Equal("private-repo", result.ThreadWorkingDirectory);
+    }
+
     private static CodexThreadListItemVm CreateThread(
         string id,
         string status,
@@ -117,6 +210,30 @@ public sealed class TelegramMiniAppProjectionTests
 
     private static CodexActiveTurnStateVm CreateActiveTurn(string threadId, CodexTimelineEntryVm lastEvent)
         => new(threadId, "turn-1", DateTimeOffset.UtcNow.AddMinutes(-1), DateTimeOffset.UtcNow, lastEvent);
+
+    private static CodexRuntimeStateVm CreateRuntime()
+        => new(
+            true,
+            "ready",
+            "Codex",
+            "1.0",
+            "linux",
+            "linux",
+            null,
+            [],
+            [],
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true);
 
     private static CodexTimelineEntryVm CreateEvent(string type, string title)
         => new(
