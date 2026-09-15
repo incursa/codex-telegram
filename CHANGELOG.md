@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.55 - 2026-09-15
+
+- Allowed OpenAI transcription requests to run up to 15 minutes by default instead of inheriting HttpClient's 100-second timeout.
+- Added bounded `OpenAI:RequestTimeoutSeconds` configuration, setup-menu support, timeout diagnostics, and long-transcription test coverage.
+- Kept the default Telegram audio duration limit at 10 minutes and documented both limits.
+
 ## 1.0.54 - 2026-09-15
 
 - Reconciled the compact input-bundle card and button-clearing updates into the release source.

@@ -410,6 +410,8 @@ Voice note requirements:
 2. A transcription-capable `OpenAI:Model`.
 3. `ffmpeg` only when the downloaded audio is not in a format OpenAI accepts directly. Telegram voice notes commonly arrive as OGG/OPUS, so install `ffmpeg` or configure `OpenAI:FfmpegPath` for reliable voice-note support.
 
+The default maximum Telegram audio duration is 10 minutes (`TelegramBot:MaxAudioDurationSeconds: 600`). The OpenAI request waits up to 15 minutes by default (`OpenAI:RequestTimeoutSeconds: 900`), so a long note can finish even when transcription takes longer than the standard 100-second `HttpClient` timeout. Both settings can be changed within the application's safety bounds.
+
 If `ffmpeg` is missing when a voice note needs conversion, the bot leaves the Codex session untouched and replies with setup guidance instead of failing silently.
 
 Suggested first voice test:

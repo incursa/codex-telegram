@@ -77,18 +77,19 @@ The following are proposed checks, not recorded results. Configure `TelegramOutp
 3. With the default `TelegramInput:DefaultCaptureMode` of `BundleAlways`, send a short text prompt while idle and confirm it opens an editable input bundle card instead of starting a turn immediately.
 4. Send a near-empty or zero-duration voice note and confirm the bot rejects it before download/transcription.
 5. Send or simulate audio longer than `TelegramBot:MaxAudioDurationSeconds` and confirm the bot rejects it before download/transcription.
-6. Send an image attachment with a prompt while the bundle is open and confirm the existing bundle card is edited in place rather than a separate Codex turn being started.
-7. Tap `Steer current turn` and confirm Codex receives the transcript/text plus image input items.
-8. Repeat with `Queue next` and confirm attachment files are copied under the configured data root before the queued bundle is persisted.
-9. Tap `Clear` on a bundle with text and attachments and confirm the card remains open, content count resets, and durable attachment copies are removed.
-10. Tap `Cancel` on a bundle with attachments and confirm the durable attachment files are deleted.
-11. Delete the editable bundle card in Telegram, send another note into the same open bundle, and confirm a replacement card appears and future bundle updates edit the replacement instead of creating repeated duplicates.
-12. Simulate or force a bundle send/steer failure and confirm the bundle remains open for retry with its attachments intact.
-13. Simulate or force slow bundle steering acceptance and confirm the bot posts a durable pending message, then later reports success or failure.
-14. Send a Telegram album with multiple images/documents and confirm one bundle card appears with the first caption, all attachments, and the grouped source messages after the media-group debounce window.
-15. With `TelegramInput:DefaultCaptureMode` temporarily set to `ImmediateText`, send a very long plain-text prompt while idle and confirm it opens an input bundle instead of starting a turn on the first chunk, then send the next chunk and confirm it stays in the same bundle.
-16. Leave an input bundle untouched for `TelegramInput:AutoDispatchAfterSeconds` and confirm it auto-sends when idle, auto-queues when the target session is busy, and does not auto-steer without an explicit button tap.
-17. Send an audio file larger than the OpenAI transcription limit and confirm the failure is clear.
+6. With a test HTTP handler that remains open, set `OpenAI:RequestTimeoutSeconds` to a short test value and confirm the bot reports a transcription timeout; with the default settings, a request is allowed up to 15 minutes instead of the default 100-second `HttpClient` ceiling.
+7. Send an image attachment with a prompt while the bundle is open and confirm the existing bundle card is edited in place rather than a separate Codex turn being started.
+8. Tap `Steer current turn` and confirm Codex receives the transcript/text plus image input items.
+9. Repeat with `Queue next` and confirm attachment files are copied under the configured data root before the queued bundle is persisted.
+10. Tap `Clear` on a bundle with text and attachments and confirm the card remains open, content count resets, and durable attachment copies are removed.
+11. Tap `Cancel` on a bundle with attachments and confirm the durable attachment files are deleted.
+12. Delete the editable bundle card in Telegram, send another note into the same open bundle, and confirm a replacement card appears and future bundle updates edit the replacement instead of creating repeated duplicates.
+13. Simulate or force a bundle send/steer failure and confirm the bundle remains open for retry with its attachments intact.
+14. Simulate or force slow bundle steering acceptance and confirm the bot posts a durable pending message, then later reports success or failure.
+15. Send a Telegram album with multiple images/documents and confirm one bundle card appears with the first caption, all attachments, and the grouped source messages after the media-group debounce window.
+16. With `TelegramInput:DefaultCaptureMode` temporarily set to `ImmediateText`, send a very long plain-text prompt while idle and confirm it opens an input bundle instead of starting a turn on the first chunk, then send the next chunk and confirm it stays in the same bundle.
+17. Leave an input bundle untouched for `TelegramInput:AutoDispatchAfterSeconds` and confirm it auto-sends when idle, auto-queues when the target session is busy, and does not auto-steer without an explicit button tap.
+18. Send an audio file larger than the OpenAI transcription limit and confirm the failure is clear.
 
 ## Queueing And Long Output
 

@@ -48,6 +48,9 @@ internal sealed class OpenAiSpeechToTextService : IAudioTranscriptionService
         IOptions<CodexTelegramOptions>? codexOptions = null)
     {
         _httpClient = httpClient;
+        // This dedicated client is governed by RequestTimeoutSeconds below. Leaving the
+        // default HttpClient timeout in place would cancel long transcriptions at 100 seconds.
+        _httpClient.Timeout = Timeout.InfiniteTimeSpan;
         _options = options.Value;
         _logger = logger;
         _tempRoot = codexOptions is null
@@ -90,22 +93,34 @@ internal sealed class OpenAiSpeechToTextService : IAudioTranscriptionService
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
             request.Content = form;
 
-            using HttpResponseMessage response = await _httpClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
-            string payload = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-            if (!response.IsSuccessStatusCode)
+            int requestTimeoutSeconds = GetRequestTimeoutSeconds();
+            using CancellationTokenSource requestTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            requestTimeout.CancelAfter(TimeSpan.FromSeconds(requestTimeoutSeconds));
+            try
+            {
+                using HttpResponseMessage response = await _httpClient.SendAsync(request, requestTimeout.Token).ConfigureAwait(false);
+                string payload = await response.Content.ReadAsStringAsync(requestTimeout.Token).ConfigureAwait(false);
+                if (!response.IsSuccessStatusCode)
+                {
+                    throw new InvalidOperationException(
+                        $"OpenAI transcription failed with {(int)response.StatusCode} {response.ReasonPhrase}: {payload}");
+                }
+
+                OpenAiTranscriptionResponse? transcription = JsonSerializer.Deserialize<OpenAiTranscriptionResponse>(payload, JsonOptions);
+                string? text = transcription?.Text?.Trim();
+                if (string.IsNullOrWhiteSpace(text))
+                {
+                    throw new InvalidOperationException("OpenAI transcription response did not include text.");
+                }
+
+                return text;
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested && requestTimeout.IsCancellationRequested)
             {
                 throw new InvalidOperationException(
-                    $"OpenAI transcription failed with {(int)response.StatusCode} {response.ReasonPhrase}: {payload}");
+                    $"OpenAI transcription timed out after {FormatDuration(requestTimeoutSeconds)}. " +
+                    "Increase OpenAI:RequestTimeoutSeconds if longer transcriptions are expected.");
             }
-
-            OpenAiTranscriptionResponse? transcription = JsonSerializer.Deserialize<OpenAiTranscriptionResponse>(payload, JsonOptions);
-            string? text = transcription?.Text?.Trim();
-            if (string.IsNullOrWhiteSpace(text))
-            {
-                throw new InvalidOperationException("OpenAI transcription response did not include text.");
-            }
-
-            return text;
         }
         finally
         {
@@ -143,6 +158,16 @@ internal sealed class OpenAiSpeechToTextService : IAudioTranscriptionService
 
         return _options.Model.Trim();
     }
+
+    private int GetRequestTimeoutSeconds()
+        => _options.RequestTimeoutSeconds > 0
+            ? _options.RequestTimeoutSeconds
+            : OpenAiSpeechToTextDefaults.RequestTimeoutSeconds;
+
+    private static string FormatDuration(int seconds)
+        => seconds % 60 == 0
+            ? $"{seconds / 60} minutes"
+            : $"{seconds} seconds";
 
     private bool IsDirectUploadSupported(string audioFilePath)
         => DirectUploadExtensions.Contains(Path.GetExtension(audioFilePath));

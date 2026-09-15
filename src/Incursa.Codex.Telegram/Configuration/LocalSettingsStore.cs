@@ -103,6 +103,7 @@ internal sealed class LocalSettingsStore
             !string.IsNullOrWhiteSpace(GetString("OpenAI", "ApiKey")),
             GetString("OpenAI", "Model"),
             GetString("OpenAI", "FfmpegPath"),
+            GetInt32("OpenAI", "RequestTimeoutSeconds"),
             GetInt32("TelegramBot", "MinAudioDurationSeconds"),
             GetInt32("TelegramBot", "MaxAudioDurationSeconds"),
             GetString("Codex", "CodexPathOverride"),
@@ -160,6 +161,9 @@ internal sealed class LocalSettingsStore
 
     public void SetOpenAiFfmpegPath(string? value)
         => SetString(value, "OpenAI", "FfmpegPath");
+
+    public void SetOpenAiRequestTimeoutSeconds(int? value)
+        => SetNullableInt32(value, "OpenAI", "RequestTimeoutSeconds");
 
     public void SetMinAudioDurationSeconds(int? value)
         => SetNullableInt32(value, "TelegramBot", "MinAudioDurationSeconds");

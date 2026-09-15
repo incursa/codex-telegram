@@ -11,7 +11,7 @@ This guide is for contributors who want to build, test, package, or change the s
 1. .NET 10 SDK matching [global.json](../global.json).
 2. A local `codex` executable if you want end-to-end manual testing.
 3. A Telegram bot token and numeric Telegram user ID for live manual checks.
-4. `OPENAI_API_KEY` and `ffmpeg` only if you are testing voice transcription.
+4. `OPENAI_API_KEY` and `ffmpeg` only if you are testing voice transcription. `OpenAI:RequestTimeoutSeconds` controls the bounded wait for the transcription API (900 seconds by default).
 
 The app does not own Codex authentication. Development tests should use a disposable or explicitly selected Codex account/context; do not add Codex auth files to the repository or test artifacts. When testing two bot instances, isolate their settings/state roots and, if needed, their Codex auth contexts.
 

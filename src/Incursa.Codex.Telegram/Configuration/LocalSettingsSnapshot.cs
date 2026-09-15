@@ -12,6 +12,7 @@ namespace Incursa.Codex.Telegram.Configuration;
 /// <param name="OpenAiApiKeyConfigured">Whether an OpenAI API key is configured.</param>
 /// <param name="OpenAiModel">Configured OpenAI transcription model.</param>
 /// <param name="OpenAiFfmpegPath">Configured ffmpeg executable path.</param>
+/// <param name="OpenAiRequestTimeoutSeconds">Maximum OpenAI transcription request time.</param>
 /// <param name="MinAudioDurationSeconds">Minimum accepted Telegram audio duration.</param>
 /// <param name="MaxAudioDurationSeconds">Maximum accepted Telegram audio duration.</param>
 /// <param name="CodexPathOverride">Configured Codex executable override from the Codex section.</param>
@@ -38,6 +39,7 @@ internal sealed record LocalSettingsSnapshot(
     bool OpenAiApiKeyConfigured,
     string? OpenAiModel,
     string? OpenAiFfmpegPath,
+    int? OpenAiRequestTimeoutSeconds,
     int? MinAudioDurationSeconds,
     int? MaxAudioDurationSeconds,
     string? CodexPathOverride,

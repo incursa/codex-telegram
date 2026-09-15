@@ -327,6 +327,10 @@ builder.Services.PostConfigure<OpenAiSpeechToTextOptions>(options =>
     options.Model = DefaultIfWhiteSpace(options.Model, OpenAiSpeechToTextDefaults.Model);
     options.BaseUrl = DefaultIfWhiteSpace(options.BaseUrl, OpenAiSpeechToTextDefaults.BaseUrl);
     options.FfmpegPath = DefaultIfWhiteSpace(options.FfmpegPath, OpenAiSpeechToTextDefaults.FfmpegPath);
+    options.RequestTimeoutSeconds = Math.Clamp(
+        options.RequestTimeoutSeconds,
+        OpenAiSpeechToTextLimits.MinRequestTimeoutSeconds,
+        OpenAiSpeechToTextLimits.MaxRequestTimeoutSeconds);
 });
 
 builder.Services.PostConfigure<TelegramMiniAppOptions>(options =>

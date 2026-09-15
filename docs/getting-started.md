@@ -309,7 +309,8 @@ If you prefer to edit JSON by hand, this is a good starting point:
   "OpenAI": {
     "ApiKey": "replace-with-your-openai-api-key",
     "Model": "whisper-1",
-    "FfmpegPath": "ffmpeg"
+    "FfmpegPath": "ffmpeg",
+    "RequestTimeoutSeconds": 900
   },
   "CodexTelegram": {
     "InitializeOnStart": true,
@@ -346,16 +347,17 @@ Configuration behavior:
 8. `OpenAI:Model` defaults to `whisper-1`.
 9. `OpenAI:BaseUrl` defaults to `https://api.openai.com/v1/`.
 10. `OpenAI:FfmpegPath` defaults to `ffmpeg`.
-11. `TelegramBot:MinAudioDurationSeconds` and `TelegramBot:MaxAudioDurationSeconds` reject suspiciously short or long Telegram audio before download.
-12. `CodexTelegram:InitializeOnStart` controls whether the Codex gateway initializes during startup. Leave it `true` for normal bot use.
-13. `CodexTelegram:TerminalEventHoldMilliseconds` controls how long the bot waits for late turn events after Codex reports completion.
-14. `CodexTelegram:Context:WorkingDirectory` is the default Codex working directory.
-15. `CodexTelegram:Context:ReasoningEffort` is the default reasoning effort for normal turns.
-16. `Codex:PlanMode:ReasoningEffort` is the separate default reasoning effort for plan turns.
-17. `CodexTelegram:Workspace:WorkspaceRoots` are the directories users may add as projects.
-18. `CodexTelegram:Mode` accepts `GeneralPurpose` or `Repository`; repository mode requires `CodexTelegram:RepositoryRoot`.
-19. `CodexTelegram:InstanceId` is an optional instance label used to partition the default local state location. Use an explicit `DataRoot` when state separation matters.
-20. The Codex submenu will query live model names and effort choices when the configured executable is reachable.
+11. `OpenAI:RequestTimeoutSeconds` defaults to 900 seconds (15 minutes), with a 30-second to 1-hour safety range.
+12. `TelegramBot:MinAudioDurationSeconds` and `TelegramBot:MaxAudioDurationSeconds` reject suspiciously short or long Telegram audio before download; the default maximum is 600 seconds (10 minutes).
+13. `CodexTelegram:InitializeOnStart` controls whether the Codex gateway initializes during startup. Leave it `true` for normal bot use.
+14. `CodexTelegram:TerminalEventHoldMilliseconds` controls how long the bot waits for late turn events after Codex reports completion.
+15. `CodexTelegram:Context:WorkingDirectory` is the default Codex working directory.
+16. `CodexTelegram:Context:ReasoningEffort` is the default reasoning effort for normal turns.
+17. `Codex:PlanMode:ReasoningEffort` is the separate default reasoning effort for plan turns.
+18. `CodexTelegram:Workspace:WorkspaceRoots` are the directories users may add as projects.
+19. `CodexTelegram:Mode` accepts `GeneralPurpose` or `Repository`; repository mode requires `CodexTelegram:RepositoryRoot`.
+20. `CodexTelegram:InstanceId` is an optional instance label used to partition the default local state location. Use an explicit `DataRoot` when state separation matters.
+21. The Codex submenu will query live model names and effort choices when the configured executable is reachable.
 
 ## First Launch Checklist
 
@@ -549,7 +551,8 @@ If voice transcription fails, check these first:
 1. `OpenAI:ApiKey`.
 2. `OpenAI:Model`.
 3. `OpenAI:FfmpegPath` if the failing audio format needs transcoding.
-4. Whether `ffmpeg` is actually available on the machine that runs the bot.
+4. `OpenAI:RequestTimeoutSeconds` if the transcription request needs more time than the configured limit.
+5. Whether `ffmpeg` is actually available on the machine that runs the bot.
 
 ## Command Reference
 

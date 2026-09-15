@@ -22,6 +22,7 @@ public sealed class LocalSettingsStoreTests
         store.SetOpenAiApiKey("openai-key");
         store.SetOpenAiModel("gpt-4o-mini-transcribe");
         store.SetOpenAiFfmpegPath("C:\\tools\\ffmpeg.exe");
+        store.SetOpenAiRequestTimeoutSeconds(1800);
         store.SetMinAudioDurationSeconds(2);
         store.SetMaxAudioDurationSeconds(120);
         store.SetCodexPathOverride("C:\\tools\\codex.exe");
@@ -50,6 +51,7 @@ public sealed class LocalSettingsStoreTests
         Assert.True(snapshot.OpenAiApiKeyConfigured);
         Assert.Equal("gpt-4o-mini-transcribe", snapshot.OpenAiModel);
         Assert.Equal("C:\\tools\\ffmpeg.exe", snapshot.OpenAiFfmpegPath);
+        Assert.Equal(1800, snapshot.OpenAiRequestTimeoutSeconds);
         Assert.Equal(2, snapshot.MinAudioDurationSeconds);
         Assert.Equal(120, snapshot.MaxAudioDurationSeconds);
         Assert.Equal("C:\\tools\\codex.exe", snapshot.CodexPathOverride);
@@ -150,6 +152,9 @@ public sealed class LocalSettingsStoreTests
               "TelegramBot": {
                 "MinAudioDurationSeconds": "2",
                 "MaxAudioDurationSeconds": 300
+              },
+              "OpenAI": {
+                "RequestTimeoutSeconds": "1800"
               }
             }
             """);
@@ -158,6 +163,7 @@ public sealed class LocalSettingsStoreTests
 
         Assert.Equal(2, snapshot.MinAudioDurationSeconds);
         Assert.Equal(300, snapshot.MaxAudioDurationSeconds);
+        Assert.Equal(1800, snapshot.OpenAiRequestTimeoutSeconds);
     }
 
     [Fact]

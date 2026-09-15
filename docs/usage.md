@@ -235,10 +235,11 @@ Voice requirements:
 2. `OpenAI:Model` must name a transcription-capable model.
 3. `ffmpeg` must be available only when transcoding is needed. Telegram voice notes commonly need it because they often arrive as OGG/OPUS.
 4. Audio must fit the configured duration limits and OpenAI upload limits.
+5. The default maximum audio duration is 10 minutes, and the default OpenAI transcription request timeout is 15 minutes. Configure `TelegramBot:MaxAudioDurationSeconds` and `OpenAI:RequestTimeoutSeconds` when your operating conditions need different bounded limits.
 
 If `ffmpeg` is missing when conversion is needed, the bot replies with setup guidance and does not send the audio message to Codex.
 
-If voice fails, send `/doctor`, then check `OpenAI:ApiKey`, `OpenAI:Model`, and `OpenAI:FfmpegPath` if the audio format needs transcoding.
+If voice fails, send `/doctor`, then check `OpenAI:ApiKey`, `OpenAI:Model`, `OpenAI:FfmpegPath` if the audio format needs transcoding, and `OpenAI:RequestTimeoutSeconds` if the request is timing out.
 
 ## Groups And Forum Topics
 

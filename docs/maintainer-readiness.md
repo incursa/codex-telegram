@@ -91,6 +91,7 @@ Optional voice transcription settings:
 - `OpenAI:ApiKey` or `OPENAI_API_KEY`
 - `OpenAI:Model`
 - `OpenAI:FfmpegPath`
+- `OpenAI:RequestTimeoutSeconds` (defaults to 900 seconds; bounded to 30 seconds through 1 hour)
 
 Security expectations:
 

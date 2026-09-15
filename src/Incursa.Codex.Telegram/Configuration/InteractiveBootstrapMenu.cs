@@ -1102,6 +1102,7 @@ internal static class InteractiveBootstrapMenu
             Console.WriteLine($"API key: {FormatConfigured(snapshot.OpenAiApiKeyConfigured)}");
             Console.WriteLine($"Model: {FormatValue(snapshot.OpenAiModel, "whisper-1")}");
             Console.WriteLine($"ffmpeg path: {FormatValue(snapshot.OpenAiFfmpegPath, "ffmpeg")}");
+            Console.WriteLine($"Transcription request timeout: {FormatSeconds(snapshot.OpenAiRequestTimeoutSeconds ?? OpenAiSpeechToTextDefaults.RequestTimeoutSeconds)}");
             Console.WriteLine($"Audio duration limits: {FormatSeconds(snapshot.MinAudioDurationSeconds ?? 1)} to {FormatSeconds(snapshot.MaxAudioDurationSeconds ?? 600)}");
             Console.WriteLine();
             Console.WriteLine("1. Set API key");
@@ -1109,6 +1110,7 @@ internal static class InteractiveBootstrapMenu
             Console.WriteLine("3. Set ffmpeg path");
             Console.WriteLine("4. Set minimum audio duration");
             Console.WriteLine("5. Set maximum audio duration");
+            Console.WriteLine("6. Set transcription request timeout");
             Console.WriteLine("B. Back");
             Console.WriteLine();
 
@@ -1154,6 +1156,17 @@ internal static class InteractiveBootstrapMenu
                         1,
                         6 * 60 * 60,
                         store.SetMaxAudioDurationSeconds,
+                        store);
+                    break;
+
+                case "6":
+                    SetInt32(
+                        "transcription request timeout seconds",
+                        snapshot.OpenAiRequestTimeoutSeconds,
+                        OpenAiSpeechToTextDefaults.RequestTimeoutSeconds,
+                        OpenAiSpeechToTextLimits.MinRequestTimeoutSeconds,
+                        OpenAiSpeechToTextLimits.MaxRequestTimeoutSeconds,
+                        store.SetOpenAiRequestTimeoutSeconds,
                         store);
                     break;
 

@@ -109,6 +109,26 @@ public sealed class OpenAiSpeechToTextServiceTests
     }
 
     [Fact]
+    public async Task TranscribeAsync_UsesConfiguredTimeoutInsteadOfHttpClientDefault()
+    {
+        using TemporaryDirectory temp = TemporaryDirectory.Create();
+        string audioPath = CreateFile(temp, "audio.wav", CreateBytes(64));
+        BlockingHttpMessageHandler handler = new();
+        OpenAiSpeechToTextService service = CreateService(handler, new OpenAiSpeechToTextOptions
+        {
+            ApiKey = "test-key",
+            Model = "whisper-1",
+            RequestTimeoutSeconds = 1,
+        });
+
+        InvalidOperationException exception = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => service.TranscribeAsync(audioPath, CancellationToken.None));
+
+        Assert.Contains("timed out after 1 second", exception.Message);
+        Assert.Equal(1, handler.RequestCount);
+    }
+
+    [Fact]
     public async Task TranscribeAsync_FailsClearlyWhenFfmpegIsMissingForUnsupportedAudio()
     {
         using TemporaryDirectory temp = TemporaryDirectory.Create();
@@ -132,7 +152,7 @@ public sealed class OpenAiSpeechToTextServiceTests
         Assert.Equal(0, handler.RequestCount);
     }
 
-    private static OpenAiSpeechToTextService CreateService(TestHttpMessageHandler handler, OpenAiSpeechToTextOptions options)
+    private static OpenAiSpeechToTextService CreateService(HttpMessageHandler handler, OpenAiSpeechToTextOptions options)
         => new(
             new HttpClient(handler),
             Microsoft.Extensions.Options.Options.Create(options),
@@ -168,6 +188,18 @@ public sealed class OpenAiSpeechToTextServiceTests
         {
             RequestCount++;
             return Task.FromResult(handle(request));
+        }
+    }
+
+    private sealed class BlockingHttpMessageHandler : HttpMessageHandler
+    {
+        public int RequestCount { get; private set; }
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            RequestCount++;
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            return new HttpResponseMessage(HttpStatusCode.OK);
         }
     }
 }

@@ -1208,6 +1208,7 @@ Requirements:
 2. A transcription-capable `OpenAI:Model`.
 3. `ffmpeg` when transcoding is needed.
 4. Audio duration inside configured limits.
+5. The default audio limit is 10 minutes (`TelegramBot:MaxAudioDurationSeconds: 600`), and the default transcription request timeout is 15 minutes (`OpenAI:RequestTimeoutSeconds: 900`).
 
 Suggested first voice prompt:
 

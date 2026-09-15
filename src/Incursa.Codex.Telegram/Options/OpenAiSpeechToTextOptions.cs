@@ -19,6 +19,27 @@ public static class OpenAiSpeechToTextDefaults
     /// Default executable name used for ffmpeg lookup.
     /// </summary>
     public const string FfmpegPath = "ffmpeg";
+
+    /// <summary>
+    /// Default maximum time allowed for an OpenAI transcription request, in seconds.
+    /// </summary>
+    public const int RequestTimeoutSeconds = 15 * 60;
+}
+
+/// <summary>
+/// Safety bounds applied to <see cref="OpenAiSpeechToTextOptions"/> after configuration is loaded.
+/// </summary>
+public static class OpenAiSpeechToTextLimits
+{
+    /// <summary>
+    /// Smallest allowed OpenAI transcription request timeout, in seconds.
+    /// </summary>
+    public const int MinRequestTimeoutSeconds = 30;
+
+    /// <summary>
+    /// Largest allowed OpenAI transcription request timeout, in seconds.
+    /// </summary>
+    public const int MaxRequestTimeoutSeconds = 60 * 60;
 }
 
 /// <summary>
@@ -45,4 +66,9 @@ public sealed class OpenAiSpeechToTextOptions
     /// Gets or sets the ffmpeg executable path used when Telegram audio must be transcoded.
     /// </summary>
     public string? FfmpegPath { get; set; } = OpenAiSpeechToTextDefaults.FfmpegPath;
+
+    /// <summary>
+    /// Gets or sets the maximum time allowed for one OpenAI transcription request, in seconds.
+    /// </summary>
+    public int RequestTimeoutSeconds { get; set; } = OpenAiSpeechToTextDefaults.RequestTimeoutSeconds;
 }

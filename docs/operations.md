@@ -122,6 +122,8 @@ Transient Telegram audio, downloaded attachments, and outbound media use an inst
 
 If an OpenAI key is rotated, update `OpenAI:ApiKey` or `OPENAI_API_KEY` and restart before testing voice transcription.
 
+Voice transcription requests use `OpenAI:RequestTimeoutSeconds` (900 seconds by default, bounded to one hour). Increase it when a permitted long audio note needs more processing time; the default Telegram audio limit remains 600 seconds (`TelegramBot:MaxAudioDurationSeconds`).
+
 ## Group And Forum Operations
 
 Private chat is the primary setup mode. A trusted group root can also be used as a project/session lane, and forum topics can split one group into multiple lanes.
