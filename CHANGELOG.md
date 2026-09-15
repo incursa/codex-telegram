@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 1.0.43 - 2026-09-15
+
+- Added authenticated remote task workspace status and confirmed release/discard operations.
+- Kept remote filesystem paths on the worker while returning bounded branch, port, database, and lifecycle evidence.
+- Completed remote text/Plan, steering, stop/kill, and workspace lifecycle routing for the supported task controls.
+
 ## 1.0.42 - 2026-09-15
 
 - Added authenticated remote steering and stop/kill controls for explicitly selected tasks.

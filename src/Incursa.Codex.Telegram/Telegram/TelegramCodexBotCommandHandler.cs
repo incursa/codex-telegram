@@ -207,6 +207,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
     private readonly CodexRemoteTaskProvisioningService? _remoteTaskProvisioner;
     private readonly CodexRemoteSessionRelay? _remoteSessionRelay;
     private readonly CodexRemoteSessionControlRelay? _remoteSessionControlRelay;
+    private readonly CodexRemoteTaskWorkspaceRelay? _remoteTaskWorkspaceRelay;
     private readonly bool _browserPairingEnabled;
     private readonly TelegramBotOptions _options;
     private readonly TelegramInputOptions _inputOptions;
@@ -261,7 +262,8 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         ICodexWorkerUpdateManager? workerUpdateManager = null,
         CodexRemoteTaskProvisioningService? remoteTaskProvisioner = null,
         CodexRemoteSessionRelay? remoteSessionRelay = null,
-        CodexRemoteSessionControlRelay? remoteSessionControlRelay = null)
+        CodexRemoteSessionControlRelay? remoteSessionControlRelay = null,
+        CodexRemoteTaskWorkspaceRelay? remoteTaskWorkspaceRelay = null)
     {
         _parser = parser;
         _chunker = chunker;
@@ -309,6 +311,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         _remoteTaskProvisioner = remoteTaskProvisioner;
         _remoteSessionRelay = remoteSessionRelay;
         _remoteSessionControlRelay = remoteSessionControlRelay;
+        _remoteTaskWorkspaceRelay = remoteTaskWorkspaceRelay;
     }
 
     public async Task HandleMessageAsync(
@@ -1677,6 +1680,21 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             return;
         }
 
+        if (task.WorkerId is not null && _remoteTaskWorkspaceRelay is not null && await IsRemoteTaskAsync(task, cancellationToken).ConfigureAwait(false))
+        {
+            try
+            {
+                CodexRemoteTaskWorkspaceResponse remoteWorkspace = await _remoteTaskWorkspaceRelay.GetStatusAsync(task, cancellationToken).ConfigureAwait(false);
+                await ReplyAsync(sender, message, FormatRemoteTaskWorkspace(task, remoteWorkspace), null, cancellationToken).ConfigureAwait(false);
+            }
+            catch (InvalidOperationException exception)
+            {
+                await ReplyAsync(sender, message, exception.Message, null, cancellationToken).ConfigureAwait(false);
+            }
+
+            return;
+        }
+
         CodexTaskWorkspaceRecord? workspace = await _taskWorkspaceManager!.GetAsync(task.TaskId, cancellationToken).ConfigureAwait(false);
         await ReplyAsync(sender, message, FormatTaskWorkspace(task, workspace), null, cancellationToken).ConfigureAwait(false);
     }
@@ -1706,6 +1724,30 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         if (task is null)
         {
             await ReplyAsync(sender, message, "That task is not owned by this authorized Telegram conversation.", null, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        if (task.WorkerId is not null && _remoteTaskWorkspaceRelay is not null && await IsRemoteTaskAsync(task, cancellationToken).ConfigureAwait(false))
+        {
+            try
+            {
+                CodexRemoteTaskWorkspaceResponse releasedRemote = await _remoteTaskWorkspaceRelay.ReleaseAsync(task, discardChanges, cancellationToken).ConfigureAwait(false);
+                if (releasedRemote.State == CodexTaskWorkspaceState.Released
+                    && string.Equals(
+                        await _stateStore.GetActiveSessionIdAsync(message.ConversationScope, cancellationToken).ConfigureAwait(false),
+                        task.CodexThreadId,
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    await _stateStore.ClearActiveSessionAsync(message.ConversationScope, cancellationToken).ConfigureAwait(false);
+                }
+
+                await ReplyAsync(sender, message, FormatRemoteTaskWorkspace(task, releasedRemote), null, cancellationToken).ConfigureAwait(false);
+            }
+            catch (InvalidOperationException exception)
+            {
+                await ReplyAsync(sender, message, exception.Message, null, cancellationToken).ConfigureAwait(false);
+            }
+
             return;
         }
 
@@ -1764,7 +1806,10 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
                 task.UpdatedAt,
                 task.RecipeId,
                 task.RecipeVersion,
-                task.RecipeDisplayName);
+                task.RecipeDisplayName,
+                task.WorkerId,
+                task.LeaseId,
+                task.WorkspaceId);
     }
 
     private static string FormatTaskWorkspace(CodexSupervisionTaskRecord task, CodexTaskWorkspaceRecord? workspace)
@@ -1781,6 +1826,19 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
                 $"Database namespace: {workspace.DatabaseNamespace}",
                 $"Outcome: {workspace.OutcomeCode ?? "(none)"}",
             ]);
+
+    private static string FormatRemoteTaskWorkspace(CodexSupervisionTaskRecord task, CodexRemoteTaskWorkspaceResponse workspace)
+        => string.Join(Environment.NewLine, [
+            $"Task: {task.TaskId}",
+            $"Worker: {workspace.WorkerId}",
+            $"Session: {task.SessionName}",
+            $"Workspace state: {workspace.State}",
+            "Worktree: managed by the remote worker",
+            $"Branch: {workspace.Branch}",
+            $"Development port: {workspace.DevelopmentPort}",
+            $"Database namespace: {workspace.DatabaseNamespace}",
+            $"Outcome: {workspace.OutcomeCode ?? "(none)"}",
+        ]);
 
     private async Task HandleNewAsync(TelegramInboundMessage message, string arguments, ITelegramBotMessageSender sender, CancellationToken cancellationToken)
     {
@@ -5261,6 +5319,19 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         return string.Equals(task.WorkerId, localWorker.WorkerId, StringComparison.Ordinal)
             ? null
             : task;
+    }
+
+    private async Task<bool> IsRemoteTaskAsync(
+        CodexSupervisionTaskRecord task,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(task.WorkerId) || _workerRegistry is null)
+        {
+            return false;
+        }
+
+        CodexWorkerSnapshot localWorker = await _workerRegistry.GetSnapshotAsync(cancellationToken).ConfigureAwait(false);
+        return !string.Equals(task.WorkerId, localWorker.WorkerId, StringComparison.Ordinal);
     }
 
     private static CodexSessionSummary ToRemoteSession(CodexSupervisionTaskSnapshot task)

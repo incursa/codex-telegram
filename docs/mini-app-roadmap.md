@@ -61,6 +61,8 @@ The v1.0.41 R3.7 slice adds authenticated Telegram text and Plan mode relay for 
 
 The v1.0.42 R3.8 slice adds authenticated remote steering and stop/kill controls. These operations use a separate worker control endpoint, task ownership checks, durable CommandIds, and bounded completion/unknown/interrupted outcomes. A ready worker may accept stop/kill while draining, but draining still prevents new task claims. Attachments, model/goal controls, remote workspace lifecycle, and review/file actions remain separate capabilities.
 
+The v1.0.43 R3.9 slice completes the currently supported remote task lifecycle. Remote status and confirmed release/discard now execute on the owning worker and return only bounded workspace evidence; local worktree paths never cross the coordinator boundary. The coordinator clears its local selection only after the worker reports a released workspace. Attachments, remote model/goal controls, and review/file actions remain separate capabilities.
+
 ## Identity and state vocabulary
 
 Until R1 introduces durable application records, a Mini App task is a Codex thread and its turns are the run history. The implementation must not imply stronger guarantees than the underlying thread state provides.
@@ -79,8 +81,8 @@ Initial display states are `queued`, `running`, `waiting`, `failed`, `completed`
 
 ## Later slices
 
-1. Complete remote session/control relay as separately authorized operations, including attachments, model/goal controls, and task status/release where worker-owned.
-2. Add combined Mini App task detail, attention, review-packet, artifact, and worker views backed by the coordinator's bounded projections.
+1. Add authenticated remote attachment transfer and remote model/goal controls with explicit bounded contracts.
+2. Add combined Mini App task detail, attention, review-packet, artifact, and worker actions backed by the coordinator's bounded projections.
 3. Add fleet-wide staged rollout coordination, compatibility gates, and safe rollback finalization.
 
 Full IDE behavior, arbitrary terminal/file-manager access, autonomous merge/push/deploy, public multi-tenant hosting, and blind replay of side-effecting work are out of scope.

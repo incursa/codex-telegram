@@ -146,6 +146,10 @@ For a selected remote task, `/send` and Plan mode use an authenticated coordinat
 
 The worker's existing realtime event seam forwards bounded timeline entries for the registered thread to `/api/coordinator/v1/worker-events` using the same exact bearer-token boundary. The coordinator accepts events only from a registered remote worker, republishes them through the normal Telegram output relay, and updates the matching supervision run on terminal events. Callback registrations are intentionally in-memory and must be re-established by a new accepted send after a worker restart. Remote steering and stop/kill use a separate authenticated `/api/worker/v1/sessions/control` contract with the same task/worker/CommandId checks; stop and kill are accepted during drain when the worker remains ready. Attachments, model/goal controls, and review/file actions are not implied by this slice.
 
+## R3.9 remote workspace lifecycle
+
+Remote `/task status`, `/task release <taskId> confirm`, and `/task discard <taskId> confirm` use `/api/worker/v1/tasks/workspace`. The worker validates the exact owner, TaskId, WorkerId, LeaseId, and Codex thread before reading or releasing its local task workspace. A live worker-owned session blocks release until it is stopped. The worker releases its local workspace and lease, then returns only bounded state, branch, development port, database namespace, and outcome evidence. Worktree and repository paths never cross the coordinator boundary; the coordinator clears its local selection only after a successful release response.
+
 ## Later dependency sequence
 
 1. Complete remote session/control relay as separately authorized operations, including attachments, model/goal controls, and task status/release where worker-owned.
