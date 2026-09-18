@@ -103,6 +103,13 @@ internal interface ITelegramBotMessageSender
     Task ReactToMessageAsync(TelegramMessageReaction reaction, CancellationToken cancellationToken);
 
     Task SendTypingActionAsync(TelegramConversationScope conversation, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Best-effort deletion for a sensitive user message. Implementations should never log the
+    /// message body; test doubles may use the default no-op behavior.
+    /// </summary>
+    Task<bool> TryDeleteMessageAsync(long chatId, int messageId, CancellationToken cancellationToken)
+        => Task.FromResult(false);
 }
 
 internal interface ITelegramCodexBotUpdateHandler
@@ -191,6 +198,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
     private readonly ITelegramOutputModeState _outputModeState;
     private readonly ITelegramForumTopicService _topicService;
     private readonly IAudioTranscriptionService _audioTranscriptionService;
+    private readonly IOpenAiCredentialSetupService _openAiCredentialSetup;
     private readonly IOutboundTelegramQueue _outboundQueue;
     private readonly ITelegramAttachmentStore _attachmentStore;
     private readonly ITelegramInputBundleStore _inputBundleStore;
@@ -265,7 +273,8 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         CodexRemoteSessionRelay? remoteSessionRelay = null,
         CodexRemoteSessionControlRelay? remoteSessionControlRelay = null,
         CodexRemoteTaskWorkspaceRelay? remoteTaskWorkspaceRelay = null,
-        CodexRemoteSessionSettingsRelay? remoteSessionSettingsRelay = null)
+        CodexRemoteSessionSettingsRelay? remoteSessionSettingsRelay = null,
+        IOpenAiCredentialSetupService? openAiCredentialSetup = null)
     {
         _parser = parser;
         _chunker = chunker;
@@ -284,6 +293,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         _outputModeState = outputModeState;
         _topicService = topicService;
         _audioTranscriptionService = audioTranscriptionService;
+        _openAiCredentialSetup = openAiCredentialSetup ?? NullOpenAiCredentialSetupService.Instance;
         _outboundQueue = outboundQueue;
         _attachmentStore = attachmentStore;
         _inputBundleStore = inputBundleStore;
@@ -507,6 +517,9 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
                 case "diag":
                 case "diagnostics":
                     await HandleDoctorAsync(message, sender, cancellationToken).ConfigureAwait(false);
+                    break;
+                case "setup":
+                    await HandleSetupAsync(message, command.Arguments, sender, cancellationToken).ConfigureAwait(false);
                     break;
                 case "debug":
                     await HandleDebugAsync(message, command.Arguments, sender, cancellationToken).ConfigureAwait(false);
@@ -2005,6 +2018,51 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         }
     }
 
+    private async Task HandleSetupAsync(
+        TelegramInboundMessage message,
+        string arguments,
+        ITelegramBotMessageSender sender,
+        CancellationToken cancellationToken)
+    {
+        if (!IsPrivateChat(message))
+        {
+            await ReplyAsync(
+                sender,
+                message,
+                "Credential setup is only available in a private chat. I will never accept an OpenAI key in a group or forum topic.",
+                null,
+                cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        string normalized = arguments.Trim().ToLowerInvariant();
+        if (normalized is "cancel" or "clear")
+        {
+            _openAiCredentialSetup.Cancel(message.UserId, message.ChatId);
+            await ReplyAsync(sender, message, "Telegram setup cancelled.", null, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        if (normalized is not "openai-key" and not "openai" and not "voice")
+        {
+            await ReplyAsync(
+                sender,
+                message,
+                "Usage: /setup openai-key\n\nI will then accept one key message in this private chat, delete that message, and save the key locally. Use /setup cancel to cancel.",
+                null,
+                cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        _openAiCredentialSetup.Begin(message.UserId, message.ChatId);
+        await ReplyAsync(
+            sender,
+            message,
+            "Send your OpenAI API key as the next message in this private chat. I will delete the key message immediately, keep the key only in the local settings file, and never send it to Codex. Use /setup cancel to cancel.",
+            null,
+            cancellationToken).ConfigureAwait(false);
+    }
+
     private async Task HandleAudioMessageAsync(TelegramInboundMessage message, ITelegramBotMessageSender sender, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(message.AudioFilePath))
@@ -2031,10 +2089,42 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
                 }),
             cancellationToken).ConfigureAwait(false);
 
+        int? progressMessageId = await sender.SendTextMessageAndGetIdAsync(
+            message.ConversationScope,
+            BuildTranscriptionProgressText(0),
+            null,
+            cancellationToken,
+            new TelegramDebugMessageContext("telegram.voice.transcription", traceId)).ConfigureAwait(false);
+
         string transcript;
         try
         {
-            transcript = await _audioTranscriptionService.TranscribeAsync(message.AudioFilePath, cancellationToken).ConfigureAwait(false);
+            Task<string> transcriptionTask = _audioTranscriptionService.TranscribeAsync(message.AudioFilePath, cancellationToken);
+            int progressFrame = 0;
+            while (!transcriptionTask.IsCompleted)
+            {
+                Task completedTask = await Task.WhenAny(
+                    transcriptionTask,
+                    Task.Delay(TimeSpan.FromSeconds(2), cancellationToken)).ConfigureAwait(false);
+                if (ReferenceEquals(completedTask, transcriptionTask))
+                {
+                    break;
+                }
+
+                progressFrame++;
+                if (progressMessageId is int liveMessageId)
+                {
+                    await sender.TryEditTextMessageAsync(
+                        message.ConversationScope,
+                        liveMessageId,
+                        BuildTranscriptionProgressText(progressFrame),
+                        null,
+                        cancellationToken,
+                        new TelegramDebugMessageContext("telegram.voice.transcription", traceId)).ConfigureAwait(false);
+                }
+            }
+
+            transcript = await transcriptionTask.ConfigureAwait(false);
             await _traceStore.RecordAsync(
                 new TelegramDebugTraceEvent(
                     traceId,
@@ -2064,7 +2154,19 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
                     Error: exception.Message),
                 cancellationToken).ConfigureAwait(false);
             _logger.LogError(exception, "Audio transcription failed for Telegram user {UserId} in chat {ChatId}.", message.UserId, message.ChatId);
-            await ReplyAsync(sender, message, $"Audio transcription failed: {exception.Message}", null, cancellationToken).ConfigureAwait(false);
+            bool editedFailure = progressMessageId is int failedMessageId
+                && await sender.TryEditTextMessageAsync(
+                    message.ConversationScope,
+                    failedMessageId,
+                    $"🎙️ Audio transcription failed: {exception.Message}",
+                    null,
+                    cancellationToken,
+                    new TelegramDebugMessageContext("telegram.voice.transcription", traceId)).ConfigureAwait(false);
+            if (!editedFailure)
+            {
+                await ReplyAsync(sender, message, $"Audio transcription failed: {exception.Message}", null, cancellationToken).ConfigureAwait(false);
+            }
+
             return;
         }
         finally
@@ -2074,8 +2176,33 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
 
         if (string.IsNullOrWhiteSpace(transcript))
         {
-            await ReplyAsync(sender, message, "I couldn't transcribe that audio.", null, cancellationToken).ConfigureAwait(false);
+            bool editedEmpty = progressMessageId is int emptyMessageId
+                && await sender.TryEditTextMessageAsync(
+                    message.ConversationScope,
+                    emptyMessageId,
+                    "🎙️ I couldn't transcribe that audio.",
+                    null,
+                    cancellationToken,
+                    new TelegramDebugMessageContext("telegram.voice.transcription", traceId)).ConfigureAwait(false);
+            if (!editedEmpty)
+            {
+                await ReplyAsync(sender, message, "I couldn't transcribe that audio.", null, cancellationToken).ConfigureAwait(false);
+            }
+
             return;
+        }
+
+        bool editedCompleted = progressMessageId is int completedMessageId
+            && await sender.TryEditTextMessageAsync(
+                message.ConversationScope,
+                completedMessageId,
+                "🎙️ Transcription complete.",
+                null,
+                cancellationToken,
+                new TelegramDebugMessageContext("telegram.voice.transcription", traceId)).ConfigureAwait(false);
+        if (!editedCompleted)
+        {
+            await ReplyAsync(sender, message, "Here's what I transcribed:", null, cancellationToken).ConfigureAwait(false);
         }
 
         TelegramInboundMessage transcriptMessage = message with
@@ -2090,13 +2217,28 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             return;
         }
 
-        await ReplyAsync(sender, message, $"Here's what I transcribed:{Environment.NewLine}{Environment.NewLine}{transcript}", null, cancellationToken).ConfigureAwait(false);
+        if (!editedCompleted)
+        {
+            await ReplyAsync(sender, message, transcript, null, cancellationToken).ConfigureAwait(false);
+        }
+
         if (await _planInputCoordinator.TryAnswerPendingAsync(message.ConversationScope, transcript, cancellationToken).ConfigureAwait(false))
         {
             return;
         }
 
         await SendToActiveSessionAsync(transcriptMessage, transcript, sender, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static string BuildTranscriptionProgressText(int frame)
+    {
+        string indicator = (frame % 3) switch
+        {
+            0 => "·",
+            1 => "··",
+            _ => "···",
+        };
+        return $"🎙️ Transcribing voice message {indicator}";
     }
 
     private async Task<bool> HasOpenInputBundleAsync(TelegramInboundMessage message, CancellationToken cancellationToken)
@@ -5787,6 +5929,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             $"/whoami - {TelegramCommandCatalog.GetDescription("whoami")}",
             $"/version - {TelegramCommandCatalog.GetDescription("version")}",
             $"/trust - {TelegramCommandCatalog.GetDescription("trust")}",
+            $"/setup openai-key - configure voice transcription in this private chat",
         ];
 
         if (IsRepositoryMode)

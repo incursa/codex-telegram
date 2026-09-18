@@ -26,6 +26,7 @@ internal sealed class TelegramCodexBotHostedService : BackgroundService
     private readonly TelegramBotOptions _options;
     private readonly TelegramInputOptions _inputOptions;
     private readonly ILogger<TelegramCodexBotHostedService> _logger;
+    private readonly IOpenAiCredentialSetupService _openAiCredentialSetup;
     private readonly string _tempRoot;
     private readonly ConcurrentDictionary<TelegramMediaGroupKey, PendingTelegramMediaGroup> _pendingMediaGroups = new();
 
@@ -38,7 +39,8 @@ internal sealed class TelegramCodexBotHostedService : BackgroundService
         IOptions<TelegramBotOptions> options,
         IOptions<TelegramInputOptions> inputOptions,
         ILogger<TelegramCodexBotHostedService> logger,
-        IOptions<CodexTelegramOptions>? codexOptions = null)
+        IOptions<CodexTelegramOptions>? codexOptions = null,
+        IOpenAiCredentialSetupService? openAiCredentialSetup = null)
     {
         _handler = handler;
         _sender = sender;
@@ -48,6 +50,7 @@ internal sealed class TelegramCodexBotHostedService : BackgroundService
         _options = options.Value;
         _inputOptions = inputOptions.Value;
         _logger = logger;
+        _openAiCredentialSetup = openAiCredentialSetup ?? NullOpenAiCredentialSetupService.Instance;
         _tempRoot = codexOptions is null
             ? Path.Combine(Path.GetTempPath(), "codex-telegram")
             : CodexTelegramDataRoot.GetTempRoot(codexOptions.Value);
@@ -287,6 +290,21 @@ internal sealed class TelegramCodexBotHostedService : BackgroundService
             }
 
             string? text = message.Text ?? message.Caption;
+            if (text is not null
+                && await _openAiCredentialSetup.TryHandlePendingMessageAsync(
+                    GetSenderId(message),
+                    message.Chat.Id,
+                    message.Chat.Type.ToString(),
+                    message.MessageId,
+                    text,
+                    sender,
+                    cancellationToken).ConfigureAwait(false))
+            {
+                // Sensitive setup messages are deleted and handled before tracing, attachment
+                // persistence, reply-context capture, or normal Codex routing.
+                return;
+            }
+
             IReadOnlyList<TelegramAttachmentDescriptor>? attachments = null;
             AttachmentHandlingDecision attachmentDecision = await ResolveAttachmentHandlingAsync(message, sender, cancellationToken).ConfigureAwait(false);
             if (attachmentDecision is AttachmentHandlingDecision.Reject)

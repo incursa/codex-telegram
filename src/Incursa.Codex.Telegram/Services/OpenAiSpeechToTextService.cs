@@ -37,7 +37,8 @@ internal sealed class OpenAiSpeechToTextService : IAudioTranscriptionService
     };
 
     private readonly HttpClient _httpClient;
-    private readonly OpenAiSpeechToTextOptions _options;
+    private readonly OpenAiSpeechToTextOptions _configuredOptions;
+    private readonly LocalSettingsStore? _localSettingsStore;
     private readonly ILogger<OpenAiSpeechToTextService> _logger;
     private readonly string _tempRoot;
 
@@ -45,13 +46,15 @@ internal sealed class OpenAiSpeechToTextService : IAudioTranscriptionService
         HttpClient httpClient,
         IOptions<OpenAiSpeechToTextOptions> options,
         ILogger<OpenAiSpeechToTextService> logger,
-        IOptions<CodexTelegramOptions>? codexOptions = null)
+        IOptions<CodexTelegramOptions>? codexOptions = null,
+        LocalSettingsStore? localSettingsStore = null)
     {
         _httpClient = httpClient;
         // This dedicated client is governed by RequestTimeoutSeconds below. Leaving the
         // default HttpClient timeout in place would cancel long transcriptions at 100 seconds.
         _httpClient.Timeout = Timeout.InfiniteTimeSpan;
-        _options = options.Value;
+        _configuredOptions = options.Value;
+        _localSettingsStore = localSettingsStore;
         _logger = logger;
         _tempRoot = codexOptions is null
             ? Path.Combine(Path.GetTempPath(), "codex-telegram")
@@ -66,8 +69,9 @@ internal sealed class OpenAiSpeechToTextService : IAudioTranscriptionService
             throw new FileNotFoundException("Audio file was not found.", sourcePath);
         }
 
-        string apiKey = RequireApiKey();
-        string model = RequireModel();
+        OpenAiSpeechToTextOptions options = GetRuntimeOptions();
+        string apiKey = RequireApiKey(options);
+        string model = RequireModel(options);
         EnsureSourceAudioFileIsUsable(sourcePath);
 
         string preparedPath = sourcePath;
@@ -77,7 +81,7 @@ internal sealed class OpenAiSpeechToTextService : IAudioTranscriptionService
         {
             if (!IsDirectUploadSupported(sourcePath))
             {
-                tempTranscodedPath = await TranscodeToSupportedFormatAsync(sourcePath, cancellationToken).ConfigureAwait(false);
+                tempTranscodedPath = await TranscodeToSupportedFormatAsync(sourcePath, options, cancellationToken).ConfigureAwait(false);
                 preparedPath = tempTranscodedPath;
             }
 
@@ -89,11 +93,11 @@ internal sealed class OpenAiSpeechToTextService : IAudioTranscriptionService
             fileContent.Headers.ContentType = new MediaTypeHeaderValue(GetContentType(preparedPath));
             form.Add(fileContent, "file", Path.GetFileName(preparedPath));
 
-            using HttpRequestMessage request = new(HttpMethod.Post, BuildEndpoint());
+            using HttpRequestMessage request = new(HttpMethod.Post, BuildEndpoint(options));
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
             request.Content = form;
 
-            int requestTimeoutSeconds = GetRequestTimeoutSeconds();
+            int requestTimeoutSeconds = GetRequestTimeoutSeconds(options);
             using CancellationTokenSource requestTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             requestTimeout.CancelAfter(TimeSpan.FromSeconds(requestTimeoutSeconds));
             try
@@ -131,37 +135,63 @@ internal sealed class OpenAiSpeechToTextService : IAudioTranscriptionService
         }
     }
 
-    private Uri BuildEndpoint()
+    private OpenAiSpeechToTextOptions GetRuntimeOptions()
     {
-        string baseUrl = string.IsNullOrWhiteSpace(_options.BaseUrl)
+        if (_localSettingsStore is null)
+        {
+            return _configuredOptions;
+        }
+
+        try
+        {
+            string? localApiKey = LocalSettingsStore.Load(_localSettingsStore.FilePath).GetOpenAiApiKeyForRuntime();
+            return new OpenAiSpeechToTextOptions
+            {
+                ApiKey = localApiKey ?? _configuredOptions.ApiKey,
+                Model = _configuredOptions.Model,
+                BaseUrl = _configuredOptions.BaseUrl,
+                FfmpegPath = _configuredOptions.FfmpegPath,
+                RequestTimeoutSeconds = _configuredOptions.RequestTimeoutSeconds,
+            };
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException)
+        {
+            _logger.LogWarning(exception, "Could not refresh local OpenAI transcription settings; using startup configuration.");
+            return _configuredOptions;
+        }
+    }
+
+    private static Uri BuildEndpoint(OpenAiSpeechToTextOptions options)
+    {
+        string baseUrl = string.IsNullOrWhiteSpace(options.BaseUrl)
             ? "https://api.openai.com/v1/"
-            : _options.BaseUrl.TrimEnd('/') + "/";
+            : options.BaseUrl.TrimEnd('/') + "/";
         return new Uri(new Uri(baseUrl, UriKind.Absolute), "audio/transcriptions");
     }
 
-    private string RequireApiKey()
+    private static string RequireApiKey(OpenAiSpeechToTextOptions options)
     {
-        if (string.IsNullOrWhiteSpace(_options.ApiKey))
+        if (string.IsNullOrWhiteSpace(options.ApiKey))
         {
             throw new InvalidOperationException("OpenAI:ApiKey must be configured to transcribe Telegram audio.");
         }
 
-        return _options.ApiKey.Trim();
+        return options.ApiKey.Trim();
     }
 
-    private string RequireModel()
+    private static string RequireModel(OpenAiSpeechToTextOptions options)
     {
-        if (string.IsNullOrWhiteSpace(_options.Model))
+        if (string.IsNullOrWhiteSpace(options.Model))
         {
             return "whisper-1";
         }
 
-        return _options.Model.Trim();
+        return options.Model.Trim();
     }
 
-    private int GetRequestTimeoutSeconds()
-        => _options.RequestTimeoutSeconds > 0
-            ? _options.RequestTimeoutSeconds
+    private static int GetRequestTimeoutSeconds(OpenAiSpeechToTextOptions options)
+        => options.RequestTimeoutSeconds > 0
+            ? options.RequestTimeoutSeconds
             : OpenAiSpeechToTextDefaults.RequestTimeoutSeconds;
 
     private static string FormatDuration(int seconds)
@@ -188,13 +218,16 @@ internal sealed class OpenAiSpeechToTextService : IAudioTranscriptionService
         EnsureWithinOpenAiLimit(filePath);
     }
 
-    private async Task<string> TranscodeToSupportedFormatAsync(string inputFilePath, CancellationToken cancellationToken)
+    private async Task<string> TranscodeToSupportedFormatAsync(
+        string inputFilePath,
+        OpenAiSpeechToTextOptions options,
+        CancellationToken cancellationToken)
     {
         string tempDirectory = Path.Combine(_tempRoot, "telegram-audio");
         Directory.CreateDirectory(tempDirectory);
         string outputFilePath = Path.Combine(tempDirectory, $"{Guid.NewGuid():n}.m4a");
 
-        string ffmpegPath = string.IsNullOrWhiteSpace(_options.FfmpegPath) ? "ffmpeg" : _options.FfmpegPath.Trim();
+        string ffmpegPath = string.IsNullOrWhiteSpace(options.FfmpegPath) ? "ffmpeg" : options.FfmpegPath.Trim();
         ProcessStartInfo startInfo = new()
         {
             FileName = ffmpegPath,

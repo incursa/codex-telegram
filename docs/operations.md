@@ -120,7 +120,7 @@ Transient Telegram audio, downloaded attachments, and outbound media use an inst
 3. Restart the process.
 4. Send `/whoami` from an allowed user to confirm the bot is responding.
 
-If an OpenAI key is rotated, update `OpenAI:ApiKey` or `OPENAI_API_KEY` and restart before testing voice transcription.
+If an OpenAI key is rotated, update `OpenAI:ApiKey` or `OPENAI_API_KEY` and restart before testing voice transcription, or use `/setup openai-key` from an allowlisted private chat. The Telegram setup path saves the key locally and the next transcription request re-reads that local credential, so it does not require a process restart.
 
 Voice transcription requests use `OpenAI:RequestTimeoutSeconds` (900 seconds by default, bounded to one hour). Increase it when a permitted long audio note needs more processing time; the default Telegram audio limit remains 600 seconds (`TelegramBot:MaxAudioDurationSeconds`).
 

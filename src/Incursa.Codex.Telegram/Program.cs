@@ -80,6 +80,7 @@ builder.Configuration.AddUserSecrets<Program>(optional: true);
 builder.Configuration.AddEnvironmentVariables(prefix: "CODEX_TELEGRAM_");
 builder.Configuration.AddCommandLine(commandLine.ConfigurationArgs);
 builder.WebHost.UseUrls(builder.Configuration["TelegramMiniApp:ListenUrl"] ?? "http://127.0.0.1:5287");
+builder.Services.AddSingleton(_ => LocalSettingsStore.Load(localSettingsPath));
 
 builder.Services.Configure<HostOptions>(options =>
 {
@@ -357,6 +358,7 @@ builder.Services.AddSingleton<ITelegramOutputModeState, TelegramOutputModeState>
 builder.Services.AddSingleton<ITelegramForumTopicService, TelegramForumTopicService>();
 builder.Services.AddSingleton<ITelegramMessageContextStore, TelegramMessageContextStore>();
 builder.Services.AddSingleton<ITelegramBotMessageSender, TelegramBotClientMessageSender>();
+builder.Services.AddSingleton<IOpenAiCredentialSetupService, OpenAiCredentialSetupService>();
 builder.Services.AddSingleton<IOutboundTelegramMessageSender>(sp => (TelegramBotClientMessageSender)sp.GetRequiredService<ITelegramBotMessageSender>());
 builder.Services.AddSingleton<ITelegramAttachmentStore, TelegramAttachmentStore>();
 builder.Services.AddSingleton<ITelegramInputBundleStore, TelegramInputBundleStore>();

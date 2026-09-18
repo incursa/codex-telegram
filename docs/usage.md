@@ -219,7 +219,7 @@ Queueing is per session and per Telegram conversation. A trusted group root and 
 
 ## Attachments And Voice
 
-Images and documents can be sent with a prompt. Voice notes are transcribed before they are sent to Codex; Codex receives the transcript, not raw Telegram audio.
+Images and documents can be sent with a prompt. Voice notes are transcribed before they are sent to Codex; Codex receives the transcript, not raw Telegram audio. Each voice note starts one editable live card that pulses while transcription is running and settles when the request completes.
 
 By default, the bot captures text, voice transcripts, images, and documents into an input bundle before starting Codex. Each new item resets the bundle's idle timer. The bundle automatically sends or queues after 25 seconds with no additional input, so a forgotten Send tap does not leave the transcript stranded. Use the buttons when you want to send, queue, steer, clear, or cancel earlier.
 
@@ -236,6 +236,8 @@ Voice requirements:
 3. `ffmpeg` must be available only when transcoding is needed. Telegram voice notes commonly need it because they often arrive as OGG/OPUS.
 4. Audio must fit the configured duration limits and OpenAI upload limits.
 5. The default maximum audio duration is 10 minutes, and the default OpenAI transcription request timeout is 15 minutes. Configure `TelegramBot:MaxAudioDurationSeconds` and `OpenAI:RequestTimeoutSeconds` when your operating conditions need different bounded limits.
+
+For an allowlisted administrator using a private chat, `/setup openai-key` starts a one-message setup flow. The bot deletes the next key message before saving it to the local settings file and excludes it from normal inbound tracing and Codex routing. Use `/setup cancel` to cancel. This convenience path is private-chat-only and deletion is best-effort; Telegram clients may already have displayed a notification preview.
 
 If `ffmpeg` is missing when conversion is needed, the bot replies with setup guidance and does not send the audio message to Codex.
 

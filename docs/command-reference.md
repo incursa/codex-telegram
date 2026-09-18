@@ -20,6 +20,10 @@ Use [README.md](../README.md) for first setup and [usage.md](usage.md) for day-t
 8. Voice notes are transcribed first, then either captured into an input bundle or sent to the active session according to `TelegramInput:DefaultCaptureMode`.
 9. Groups and forum topics require an allowed user plus either `AllowedChatIds` or `/trust` from an allowed user in that chat.
 
+## Private setup
+
+`/setup openai-key` starts a private-chat-only one-message flow for configuring the local OpenAI transcription key. The bot deletes the next key message before saving it, excludes it from normal inbound tracing and Codex routing, and applies it to the next transcription request without a restart. Use `/setup cancel` to cancel. Deletion is best-effort, so do not use this convenience path when Telegram message exposure is unacceptable.
+
 ## Workspace modes
 
 `CodexTelegram:Mode=GeneralPurpose` keeps the project catalog and `/projects`/`/project` selectors. `CodexTelegram:Mode=Repository` binds new sessions to `CodexTelegram:RepositoryRoot`, identifies the bot with `RepositoryDisplayLabel`, and removes project switching from the common menu. In repository mode use `/home` to see the bound repository and `/repo` for a concise branch, working-tree, and guidance-file summary.

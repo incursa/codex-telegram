@@ -1,5 +1,6 @@
 using System.Globalization;
 using Incursa.OpenAI.Codex;
+using Incursa.Codex.Telegram.Configuration;
 using Incursa.Codex.Telegram.Models;
 using Incursa.Codex.Telegram.Options;
 using Incursa.Codex.Telegram.Services;
@@ -512,7 +513,7 @@ public sealed class TelegramCommandHandlerTests
             CancellationToken.None);
 
         Assert.Equal("transcribed text", Assert.Single(harness.SessionManager.SendRequests));
-        Assert.Contains("Here's what I transcribed:", Assert.Single(harness.Sender.Sent).Text);
+        Assert.Contains("Transcription complete", Assert.Single(harness.Sender.Edited).Text);
     }
 
     [Fact]
@@ -808,7 +809,7 @@ public sealed class TelegramCommandHandlerTests
             harness.Sender,
             CancellationToken.None);
 
-        SentTelegramMessage card = Assert.Single(harness.Sender.Sent);
+        SentTelegramMessage card = Assert.Single(harness.Sender.Sent, sent => sent.Text.Contains("Input ready", StringComparison.Ordinal));
         Assert.Contains("Input ready", card.Text);
         Assert.Contains("transcribed bundle text", card.Text);
         Assert.Equal(
@@ -1338,17 +1339,17 @@ public sealed class TelegramCommandHandlerTests
             harness.Sender,
             CancellationToken.None);
 
-        SentTelegramMessage sent = Assert.Single(harness.Sender.Sent);
-        Assert.Contains("/projects", sent.Text);
-        Assert.Contains("/sessions", sent.Text);
-        Assert.Contains("/model", sent.Text);
-        Assert.Contains("/version", sent.Text);
-        Assert.Contains("/queue", sent.Text);
-        Assert.Contains("/debug", sent.Text);
-        Assert.Contains("/output", sent.Text);
-        Assert.Contains("/turn", sent.Text);
-        Assert.Contains("/outbound", sent.Text);
-        Assert.Contains("configured OpenAI transcription model", sent.Text);
+        Assert.Contains(harness.Sender.Sent, sent => sent.Text.Contains("/projects", StringComparison.Ordinal));
+        Assert.Contains(harness.Sender.Sent, sent => sent.Text.Contains("/sessions", StringComparison.Ordinal));
+        Assert.Contains(harness.Sender.Sent, sent => sent.Text.Contains("/model", StringComparison.Ordinal));
+        Assert.Contains(harness.Sender.Sent, sent => sent.Text.Contains("/version", StringComparison.Ordinal));
+        Assert.Contains(harness.Sender.Sent, sent => sent.Text.Contains("/queue", StringComparison.Ordinal));
+        Assert.Contains(harness.Sender.Sent, sent => sent.Text.Contains("/debug", StringComparison.Ordinal));
+        Assert.Contains(harness.Sender.Sent, sent => sent.Text.Contains("/output", StringComparison.Ordinal));
+        Assert.Contains(harness.Sender.Sent, sent => sent.Text.Contains("/turn", StringComparison.Ordinal));
+        Assert.Contains(harness.Sender.Sent, sent => sent.Text.Contains("/outbound", StringComparison.Ordinal));
+        Assert.Contains(harness.Sender.Sent, sent => sent.Text.Contains("configured OpenAI transcription model", StringComparison.Ordinal));
+        SentTelegramMessage sent = Assert.Single(harness.Sender.Sent, message => message.Buttons is not null);
         Assert.Equal(["Sessions", "Projects", "Help"], FlattenButtonLabels(sent));
     }
 
@@ -1939,7 +1940,8 @@ public sealed class TelegramCommandHandlerTests
 
         Assert.False(File.Exists(audioPath));
         Assert.Equal("transcribed text", Assert.Single(harness.SessionManager.SendRequests));
-        Assert.Contains("Here's what I transcribed:", Assert.Single(harness.Sender.Sent).Text);
+        Assert.Contains("Transcribing voice message", Assert.Single(harness.Sender.Sent).Text);
+        Assert.Contains("Transcription complete", Assert.Single(harness.Sender.Edited).Text);
     }
 
     [Fact]
@@ -1973,8 +1975,9 @@ public sealed class TelegramCommandHandlerTests
         Assert.Equal("transcribed text", Assert.Single(harness.SessionManager.SendRequests));
         Assert.Collection(
             harness.Sender.Sent,
-            sent => Assert.Contains("Here's what I transcribed:", sent.Text),
+            sent => Assert.Contains("Transcribing voice message", sent.Text),
             sent => Assert.Contains("could not be resumed", sent.Text));
+        Assert.Contains("Transcription complete", Assert.Single(harness.Sender.Edited).Text);
         IReadOnlyList<CodexSupervisionRecoverySnapshot> recoveries =
             await harness.SupervisionLedger.ListRecoveryActionsAsync(1234, CancellationToken.None);
         Assert.Equal(2, recoveries.Count);
@@ -1997,7 +2000,8 @@ public sealed class TelegramCommandHandlerTests
             CancellationToken.None);
 
         Assert.False(File.Exists(failureAudioPath));
-        Assert.Contains("Audio transcription failed: speech unavailable", Assert.Single(failureHarness.Sender.Sent).Text);
+        Assert.Contains("Transcribing voice message", Assert.Single(failureHarness.Sender.Sent).Text);
+        Assert.Contains("Audio transcription failed: speech unavailable", Assert.Single(failureHarness.Sender.Edited).Text);
         Assert.Empty(failureHarness.SessionManager.SendRequests);
 
         using CommandHandlerHarness emptyHarness = CommandHandlerHarness.Create();
@@ -2011,8 +2015,60 @@ public sealed class TelegramCommandHandlerTests
             CancellationToken.None);
 
         Assert.False(File.Exists(emptyAudioPath));
-        Assert.Contains("couldn't transcribe", Assert.Single(emptyHarness.Sender.Sent).Text);
+        Assert.Contains("Transcribing voice message", Assert.Single(emptyHarness.Sender.Sent).Text);
+        Assert.Contains("couldn't transcribe", Assert.Single(emptyHarness.Sender.Edited).Text);
         Assert.Empty(emptyHarness.SessionManager.SendRequests);
+    }
+
+    [Fact]
+    public async Task HandleMessageAsync_AudioUsesOneLiveCardWhileTranscriptionIsRunning()
+    {
+        using CommandHandlerHarness harness = CommandHandlerHarness.Create();
+        string projectPath = harness.Temp.CreateDirectory("repo");
+        string audioPath = Path.Combine(harness.Temp.Path, "voice.ogg");
+        await File.WriteAllBytesAsync(audioPath, [1, 2, 3]);
+        TelegramConversationScope conversation = new(5555, null);
+        harness.ProjectCatalog.Projects.Add(new CodexProjectCatalogRecord
+        {
+            WorkingDirectory = projectPath,
+            AddedAt = DateTimeOffset.Parse("2026-05-04T00:00:00Z"),
+        });
+        await harness.StateStore.SetActiveProjectWorkingDirectoryAsync(conversation, projectPath, CancellationToken.None);
+        harness.AudioTranscription.Pending = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        Task handleTask = harness.Handler.HandleMessageAsync(
+            new TelegramInboundMessage(1234, conversation.ChatId, "private", null, AudioFilePath: audioPath),
+            harness.Sender,
+            CancellationToken.None);
+
+        await WaitUntilAsync(() => harness.Sender.Sent.Count == 1);
+        await Task.Delay(TimeSpan.FromSeconds(2.1));
+        Assert.Contains(harness.Sender.Edited, edited => edited.Text.Contains("Transcribing voice message", StringComparison.Ordinal));
+
+        harness.AudioTranscription.Pending!.SetResult("long-running transcript");
+        await handleTask;
+
+        Assert.Contains(harness.Sender.Edited, edited => edited.Text.Contains("Transcription complete", StringComparison.Ordinal));
+        Assert.Equal("long-running transcript", Assert.Single(harness.SessionManager.SendRequests));
+    }
+
+    [Fact]
+    public async Task OpenAiCredentialSetup_DeletesAndSavesOnlyPrivateChatKey()
+    {
+        using TemporaryDirectory temp = TemporaryDirectory.Create();
+        LocalSettingsStore settings = LocalSettingsStore.Load(Path.Combine(temp.Path, "appsettings.Local.json"));
+        OpenAiCredentialSetupService setup = new(settings, NullLogger<OpenAiCredentialSetupService>.Instance);
+        TestTelegramBotMessageSender sender = new() { DeleteSucceeds = true };
+        string apiKey = "test-key-that-is-never-logged-" + new string('x', 16);
+
+        setup.Begin(1234, 5555);
+        Assert.False(await setup.TryHandlePendingMessageAsync(1234, 5555, "supergroup", 42, apiKey, sender, CancellationToken.None));
+        Assert.Empty(sender.DeletedMessageIds);
+
+        Assert.True(await setup.TryHandlePendingMessageAsync(1234, 5555, "private", 42, apiKey, sender, CancellationToken.None));
+        Assert.Equal([42], sender.DeletedMessageIds);
+        Assert.Contains("configured", Assert.Single(sender.Sent).Text, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(apiKey, LocalSettingsStore.Load(settings.FilePath).GetOpenAiApiKeyForRuntime());
     }
 
     [Fact]
@@ -2829,11 +2885,9 @@ public sealed class TelegramCommandHandlerTests
             CancellationToken.None);
 
         Assert.Equal(["Opening menu.", "Opening menu.", "Opening menu."], harness.Sender.CallbackAnswers.Select(answer => answer.Text));
-        Assert.Collection(
-            harness.Sender.Sent,
-            sent => Assert.Contains("Demo session", sent.Text),
-            sent => Assert.Contains("Commands:", sent.Text),
-            sent => Assert.Equal("Unsupported navigation action.", sent.Text));
+        Assert.Contains(harness.Sender.Sent, sent => sent.Text.Contains("Demo session", StringComparison.Ordinal));
+        Assert.Contains(harness.Sender.Sent, sent => sent.Text.Contains("Commands:", StringComparison.Ordinal));
+        Assert.Equal("Unsupported navigation action.", harness.Sender.Sent[^1].Text);
     }
 
     [Fact]
@@ -3917,11 +3971,18 @@ public sealed class TelegramCommandHandlerTests
 
         public Exception? Exception { get; set; }
 
+        public TaskCompletionSource<string>? Pending { get; set; }
+
         public Task<string> TranscribeAsync(string audioFilePath, CancellationToken cancellationToken)
         {
             if (Exception is not null)
             {
                 throw Exception;
+            }
+
+            if (Pending is not null)
+            {
+                return Pending.Task;
             }
 
             return Task.FromResult(Transcript);
@@ -3950,6 +4011,10 @@ public sealed class TelegramCommandHandlerTests
         public List<CallbackAnswer> CallbackAnswers { get; } = [];
 
         public List<TelegramMessageReaction> Reactions { get; } = [];
+
+        public List<int> DeletedMessageIds { get; } = [];
+
+        public bool DeleteSucceeds { get; set; }
 
         public Task SendTextMessageAsync(
             TelegramConversationScope conversation,
@@ -4006,6 +4071,16 @@ public sealed class TelegramCommandHandlerTests
         {
             Reactions.Add(reaction);
             return Task.CompletedTask;
+        }
+
+        public Task<bool> TryDeleteMessageAsync(long chatId, int messageId, CancellationToken cancellationToken)
+        {
+            if (DeleteSucceeds)
+            {
+                DeletedMessageIds.Add(messageId);
+            }
+
+            return Task.FromResult(DeleteSucceeds);
         }
     }
 

@@ -279,6 +279,34 @@ internal sealed class TelegramBotClientMessageSender : ITelegramBotMessageSender
         TelegramDebugMessageContext? debugContext = null)
         => EditTextMessageAsync(conversation, messageId, text, buttons, cancellationToken, debugContext, TelegramTextFormat.PlainText);
 
+    public async Task<bool> TryDeleteMessageAsync(long chatId, int messageId, CancellationToken cancellationToken)
+    {
+        if (!_options.Enabled)
+        {
+            return false;
+        }
+
+        try
+        {
+            await _client.Value.DeleteMessageAsync(chatId, messageId, cancellationToken).ConfigureAwait(false);
+            _logger.LogDebug("Telegram message {MessageId} was deleted from chat {ChatId}.", messageId, chatId);
+            return true;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            _logger.LogWarning(
+                exception,
+                "Telegram could not delete message {MessageId} from chat {ChatId}; the sensitive setup value will not be saved.",
+                messageId,
+                chatId);
+            return false;
+        }
+    }
+
     public async Task<bool> TryEditTextMessageAsync(
         TelegramConversationScope conversation,
         int messageId,
@@ -1091,6 +1119,9 @@ internal interface ITelegramBotApiClient
         InlineKeyboardMarkup? replyMarkup,
         CancellationToken cancellationToken);
 
+    Task DeleteMessageAsync(long chatId, int messageId, CancellationToken cancellationToken)
+        => Task.CompletedTask;
+
     Task AnswerCallbackQueryAsync(string callbackQueryId, string? text, CancellationToken cancellationToken);
 
     Task SendChatActionAsync(long chatId, int? messageThreadId, TelegramChatActivity activity, CancellationToken cancellationToken);
@@ -1190,6 +1221,9 @@ internal sealed class TelegramBotApiClient : ITelegramBotApiClient, IFormattedTe
             TelegramTextFormatter.ToParseMode(textFormat),
             replyMarkup,
             cancellationToken: cancellationToken);
+
+    public Task DeleteMessageAsync(long chatId, int messageId, CancellationToken cancellationToken)
+        => _client.DeleteMessage(chatId, messageId, cancellationToken: cancellationToken);
 
     public Task AnswerCallbackQueryAsync(string callbackQueryId, string? text, CancellationToken cancellationToken)
         => _client.AnswerCallbackQuery(callbackQueryId, text, cancellationToken: cancellationToken);

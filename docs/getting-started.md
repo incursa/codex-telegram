@@ -16,6 +16,8 @@ The flow is:
 5. Start the bot in private chat first.
 6. Add group and forum-topic support only after the private flow works.
 
+If voice transcription was not configured in the CLI wizard, send `/setup openai-key` from the allowlisted private chat and follow the one-message prompt. The key message is deleted before local save; use `/setup cancel` to abort.
+
 After that first setup succeeds, use [usage.md](usage.md) for the normal day-to-day operator workflow.
 
 ## Choose A Workspace Mode

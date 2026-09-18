@@ -402,13 +402,15 @@ At this point you have a working private Telegram chat connected to a local Code
 
 ## Voice Notes
 
-Voice notes are optional. The bot downloads Telegram audio, transcribes it with OpenAI, shows the transcript, and sends only the transcribed text to the active Codex session. Codex does not receive raw Telegram audio.
+Voice notes are optional. The bot downloads Telegram audio, transcribes it with OpenAI, shows one editable live progress card, and sends only the transcribed text to the active Codex session. Codex does not receive raw Telegram audio.
 
 Voice note requirements:
 
 1. `OpenAI:ApiKey` or `OPENAI_API_KEY`.
 2. A transcription-capable `OpenAI:Model`.
 3. `ffmpeg` only when the downloaded audio is not in a format OpenAI accepts directly. Telegram voice notes commonly arrive as OGG/OPUS, so install `ffmpeg` or configure `OpenAI:FfmpegPath` for reliable voice-note support.
+
+After the bot is running, an allowlisted administrator can configure the local key from the private Telegram chat with `/setup openai-key`. The bot accepts the next key message, deletes that source message before saving the key to local settings, and never routes the key to Codex. Telegram deletion is best-effort and cannot undo a notification or a client that already received the message, so use the CLI or an environment/secret-store configuration when that exposure matters.
 
 The default maximum Telegram audio duration is 10 minutes (`TelegramBot:MaxAudioDurationSeconds: 600`). The OpenAI request waits up to 15 minutes by default (`OpenAI:RequestTimeoutSeconds: 900`), so a long note can finish even when transcription takes longer than the standard 100-second `HttpClient` timeout. Both settings can be changed within the application's safety bounds.
 
@@ -431,6 +433,7 @@ After a successful test, you should see the transcription in Telegram before the
 | `/whoami` | Show Telegram user, chat, and topic IDs for setup and troubleshooting. |
 | `/version` | Show the running app version. |
 | `/trust` | Trust the current group or forum chat for allowlisted users. |
+| `/setup openai-key` | Configure the local OpenAI transcription key from a private chat; the next key message is deleted before saving. |
 | `/projects` | List known local project directories. |
 | `/project add <path>` | Add and select a repository or workspace. |
 | `/project current` | Confirm the active project for this Telegram conversation. |

@@ -8,7 +8,7 @@ Incursa.Codex.Telegram runs local Codex work on the same machine as the bot proc
 - Keep `TelegramBot:AllowedChatIds` empty unless you intentionally want group or forum-topic access. Group and forum messages require both an allowed user and an allowed chat.
 - Keep `CodexTelegram:Workspace:WorkspaceRoots` narrow; project paths outside those roots are rejected.
 - Set explicit workspace roots and a default working directory before enabling polling. If these are omitted, the app falls back to the process current directory.
-- Store bot tokens and OpenAI API keys in user secrets, environment variables, or another secret store. Do not commit `appsettings.Local.json`.
+- Store bot tokens and OpenAI API keys in user secrets, environment variables, or another secret store. Do not commit `appsettings.Local.json`. For convenience, an allowlisted administrator may use `/setup openai-key` in a private Telegram chat; the bot deletes the next key message before saving it locally, but deletion cannot undo a notification or client that already received the message.
 - Review Codex sandbox and approval settings before using the bot on sensitive repositories.
 - Keep `TelegramMiniApp` disabled unless you intentionally need the companion surface. If enabled, expose it only through an operator-controlled HTTPS proxy or tunnel, keep `TelegramBot:AllowedUserIds` narrow, and do not treat `TelegramMiniApp:PublicUrl` as a secret.
 - Mini App API requests are authorized from Telegram's signed `initData`; the server validates the HMAC, freshness window, and allowlisted user ID. Client-side `initDataUnsafe` is not used as an authorization source.
@@ -18,7 +18,7 @@ Incursa.Codex.Telegram runs local Codex work on the same machine as the bot proc
 
 ## Voice Notes
 
-Voice-note transcription sends audio to OpenAI's transcription API using the configured `OpenAI:ApiKey`. The app deletes temporary Telegram audio and transcoded files after processing, but operators should still treat received audio as sensitive while the process is running.
+Voice-note transcription sends audio to OpenAI's transcription API using the configured `OpenAI:ApiKey`. The app deletes temporary Telegram audio and transcoded files after processing, but operators should still treat received audio as sensitive while the process is running. Telegram key setup is private-chat-only, requires the existing Telegram authorization boundary, deletes the source message before saving, and deliberately bypasses inbound text tracing, attachment persistence, and Codex routing. If deletion fails, the key is not saved.
 
 ## Reporting
 

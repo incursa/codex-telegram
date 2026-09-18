@@ -156,6 +156,13 @@ internal sealed class LocalSettingsStore
     public void SetOpenAiApiKey(string? value)
         => SetString(value, "OpenAI", "ApiKey");
 
+    /// <summary>
+    /// Gets the locally persisted OpenAI key for an in-process transcription request. Callers
+    /// must never include the returned value in logs, traces, exceptions, or user-facing text.
+    /// </summary>
+    internal string? GetOpenAiApiKeyForRuntime()
+        => GetString("OpenAI", "ApiKey");
+
     public void SetOpenAiModel(string? value)
         => SetString(value, "OpenAI", "Model");
 

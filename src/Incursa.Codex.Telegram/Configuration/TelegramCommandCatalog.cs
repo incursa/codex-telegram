@@ -23,6 +23,7 @@ internal static class TelegramCommandCatalog
         Definition("whoami", "Show Telegram user, chat, and topic IDs"),
         Definition("version", "Show the running app version", includeInPicker: false),
         Definition("trust", "Trust the current group or forum chat"),
+        Definition("setup", "Configure private local bot settings"),
         Definition("doctor", "Diagnose authorization, routing, project, session, and queue state"),
         Definition("projects", "List known local projects", mode: CodexTelegramMode.GeneralPurpose),
         Definition("project", "Select, add, or show the current project", mode: CodexTelegramMode.GeneralPurpose),
