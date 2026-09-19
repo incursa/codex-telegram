@@ -4,9 +4,48 @@ title: "Operations"
 
 # Operations
 
-This app is a standalone console process. It does not restart itself from Telegram. Use the terminal, scheduled task, service manager, or container/runtime supervisor that starts the process.
+This app is a standalone console process. It does not execute package-manager or service-manager commands from Telegram. Debian installs include a separate root-owned updater service; the bot writes a durable request and that service remains responsible for APT, restarting, health checks, and rollback.
 
 For normal project/session usage after the process is running, use [usage.md](usage.md).
+
+## Host Updates
+
+Host updates are disabled by default. Enable `CodexTelegram:HostUpdate:Enabled` only when an operator-owned updater is watching the configured request path. The bot never executes `apt`, `dpkg`, `systemctl`, a shell command, or an arbitrary path supplied through Telegram.
+
+The Telegram flow is:
+
+1. Wait for active Codex turns to finish, then run `/worker drain confirm` and wait for the worker to report zero active leases.
+2. Run `/update status` to inspect the current handoff state.
+3. Run `/update confirm` from the authorized private chat.
+4. The bot writes `codex-host-update-request.json` below the configured data root, or to `HostUpdate:RequestPath` when explicitly configured.
+5. The packaged `codex-telegram-updater` service consumes the request, downloads and verifies the same package that ordinary APT uses, caches the current `.deb` as the last-known-good package, applies the package transaction, restarts the service, checks `/health`, and writes the result to `codex-host-update-state.json`.
+6. A healthy restarted process sends the completion result back to the Telegram conversation stored in the request. `/update rollback confirm` uses the same handoff for an explicitly requested rollback.
+
+The Debian package contains the updater executable, `codex-telegram-updater.service`, and `codex-telegram-updater.path`. It also installs `/usr/bin/codex-telegram`, a wrapper that launches the setup menu with `/etc/codex-telegram/appsettings.Local.json`. The updater reads only the operator-installed APT configuration; requests cannot provide package URLs, shell text, service names, or installation paths. Portable/manual installs still need an operator-owned updater that implements this same contract; without one, `/update confirm` remains in `Requested` state and no files in the protected installation are changed.
+
+The request file uses this bounded shape. The external updater must treat `RequestId` as an idempotency key and must not accept package URLs, shell commands, or installation paths from the request:
+
+```json
+{
+  "schemaVersion": 1,
+  "requestId": "b1f2...",
+  "action": "Update",
+  "requestedAtUtc": "2026-09-18T18:00:00Z",
+  "requestedByUserId": 123456,
+  "conversationKey": "123456789:7",
+  "currentVersion": "1.0.56",
+  "targetVersion": "1.0.57",
+  "expectedSha256": ""
+}
+```
+
+The updater reports `Applying`, `Active`, `Failed`, `RollbackApplying`, `RollbackActive`, or `RollbackFailed` in the state file. It preserves the request identity and conversation fields, writes the state atomically, and sets `notificationPending` to `true` only after the restarted process has passed its health check. A failed update attempts to restore the cached last-known-good `.deb`; `/update rollback confirm` performs that rollback explicitly. The bot clears the notification flag after the Telegram completion message is delivered.
+
+For the public Debian package, keep the executable and published webroot in a stable package-owned installation path, and keep configuration, state, and rollback packages outside it. A recommended layout is `/usr/lib/codex-telegram/`, `/etc/codex-telegram/appsettings.Local.json`, `/var/lib/codex-telegram/`, and `/var/cache/codex-telegram/rollback/`. The service launches from the stable package-owned path, so an ordinary `apt update && apt upgrade` works without knowing about Telegram or a symlink. The Telegram updater uses the same APT package transaction, with a cached last-known-good `.deb` for explicit rollback.
+
+The package's maintainer scripts only create the service account and directories, install or reload systemd metadata, enable the updater path, and restart an already-running bot after a normal package upgrade. They do not invoke the Telegram updater or nest an APT transaction inside another APT transaction. This keeps a broken updater repairable through ordinary package management.
+
+Do not place package-managed files below an updater-owned `current` symlink. That would make the package manager and the updater compete over path ownership. A custom side-by-side release tree remains possible for a portable/manual install, but it is not the default contract for the public Debian package.
 
 ## Operating Modes And Two Instances
 

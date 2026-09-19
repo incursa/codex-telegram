@@ -12,7 +12,7 @@ internal sealed class CodexTelegramOptionsValidator : IValidateOptions<CodexTele
 {
     public ValidateOptionsResult Validate(string? name, CodexTelegramOptions options)
     {
-        IReadOnlyList<string> failures = [.. ValidateRepository(options), .. ValidateTaskWorkspace(options), .. ValidateWorker(options), .. ValidateRecipes(options), .. ValidateCoordinator(options), .. ValidateUpdates(options)];
+        IReadOnlyList<string> failures = [.. ValidateRepository(options), .. ValidateTaskWorkspace(options), .. ValidateWorker(options), .. ValidateRecipes(options), .. ValidateCoordinator(options), .. ValidateUpdates(options), .. ValidateHostUpdate(options)];
         return failures.Count == 0
             ? ValidateOptionsResult.Success
             : ValidateOptionsResult.Fail(failures);
@@ -147,6 +147,31 @@ internal sealed class CodexTelegramOptionsValidator : IValidateOptions<CodexTele
         return updates.RequiredCapabilities.Any(capability => !IsSafeRecipeToken(capability, 120))
             ? ["CodexTelegram:Updates:RequiredCapabilities must contain only safe IDs of at most 120 characters."]
             : [];
+    }
+
+    private static IReadOnlyList<string> ValidateHostUpdate(CodexTelegramOptions options)
+    {
+        CodexHostUpdateOptions hostUpdate = options.HostUpdate;
+        if (!hostUpdate.Enabled)
+        {
+            return [];
+        }
+
+        if (!string.IsNullOrWhiteSpace(hostUpdate.RequestPath)
+            && (hostUpdate.RequestPath.Trim().Length > 1_000 || hostUpdate.RequestPath.Any(char.IsControl)))
+        {
+            return ["CodexTelegram:HostUpdate:RequestPath must be at most 1000 characters and cannot contain control characters."];
+        }
+
+        if (!string.IsNullOrWhiteSpace(hostUpdate.TargetVersion)
+            && !IsSafeRecipeToken(hostUpdate.TargetVersion, 40))
+        {
+            return ["CodexTelegram:HostUpdate:TargetVersion must contain only safe version characters and be at most 40 characters."];
+        }
+
+        return string.IsNullOrWhiteSpace(hostUpdate.ExpectedSha256) || RegexLikeSha256(hostUpdate.ExpectedSha256)
+            ? []
+            : ["CodexTelegram:HostUpdate:ExpectedSha256 must be empty or a 64-character hexadecimal SHA-256 digest."];
     }
 
     private static bool RegexLikeSha256(string? value)

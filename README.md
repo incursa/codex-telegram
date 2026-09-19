@@ -68,6 +68,8 @@ The main folders and files are:
 6. `fuzz/corpus/`: checked-in Telegram fuzz seeds.
 7. `docs.site.json` and `.github/workflows/sync-docs.yml`: the docs mirror manifest and sync workflow.
 
+The Linux Debian package is built with `scripts/Build-DebianPackage.ps1`. It contains both the bot and the separate root-owned updater service; ordinary `apt upgrade` remains the independent recovery path if the updater ever needs repair.
+
 ## Download
 
 Download the latest release binary for your operating system:
@@ -453,6 +455,7 @@ After a successful test, you should see the transcription in Telegram before the
 | `/outbound` | Inspect delayed or batched Telegram output. |
 | `/stop` | Gracefully stop a session. |
 | `/restart confirm` | Show standalone-process restart guidance. |
+| `/update status` / `/update confirm` | Request or inspect an external host update. |
 | `/topic ...` | Manage forum-topic sessions in allowed supergroups. |
 
 For a fuller operator guide, see [docs/usage.md](docs/usage.md).

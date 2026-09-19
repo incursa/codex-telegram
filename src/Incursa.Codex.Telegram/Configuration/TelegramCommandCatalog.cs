@@ -32,6 +32,7 @@ internal static class TelegramCommandCatalog
         Definition("task", "Create or inspect an isolated task workspace"),
         Definition("pair", "Approve or revoke a read-only browser session"),
         Definition("worker", "Inspect or drain this Codex worker"),
+        Definition("update", "Request or inspect a host update", includeInPicker: false),
         Definition("resume", "Resume a Codex session"),
         Definition("sessions", "List active and managed sessions"),
         Definition("use", "Select an existing session"),

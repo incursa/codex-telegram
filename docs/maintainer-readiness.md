@@ -181,7 +181,7 @@ The `docs/` tree in this repository is the source of truth for documentation con
 
 ## Deployment And Operator Checks
 
-This service is deployed by placing the published binary and local settings on an operator-owned machine. It is not a self-updating daemon.
+This service is deployed either as a portable/manual installation or as the public Debian package. The primary process is not a self-updating daemon. Debian installs include a separate root-owned `codex-telegram-updater` service that consumes the bounded request written by Telegram; the primary process still never executes package-manager or service-manager commands.
 
 Operator checklist:
 
@@ -195,6 +195,8 @@ Operator checklist:
 8. Run a short private-chat prompt before enabling any group or forum workflow.
 
 For restarts, stop the process through the terminal or supervisor, start it again from the same working directory, then verify `/project current`, `/status`, and `/tail`.
+
+For Debian, host-update readiness includes the packaged updater executable, path watcher, stable package-owned installation path, rollback cache, service restart, and `/health` verification. Validate the complete package on a disposable host with a disposable bot token before enabling host updates on an operator instance. Portable/manual installs still require a separately managed updater or should leave `CodexTelegram:HostUpdate:Enabled` disabled.
 
 ## Troubleshooting
 

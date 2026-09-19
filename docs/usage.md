@@ -269,6 +269,8 @@ Do not infer live readiness from local output alone. A successful `/doctor` prov
 
 Stop the console process with Ctrl+C, or stop it through the service manager that owns it.
 
+If the optional host-update handoff is enabled, wait for active turns to finish, then use `/worker drain confirm`, `/update status`, and `/update confirm` instead of attempting to run package-manager commands through Telegram. The handoff keeps the package manager outside the bot process and reports completion only after the Debian updater restarts and health-checks the service. It remains disabled for portable/manual installs unless an equivalent operator-owned updater is installed.
+
 After restart:
 
 1. Start from the same working directory, or keep `appsettings.Local.json` beside the executable.

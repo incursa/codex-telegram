@@ -16,6 +16,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Incursa.Codex.Telegram\Incursa.Codex.Telegram.csproj" />
+    <ProjectReference Include="..\..\src\Incursa.Codex.Telegram.Updater\Incursa.Codex.Telegram.Updater.csproj" />
   </ItemGroup>
 
   <ItemGroup>

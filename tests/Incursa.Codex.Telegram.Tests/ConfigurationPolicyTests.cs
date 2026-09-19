@@ -73,6 +73,45 @@ public sealed class ConfigurationPolicyTests
     }
 
     [Fact]
+    public void HostUpdateDefaultsToDisabledAndAcceptsExternalUpdaterConfiguration()
+    {
+        Assert.False(new CodexTelegramOptions().HostUpdate.Enabled);
+
+        CodexTelegramOptions options = new()
+        {
+            HostUpdate = new CodexHostUpdateOptions
+            {
+                Enabled = true,
+                RequestPath = "/var/lib/codex-telegram/codex-host-update-request.json",
+                TargetVersion = "1.0.57",
+                ExpectedSha256 = new string('a', 64),
+            },
+        };
+
+        ValidateOptionsResult result = new CodexTelegramOptionsValidator().Validate(null, options);
+
+        Assert.True(result.Succeeded);
+    }
+
+    [Fact]
+    public void HostUpdateRejectsMalformedExpectedDigest()
+    {
+        CodexTelegramOptions options = new()
+        {
+            HostUpdate = new CodexHostUpdateOptions
+            {
+                Enabled = true,
+                ExpectedSha256 = "not-a-sha256",
+            },
+        };
+
+        ValidateOptionsResult result = new CodexTelegramOptionsValidator().Validate(null, options);
+
+        Assert.False(result.Succeeded);
+        Assert.Contains("ExpectedSha256", string.Join("; ", result.Failures ?? []), StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void InstanceIdPartitionsOnlyTheOptedInDefaultDataRoot()
     {
         string legacyRoot = CodexTelegramDataRoot.GetDefaultDataRoot();

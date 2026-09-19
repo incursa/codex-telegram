@@ -212,6 +212,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
     private readonly ICodexWorkerRegistry? _workerRegistry;
     private readonly ICodexTaskRecipeCatalog? _recipeCatalog;
     private readonly ICodexWorkerUpdateManager? _workerUpdateManager;
+    private readonly ICodexHostUpdateManager? _hostUpdateManager;
     private readonly CodexRemoteTaskProvisioningService? _remoteTaskProvisioner;
     private readonly CodexRemoteSessionRelay? _remoteSessionRelay;
     private readonly CodexRemoteSessionControlRelay? _remoteSessionControlRelay;
@@ -269,6 +270,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         ICodexWorkerRegistry? workerRegistry = null,
         ICodexTaskRecipeCatalog? recipeCatalog = null,
         ICodexWorkerUpdateManager? workerUpdateManager = null,
+        ICodexHostUpdateManager? hostUpdateManager = null,
         CodexRemoteTaskProvisioningService? remoteTaskProvisioner = null,
         CodexRemoteSessionRelay? remoteSessionRelay = null,
         CodexRemoteSessionControlRelay? remoteSessionControlRelay = null,
@@ -320,6 +322,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         _workerRegistry = workerRegistry;
         _recipeCatalog = recipeCatalog;
         _workerUpdateManager = workerUpdateManager;
+        _hostUpdateManager = hostUpdateManager;
         _remoteTaskProvisioner = remoteTaskProvisioner;
         _remoteSessionRelay = remoteSessionRelay;
         _remoteSessionControlRelay = remoteSessionControlRelay;
@@ -465,6 +468,9 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
                     break;
                 case "worker":
                     await HandleWorkerAsync(message, command.Arguments, sender, cancellationToken).ConfigureAwait(false);
+                    break;
+                case "update":
+                    await HandleHostUpdateAsync(message, command.Arguments, sender, cancellationToken).ConfigureAwait(false);
                     break;
                 case "use":
                 case "resume":
@@ -1386,6 +1392,88 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         await ReplyAsync(sender, message, FormatWorkerUpdate(result), null, cancellationToken).ConfigureAwait(false);
     }
 
+    private async Task HandleHostUpdateAsync(
+        TelegramInboundMessage message,
+        string arguments,
+        ITelegramBotMessageSender sender,
+        CancellationToken cancellationToken)
+    {
+        if (_hostUpdateManager is null)
+        {
+            await ReplyAsync(sender, message, "Host updates are not available in this host.", null, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        if (!IsPrivateChat(message))
+        {
+            await ReplyAsync(sender, message, "Host updates are available only from an authorized private chat.", null, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        string[] parts = SplitArguments(arguments, 2);
+        string operation = parts.FirstOrDefault()?.ToLowerInvariant() ?? "status";
+        if (operation is "status" or "check")
+        {
+            await ReplyAsync(sender, message, FormatHostUpdate(await _hostUpdateManager.GetStatusAsync(cancellationToken).ConfigureAwait(false)), null, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        if (_workerRegistry is null)
+        {
+            await ReplyAsync(sender, message, "Host updates require the local worker registry, which is not available in this host.", null, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        if (_turnCoordinator.HasActiveTurn)
+        {
+            await ReplyAsync(sender, message, "Host updates are unavailable while a Codex turn is active. Wait for it to finish, then drain the worker and retry.", null, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        CodexWorkerSnapshot worker = await _workerRegistry.GetSnapshotAsync(cancellationToken).ConfigureAwait(false);
+        if (worker.State != CodexWorkerState.Draining || worker.ActiveLeaseCount != 0)
+        {
+            await ReplyAsync(sender, message, "Drain the worker first with /worker drain confirm. Host updates require zero active task leases.", null, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        if (operation == "confirm")
+        {
+            if (parts.Length != 1)
+            {
+                await ReplyAsync(sender, message, "Usage: /update status, /update confirm, or /update rollback confirm", null, cancellationToken).ConfigureAwait(false);
+                return;
+            }
+
+            CodexHostUpdateSnapshot result = await _hostUpdateManager.RequestAsync(
+                CodexHostUpdateAction.Update,
+                message.ConversationScope,
+                message.UserId,
+                cancellationToken).ConfigureAwait(false);
+            await ReplyAsync(sender, message, FormatHostUpdate(result), null, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        if (operation == "rollback")
+        {
+            if (parts.Length != 2 || !parts[1].Equals("confirm", StringComparison.OrdinalIgnoreCase))
+            {
+                await ReplyAsync(sender, message, "Usage: /update status, /update confirm, or /update rollback confirm", null, cancellationToken).ConfigureAwait(false);
+                return;
+            }
+
+            CodexHostUpdateSnapshot result = await _hostUpdateManager.RequestAsync(
+                CodexHostUpdateAction.Rollback,
+                message.ConversationScope,
+                message.UserId,
+                cancellationToken).ConfigureAwait(false);
+            await ReplyAsync(sender, message, FormatHostUpdate(result), null, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        await ReplyAsync(sender, message, "Usage: /update status, /update confirm, or /update rollback confirm", null, cancellationToken).ConfigureAwait(false);
+    }
+
     private async Task HandleRecipeAsync(
         TelegramInboundMessage message,
         string arguments,
@@ -1459,6 +1547,19 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             $"Rollback package: {update.RollbackPackageName ?? "(none)"}",
             $"Outcome: {update.OutcomeCode ?? "(none)"}",
             "Staged packages are consumed by the external service installer after the worker is drained; this process never overwrites its protected installation.",
+        ]);
+
+    private static string FormatHostUpdate(CodexHostUpdateSnapshot update)
+        => string.Join(Environment.NewLine, [
+            $"Host updates: {(update.Enabled ? "enabled" : "disabled")}",
+            $"State: {update.State}",
+            $"Running version: {update.CurrentVersion}",
+            $"Target version: {update.TargetVersion ?? "(external updater selects the release)"}",
+            $"Request: {update.RequestId ?? "(none)"}",
+            $"Outcome: {update.OutcomeCode ?? "(none)"}",
+            update.State is CodexHostUpdateState.Requested or CodexHostUpdateState.RollbackRequested
+                ? "The request is waiting for the external updater; this process will not run apt or stop itself."
+                : "Use /update confirm only after /worker drain confirm reports zero active leases.",
         ]);
 
     private async Task HandleTaskCreateAsync(
@@ -5953,6 +6054,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             "/sessions all [count] - show recent Codex history",
             "/new [name] - create and select a Codex session in this conversation",
             "/task <new|remote|status|release|discard> ... - manage an isolated task workspace",
+            "/update status|confirm|rollback confirm - request or inspect an external host update",
             "/use <sessionId> - select the active session for this conversation",
             "/resume <sessionId> - resume a session in this conversation",
             "/send <text> - send text to the active session",

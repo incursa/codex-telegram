@@ -1,0 +1,10 @@
+[Unit]
+Description=Codex Telegram package updater
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/codex-telegram/codex-telegram-updater --config /etc/codex-telegram/updater.json --once
+TimeoutStartSec=45min
+PrivateTmp=true

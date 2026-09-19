@@ -1,0 +1,11 @@
+{
+  "packageName": "codex-telegram",
+  "serviceName": "codex-telegram.service",
+  "dataRoot": "/var/lib/codex-telegram",
+  "rollbackRoot": "/var/cache/codex-telegram/rollback",
+  "healthCheckUrl": "http://127.0.0.1:5287/health",
+  "healthCheckTimeoutSeconds": 120,
+  "healthCheckIntervalSeconds": 2,
+  "healthRequestTimeoutSeconds": 5,
+  "aptTimeoutMinutes": 30
+}

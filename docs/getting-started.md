@@ -88,6 +88,8 @@ The Telegram-authenticated Mini App also provides fleet rollout planning when wo
 
 Worker updates are staged separately from installation. Configure `CodexTelegram:Updates` only when the package path, target version, SHA-256, staging root, installer token, and required capabilities are known. Drain the worker, wait for its lease count to reach zero, then run `/worker update stage confirm` from the authorized private chat. The command verifies and stages the package plus a last-known-good rollback executable; it never replaces the running binary. The external service installer applies the staged package, verifies version and health, and POSTs the result to `/api/worker/v1/update/complete` using the installer token. Use `/worker update status` to inspect the bounded local evidence and `/worker update rollback confirm` to stage the captured rollback package after a failed health check.
 
+The primary host has a separate, disabled-by-default handoff at `CodexTelegram:HostUpdate`. Debian installs include the root-owned `codex-telegram-updater` service and enable the path watcher; portable/manual installs need an equivalent operator-owned updater. From the authorized private chat, wait for active turns to finish, run `/worker drain confirm`, wait for zero active leases, then use `/update status` and `/update confirm`. The bot records the request and later reports the updater's health or rollback result; it never runs APT, `dpkg`, `systemctl`, or shell commands itself. The helper uses the same package transaction as ordinary `apt upgrade`, so a normal terminal upgrade remains an independent recovery path. See [operations.md](operations.md#host-updates) for the request/state contract.
+
 ## Before You Start
 
 Have these ready before you touch the config:
@@ -359,7 +361,8 @@ Configuration behavior:
 18. `CodexTelegram:Workspace:WorkspaceRoots` are the directories users may add as projects.
 19. `CodexTelegram:Mode` accepts `GeneralPurpose` or `Repository`; repository mode requires `CodexTelegram:RepositoryRoot`.
 20. `CodexTelegram:InstanceId` is an optional instance label used to partition the default local state location. Use an explicit `DataRoot` when state separation matters.
-21. The Codex submenu will query live model names and effort choices when the configured executable is reachable.
+21. `CodexTelegram:HostUpdate` is disabled by default. Enable it only after an external APT/systemd updater is installed; it writes a request file and never runs package-manager commands itself.
+22. The Codex submenu will query live model names and effort choices when the configured executable is reachable.
 
 ## First Launch Checklist
 
@@ -595,6 +598,7 @@ For a complete parameter-by-parameter reference, see [command-reference.md](comm
 | `/outbound` | Shows outbound Telegram queue status. | Use when messages seem delayed or missing. |
 | `/stop [sessionId]` | Gracefully stops a session. | Use when you want to end work cleanly. |
 | `/restart confirm` | Explains that restart is managed outside this standalone process. | Use when you need the correct restart procedure for your terminal, service manager, or scheduled task. |
+| `/update status` / `/update confirm` | Inspects or requests a host update through the Debian updater service. | Use only on a Debian install with the updater enabled and the worker drained. |
 | `/kill <sessionId> confirm` | Hard-stops a session. | Use only when graceful stop is not enough. |
 | `/rename <sessionId> <new name>` | Renames a session. | Use to make a session list easier to scan later. |
 | `/forget <sessionId>` | Hides a stopped or exited session without deleting logs. | Use when you want to clean up the visible list. |

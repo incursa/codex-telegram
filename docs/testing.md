@@ -79,6 +79,17 @@ For Mini App changes, keep these evidence categories separate. Review-packet che
 
 For coordinator changes, automated coverage must prove exact bearer-token authentication, worker-ID admission, bounded registration capacity, persistence/reload, stale-heartbeat projection, and that the worker heartbeat contains only the bounded worker snapshot. Worker-control coverage must prove exact worker identity, explicit confirmation, drain/resume outcome evidence, preservation of active leases, stale/unavailable-worker rejection, and no second local execution path. A coordinator smoke test is synthetic unless it uses two separately configured processes over an operator-controlled private network; it does not prove real multi-container Codex execution or credentials sharing. Task dispatch remains a separate test obligation and must prove coordinator-issued lease ownership, worker selection, stale-worker exclusion, and cross-worker isolation.
 
+For host-update handoff changes, automated coverage must prove private-chat/explicit-confirmation routing, refusal while a Codex turn is active or the worker is not drained or has active leases, atomic request/state writes, duplicate request rejection, bounded redacted persistence, terminal health/rollback notification delivery, and notification replay suppression. A real APT/systemd update remains a separate operator test against a disposable service and bot token; application tests do not prove package-manager permissions, service restart, or rollback of a machine installation.
+
+For Debian package changes, build and smoke-test the actual package on Linux:
+
+```powershell
+./scripts/Build-DebianPackage.ps1 -Configuration Release -Architecture amd64
+./scripts/Test-DebianPackage.ps1 -PackagePath ./artifacts/debian/codex-telegram_<version>_amd64.deb
+```
+
+That check validates package metadata, stable installation paths, the updater executable, systemd unit presence, and maintainer-script syntax. It does not replace a disposable-host APT upgrade/rollback exercise.
+
 - `automated`: projection, authorization, bounded payload, and no-manifest-write tests.
 - `synthetic`: scripted Codex runtime and signed-init-data fixtures; these do not prove a real Telegram account or Codex authentication.
 - `browser`: served-page checks at compact, full-height, and fullscreen-sized viewports, including no horizontal overflow, no framework overlay, console health, task-detail activation, and refresh/reopen behavior.

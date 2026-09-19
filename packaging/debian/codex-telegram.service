@@ -1,0 +1,25 @@
+[Unit]
+Description=Codex Telegram bot
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=exec
+User=codex-telegram
+Group=codex-telegram
+WorkingDirectory=/usr/lib/codex-telegram
+ExecStart=/usr/lib/codex-telegram/codex-telegram --run --config /etc/codex-telegram/appsettings.Local.json
+Restart=on-failure
+RestartSec=5s
+TimeoutStartSec=180s
+TimeoutStopSec=30s
+Environment=DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1
+Environment=HOME=/var/lib/codex-telegram
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=true
+NoNewPrivileges=true
+ReadWritePaths=/var/lib/codex-telegram
+
+[Install]
+WantedBy=multi-user.target

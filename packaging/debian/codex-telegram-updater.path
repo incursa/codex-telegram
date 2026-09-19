@@ -1,0 +1,9 @@
+[Unit]
+Description=Watch for Codex Telegram package update requests
+
+[Path]
+PathChanged=/var/lib/codex-telegram/codex-host-update-request.json
+Unit=codex-telegram-updater.service
+
+[Install]
+WantedBy=multi-user.target

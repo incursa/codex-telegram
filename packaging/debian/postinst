@@ -1,0 +1,34 @@
+#!/bin/sh
+set -eu
+
+if ! getent group codex-telegram >/dev/null 2>&1; then
+    addgroup --system codex-telegram
+fi
+if ! getent passwd codex-telegram >/dev/null 2>&1; then
+    adduser --system --ingroup codex-telegram --home /var/lib/codex-telegram --no-create-home --shell /usr/sbin/nologin codex-telegram
+fi
+
+install -d -o codex-telegram -g codex-telegram -m 0750 /var/lib/codex-telegram
+install -d -o root -g root -m 0750 /var/cache/codex-telegram/rollback
+install -d -o root -g codex-telegram -m 0770 /etc/codex-telegram
+
+if [ -f /etc/codex-telegram/appsettings.Local.json ]; then
+    chown root:codex-telegram /etc/codex-telegram/appsettings.Local.json
+    chmod 0660 /etc/codex-telegram/appsettings.Local.json
+fi
+if [ -f /etc/codex-telegram/updater.json ]; then
+    chown root:root /etc/codex-telegram/updater.json
+    chmod 0644 /etc/codex-telegram/updater.json
+fi
+
+if command -v systemctl >/dev/null 2>&1; then
+    systemctl daemon-reload || true
+    deb-systemd-invoke enable codex-telegram.service >/dev/null 2>&1 || true
+    deb-systemd-invoke enable codex-telegram-updater.path >/dev/null 2>&1 || true
+    deb-systemd-invoke start codex-telegram-updater.path >/dev/null 2>&1 || true
+    if [ "$1" = configure ] && systemctl is-active --quiet codex-telegram.service; then
+        deb-systemd-invoke restart codex-telegram.service >/dev/null 2>&1 || true
+    fi
+fi
+
+exit 0

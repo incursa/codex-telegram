@@ -189,6 +189,46 @@ jobs:
             -PublishDirectory (Join-Path $env:RUNNER_TEMP 'codex-telegram-linux-x64') `
             -ArchivePath (Join-Path $env:RUNNER_TEMP 'codex-telegram-linux-x64/codex-telegram-linux-x64-webroot.tar.gz')
 
+      - name: Build Debian package
+        if: matrix.runtime == 'linux-x64'
+        shell: pwsh
+        env:
+          SOURCE_REF: ${{ github.ref }}
+          SOURCE_VERSION: ${{ github.ref_name }}
+        run: |
+          $packageDirectory = Join-Path $env:RUNNER_TEMP 'codex-telegram-debian'
+          $version = ''
+          if ($env:SOURCE_REF.StartsWith('refs/tags/v', [System.StringComparison]::Ordinal)) {
+            $version = $env:SOURCE_VERSION.Substring(1)
+          }
+
+          $arguments = @(
+            '-NoProfile',
+            '-File', 'scripts/Build-DebianPackage.ps1',
+            '-Configuration', 'Release',
+            '-Architecture', 'amd64',
+            '-OutputDirectory', $packageDirectory
+          )
+          if (-not [string]::IsNullOrWhiteSpace($version)) {
+            $arguments += @('-Version', $version)
+          }
+          pwsh @arguments
+
+          $packagePath = Get-ChildItem -LiteralPath $packageDirectory -Filter '*.deb' -File | Select-Object -First 1
+          if (-not $packagePath) {
+            throw "The Debian package build did not produce a .deb."
+          }
+          pwsh -NoProfile -File scripts/Test-DebianPackage.ps1 -PackagePath $packagePath.FullName
+
+      - name: Upload Debian package artifact
+        if: matrix.runtime == 'linux-x64'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: codex-telegram-debian
+          path: ${{ runner.temp }}/codex-telegram-debian/*.deb
+          if-no-files-found: error
+          retention-days: 14
+
   release:
     name: Create GitHub Release
     needs: publish
@@ -245,6 +285,7 @@ jobs:
             'codex-telegram-linux-x64.sha256',
             'codex-telegram-linux-x64-LICENSE.txt',
             'codex-telegram-linux-x64-webroot.tar.gz',
+            "codex-telegram_${version}_amd64.deb",
             'codex-telegram-osx-arm64',
             'codex-telegram-osx-arm64.sha256',
             'codex-telegram-osx-arm64-LICENSE.txt'

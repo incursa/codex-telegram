@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.0.57 - 2026-09-18
+
+- Added live Telegram transcription progress cards and retained long-running transcription support up to the configured ten-minute audio limit with a 15-minute default API timeout.
+- Added Telegram-controlled host update requests with private-chat confirmation, worker drain/idle gates, durable state, and completion notifications.
+- Added the Debian package and separate root-owned updater service, including APT index refresh, last-known-good package caching, post-restart health checks, automatic rollback, and explicit Telegram rollback.
+- Kept Debian installs on a stable dpkg-owned path so ordinary `apt update && apt upgrade` remains independent of the Telegram updater.
+- Added the `/health` endpoint, Debian setup wrapper, package smoke checks, and release artifact publication for the amd64 `.deb`.
+- Changed special-message and live-card closing boundaries to use `--- end <boundary> ---`, preventing Telegram from interpreting the closing line as a slash command.
+
 ## 1.0.55 - 2026-09-15
 
 - Allowed OpenAI transcription requests to run up to 15 minutes by default instead of inheriting HttpClient's 100-second timeout.

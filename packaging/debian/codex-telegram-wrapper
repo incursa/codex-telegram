@@ -1,0 +1,2 @@
+#!/bin/sh
+exec /usr/lib/codex-telegram/codex-telegram --config /etc/codex-telegram/appsettings.Local.json "$@"

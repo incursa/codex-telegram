@@ -122,6 +122,11 @@ public sealed class CodexTelegramOptions
     /// Gets or sets the operator-controlled worker update options.
     /// </summary>
     public CodexWorkerUpdateOptions Updates { get; set; } = new();
+
+    /// <summary>
+    /// Gets or sets the external host-update handoff options.
+    /// </summary>
+    public CodexHostUpdateOptions HostUpdate { get; set; } = new();
 }
 
 /// <summary>
@@ -241,6 +246,32 @@ public sealed class CodexWorkerUpdateOptions
 
     /// <summary>Gets the worker capabilities required before staging is allowed.</summary>
     public List<string> RequiredCapabilities { get; set; } = [];
+}
+
+/// <summary>
+/// Describes the local handoff contract used to request a host update from an external installer.
+/// The Telegram process never executes a package-manager or service-manager command itself.
+/// </summary>
+public sealed class CodexHostUpdateOptions
+{
+    /// <summary>Gets or sets whether host update requests are available from Telegram.</summary>
+    public bool Enabled { get; set; }
+
+    /// <summary>
+    /// Gets or sets the request file consumed by the external updater. When empty, the request is
+    /// written below the configured data root as <c>codex-host-update-request.json</c>.
+    /// </summary>
+    public string? RequestPath { get; set; }
+
+    /// <summary>
+    /// Gets or sets an optional exact release version for the external updater to install.
+    /// </summary>
+    public string? TargetVersion { get; set; }
+
+    /// <summary>
+    /// Gets or sets an optional expected SHA-256 supplied to the external updater.
+    /// </summary>
+    public string? ExpectedSha256 { get; set; }
 }
 
 /// <summary>

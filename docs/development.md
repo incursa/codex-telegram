@@ -54,6 +54,14 @@ The publish script writes:
 
 Other runtime identifiers can be passed with `-Runtime`, for example `linux-x64` or `osx-arm64`, when the .NET SDK has the required runtime packs.
 
+Build the Debian package on Linux after the normal restore/build checks:
+
+```powershell
+./scripts/Build-DebianPackage.ps1 -Configuration Release -Architecture amd64
+```
+
+The package installs the bot under `/usr/lib/codex-telegram`, operator settings under `/etc/codex-telegram`, durable state under `/var/lib/codex-telegram`, and the last-known-good rollback package under `/var/cache/codex-telegram/rollback`. It includes the separate `codex-telegram-updater` executable and systemd path/service units. The package build does not publish to an APT repository; repository signing and publication remain release-infrastructure responsibilities.
+
 Validate the Linux release-style package, including the matching webroot archive, clean installation, static HTTP serving, and the intended non-root `ProtectSystem=strict` service boundary:
 
 ```powershell
@@ -122,7 +130,7 @@ Pull requests and pushes to `main` run build, format, vulnerability-report, unit
 
 Pushes to `main` also publish short-retention artifacts for Windows x64, Linux x64, and macOS arm64.
 
-Tag pushes that start with `v` create a GitHub Release and upload the published artifacts with generated release notes. Linux tag builds additionally archive the published `wwwroot` directory as `codex-telegram-linux-x64-webroot.tar.gz`, attest the archive, and verify the release asset set before creation.
+Tag pushes that start with `v` create a GitHub Release and upload the published artifacts with generated release notes. Linux tag builds additionally archive the published `wwwroot` directory as `codex-telegram-linux-x64-webroot.tar.gz`, build the `codex-telegram_<version>_amd64.deb` package containing the root-owned updater, attest the archive, and verify the release asset set before creation. Publishing that `.deb` into the eventual public APT feed remains a separate repository-infrastructure step.
 
 ## Documentation Expectations
 

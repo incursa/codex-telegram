@@ -1,0 +1,11 @@
+#!/bin/sh
+set -eu
+
+if command -v systemctl >/dev/null 2>&1; then
+    systemctl daemon-reload || true
+fi
+
+# Deliberately retain /etc/codex-telegram, /var/lib/codex-telegram, and
+# /var/cache/codex-telegram so a remove/reinstall does not destroy operator
+# settings, conversation state, or the last-known-good package.
+exit 0

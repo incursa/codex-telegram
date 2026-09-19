@@ -7,6 +7,7 @@ using Incursa.Codex.Telegram.Telegram;
 using Incursa.OpenAI.Codex;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -397,6 +398,8 @@ builder.Services.AddSingleton<CodexRemoteSessionSettingsRelay>();
 builder.Services.AddSingleton<CodexRemoteWorkerControlRelay>();
 builder.Services.AddSingleton<CodexWorkerUpdateManager>();
 builder.Services.AddSingleton<ICodexWorkerUpdateManager>(sp => sp.GetRequiredService<CodexWorkerUpdateManager>());
+builder.Services.AddSingleton<CodexHostUpdateManager>();
+builder.Services.AddSingleton<ICodexHostUpdateManager>(sp => sp.GetRequiredService<CodexHostUpdateManager>());
 builder.Services.AddSingleton<CodexRemoteWorkerUpdateRelay>();
 builder.Services.AddSingleton<ICodexFleetRolloutStore, CodexFleetRolloutStore>();
 builder.Services.AddSingleton<ICodexFleetRolloutCoordinator, CodexFleetRolloutCoordinator>();
@@ -424,6 +427,7 @@ builder.Services.AddSingleton<ITelegramCodexBotUpdateHandler>(sp => sp.GetRequir
 builder.Services.AddHostedService<CodexWarmupHostedService>();
 builder.Services.AddHostedService<CodexWorkerCoordinatorHostedService>();
 builder.Services.AddHostedService<TelegramCodexBotHostedService>();
+builder.Services.AddHostedService<CodexHostUpdateNotificationHostedService>();
 builder.Services.AddHostedService<TelegramInputBundleAutoDispatchHostedService>();
 builder.Services.AddHostedService<TelegramQueuedPromptProcessorHostedService>();
 builder.Services.AddHostedService<TelegramTypingHeartbeatHostedService>();
@@ -454,6 +458,11 @@ catch (InvalidOperationException exception)
 
 app.UseDefaultFiles();
 app.UseStaticFiles();
+app.MapGet("/health", () => Results.Ok(new
+{
+    status = "ok",
+    version = typeof(Program).Assembly.GetName().Version?.ToString() ?? "unknown",
+}));
 CodexCoordinatorWorkerEndpoints.Map(app);
 CodexCoordinatorTurnEventEndpoints.Map(app);
 CodexRemoteTaskEndpoints.Map(app);
