@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.58 - 2026-09-19
+
+- Bumped the package and application version to exercise the Telegram-controlled update and rollback flow.
+
 ## 1.0.57 - 2026-09-18
 
 - Added live Telegram transcription progress cards and retained long-running transcription support up to the configured ten-minute audio limit with a 15-minute default API timeout.
