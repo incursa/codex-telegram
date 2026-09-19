@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.60 - 2026-09-19
+
+- Added automatic reconciliation for a request left queued when an operator completes the installation through ordinary APT.
+- Added `/update cancel confirm` for safely discarding a queued update without racing an updater that already owns the shared update lock.
+- Added explicit status outcomes for manual update detection, cancellation, and refusal to cancel an active updater.
+
 ## 1.0.59 - 2026-09-19
 
 - Added explicit Telegram notifications before an external host update or rollback starts and after the restarted service passes its health check.

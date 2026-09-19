@@ -455,7 +455,7 @@ After a successful test, you should see the transcription in Telegram before the
 | `/outbound` | Inspect delayed or batched Telegram output. |
 | `/stop` | Gracefully stop a session. |
 | `/restart confirm` | Show standalone-process restart guidance. |
-| `/update status` / `/update confirm` | Request or inspect an external host update. |
+| `/update status` / `/update confirm` / `/update cancel confirm` | Request, inspect, or cancel a queued external host update. |
 | `/topic ...` | Manage forum-topic sessions in allowed supergroups. |
 
 For a fuller operator guide, see [docs/usage.md](docs/usage.md).

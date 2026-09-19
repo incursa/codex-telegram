@@ -1418,6 +1418,19 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             return;
         }
 
+        if (operation == "cancel")
+        {
+            if (parts.Length != 2 || !parts[1].Equals("confirm", StringComparison.OrdinalIgnoreCase))
+            {
+                await ReplyAsync(sender, message, "Usage: /update status, /update confirm, /update cancel confirm, or /update rollback confirm", null, cancellationToken).ConfigureAwait(false);
+                return;
+            }
+
+            CodexHostUpdateSnapshot result = await _hostUpdateManager.CancelPendingAsync(cancellationToken).ConfigureAwait(false);
+            await ReplyAsync(sender, message, FormatHostUpdate(result), null, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
         if (_workerRegistry is null)
         {
             await ReplyAsync(sender, message, "Host updates require the local worker registry, which is not available in this host.", null, cancellationToken).ConfigureAwait(false);
@@ -1441,7 +1454,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         {
             if (parts.Length != 1)
             {
-                await ReplyAsync(sender, message, "Usage: /update status, /update confirm, or /update rollback confirm", null, cancellationToken).ConfigureAwait(false);
+                await ReplyAsync(sender, message, "Usage: /update status, /update confirm, /update cancel confirm, or /update rollback confirm", null, cancellationToken).ConfigureAwait(false);
                 return;
             }
 
@@ -1458,7 +1471,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
         {
             if (parts.Length != 2 || !parts[1].Equals("confirm", StringComparison.OrdinalIgnoreCase))
             {
-                await ReplyAsync(sender, message, "Usage: /update status, /update confirm, or /update rollback confirm", null, cancellationToken).ConfigureAwait(false);
+                await ReplyAsync(sender, message, "Usage: /update status, /update confirm, /update cancel confirm, or /update rollback confirm", null, cancellationToken).ConfigureAwait(false);
                 return;
             }
 
@@ -1471,7 +1484,7 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             return;
         }
 
-        await ReplyAsync(sender, message, "Usage: /update status, /update confirm, or /update rollback confirm", null, cancellationToken).ConfigureAwait(false);
+        await ReplyAsync(sender, message, "Usage: /update status, /update confirm, /update cancel confirm, or /update rollback confirm", null, cancellationToken).ConfigureAwait(false);
     }
 
     private async Task HandleRecipeAsync(
@@ -1557,9 +1570,15 @@ internal sealed class TelegramCodexBotCommandHandler : ITelegramCodexBotUpdateHa
             $"Target version: {update.TargetVersion ?? "(external updater selects the release)"}",
             $"Request: {update.RequestId ?? "(none)"}",
             $"Outcome: {update.OutcomeCode ?? "(none)"}",
-            update.State is CodexHostUpdateState.Requested or CodexHostUpdateState.RollbackRequested
-                ? "The request is waiting for the external updater; this process will not run apt or stop itself."
-                : "Use /update confirm only after /worker drain confirm reports zero active leases.",
+            update.OutcomeCode == "update_request_cancelled"
+                ? "The queued update request was cancelled; no package-manager action was taken."
+                : update.OutcomeCode == "manual_update_detected" || update.OutcomeCode == "manual_rollback_detected"
+                    ? "The running version changed outside Telegram, so the old request was reconciled and will not be replayed."
+                    : update.OutcomeCode == "update_in_progress_cannot_cancel"
+                        ? "An external updater is active; the request cannot be cancelled while it owns the update lock."
+                        : update.State is CodexHostUpdateState.Requested or CodexHostUpdateState.RollbackRequested
+                            ? "The request is waiting for the external updater; this process will not run apt or stop itself."
+                            : "Use /update confirm only after /worker drain confirm reports zero active leases.",
         ]);
 
     private async Task HandleTaskCreateAsync(

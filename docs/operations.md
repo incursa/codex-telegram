@@ -15,7 +15,7 @@ Host updates are disabled by default. Enable `CodexTelegram:HostUpdate:Enabled` 
 The Telegram flow is:
 
 1. Wait for active Codex turns to finish, then run `/worker drain confirm` and wait for the worker to report zero active leases.
-2. Run `/update status` to inspect the current handoff state.
+2. Run `/update status` to inspect the current handoff state. If an older request is stuck after a manual package installation, this status check reconciles it when the running version differs from the request's recorded version.
 3. Run `/update confirm` from the authorized private chat.
 4. The bot writes `codex-host-update-request.json` below the configured data root, or to `HostUpdate:RequestPath` when explicitly configured.
 5. The packaged `codex-telegram-updater` service consumes the request and writes an `Applying` state. The bot watches that state and sends a `Host update starting` or `Host rollback starting` message before the updater stops the service. The updater waits up to its configured `startNotificationTimeoutSeconds` for that acknowledgement, then downloads and verifies the same package that ordinary APT uses, caches the current `.deb` as the last-known-good package, applies the package transaction, restarts the service, checks `/health`, and writes the result to `codex-host-update-state.json`.
@@ -39,7 +39,7 @@ The request file uses this bounded shape. The external updater must treat `Reque
 }
 ```
 
-The updater reports `Applying`, `Active`, `Failed`, `RollbackApplying`, `RollbackActive`, or `RollbackFailed` in the state file. It preserves the request identity and conversation fields, writes the state atomically, and uses `notificationPending` for both the pre-update start message and the post-restart result. A failed update attempts to restore the cached last-known-good `.deb`; `/update rollback confirm` performs that rollback explicitly. The bot clears the notification flag after each Telegram notification is delivered.
+The updater reports `Applying`, `Active`, `Failed`, `RollbackApplying`, `RollbackActive`, or `RollbackFailed` in the state file. It preserves the request identity and conversation fields, writes the state atomically, and uses `notificationPending` for both the pre-update start message and the post-restart result. If an operator installs a different version manually while a request is still queued, the running bot reconciles that version change and removes the stale request instead of replaying it. A queued request can also be discarded explicitly with `/update cancel confirm`; cancellation refuses to race an updater that already owns the update lock. A failed update attempts to restore the cached last-known-good `.deb`; `/update rollback confirm` performs that rollback explicitly. The bot clears the notification flag after each Telegram notification is delivered.
 
 For the public Debian package, keep the executable and published webroot in a stable package-owned installation path, and keep configuration, state, and rollback packages outside it. A recommended layout is `/usr/lib/codex-telegram/`, `/etc/codex-telegram/appsettings.Local.json`, `/var/lib/codex-telegram/`, and `/var/cache/codex-telegram/rollback/`. The service launches from the stable package-owned path, so an ordinary `apt update && apt upgrade` works without knowing about Telegram or a symlink. The Telegram updater uses the same APT package transaction, with a cached last-known-good `.deb` for explicit rollback.
 

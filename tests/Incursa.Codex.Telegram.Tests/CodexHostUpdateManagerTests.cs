@@ -128,6 +128,83 @@ public sealed class CodexHostUpdateManagerTests
         Assert.Null(await manager.TryGetPendingNotificationAsync(CancellationToken.None));
     }
 
+    [Fact]
+    public async Task ManualVersionChangeReconcilesQueuedRequestAndRemovesReplayFile()
+    {
+        using TemporaryDirectory dataRoot = TemporaryDirectory.Create();
+        IOptions<CodexTelegramOptions> options = CreateOptions(dataRoot.Path);
+        using CodexHostUpdateManager manager = new(options, TimeProvider.System, dataRoot.Path);
+        CodexHostUpdateSnapshot requested = await manager.RequestAsync(
+            CodexHostUpdateAction.Update,
+            new TelegramConversationScope(1234, null),
+            42,
+            CancellationToken.None);
+
+        string statePath = Path.Combine(dataRoot.Path, "codex-host-update-state.json");
+        JsonSerializerOptions jsonOptions = new(JsonSerializerDefaults.Web)
+        {
+            WriteIndented = true,
+            Converters = { new JsonStringEnumConverter() },
+        };
+        CodexHostUpdateManager.HostUpdateState queuedBeforeManualInstall = new(
+            1,
+            CodexHostUpdateState.Requested,
+            CodexHostUpdateAction.Update,
+            requested.RequestId,
+            42,
+            "1234",
+            "1.0.59.0",
+            "1.0.60",
+            requested.RequestedAtUtc,
+            requested.UpdatedAtUtc,
+            null,
+            false);
+        await File.WriteAllTextAsync(statePath, JsonSerializer.Serialize(queuedBeforeManualInstall, jsonOptions));
+
+        CodexHostUpdateSnapshot status = await manager.GetStatusAsync(CancellationToken.None);
+
+        Assert.Equal(CodexHostUpdateState.Active, status.State);
+        Assert.Equal("manual_update_detected", status.OutcomeCode);
+        Assert.True(status.NotificationPending);
+        Assert.False(File.Exists(Path.Combine(dataRoot.Path, "codex-host-update-request.json")));
+    }
+
+    [Fact]
+    public async Task CancelPendingRemovesQueuedRequestWithoutReachingUpdater()
+    {
+        using TemporaryDirectory dataRoot = TemporaryDirectory.Create();
+        IOptions<CodexTelegramOptions> options = CreateOptions(dataRoot.Path);
+        using CodexHostUpdateManager manager = new(options, TimeProvider.System, dataRoot.Path);
+        await manager.RequestAsync(CodexHostUpdateAction.Update, new TelegramConversationScope(1234, null), 42, CancellationToken.None);
+
+        CodexHostUpdateSnapshot cancelled = await manager.CancelPendingAsync(CancellationToken.None);
+
+        Assert.Equal(CodexHostUpdateState.None, cancelled.State);
+        Assert.Equal("update_request_cancelled", cancelled.OutcomeCode);
+        Assert.False(File.Exists(Path.Combine(dataRoot.Path, "codex-host-update-request.json")));
+        Assert.Equal(CodexHostUpdateState.None, (await manager.GetStatusAsync(CancellationToken.None)).State);
+    }
+
+    [Fact]
+    public async Task CancelPendingRefusesWhenUpdaterOwnsTheSharedLock()
+    {
+        using TemporaryDirectory dataRoot = TemporaryDirectory.Create();
+        IOptions<CodexTelegramOptions> options = CreateOptions(dataRoot.Path);
+        using CodexHostUpdateManager manager = new(options, TimeProvider.System, dataRoot.Path);
+        await manager.RequestAsync(CodexHostUpdateAction.Update, new TelegramConversationScope(1234, null), 42, CancellationToken.None);
+
+        using FileStream updaterLock = new(
+            Path.Combine(dataRoot.Path, "codex-host-update.lock"),
+            FileMode.OpenOrCreate,
+            FileAccess.ReadWrite,
+            FileShare.None);
+        CodexHostUpdateSnapshot result = await manager.CancelPendingAsync(CancellationToken.None);
+
+        Assert.Equal(CodexHostUpdateState.Requested, result.State);
+        Assert.Equal("update_in_progress_cannot_cancel", result.OutcomeCode);
+        Assert.True(File.Exists(Path.Combine(dataRoot.Path, "codex-host-update-request.json")));
+    }
+
     private static IOptions<CodexTelegramOptions> CreateOptions(string dataRoot)
         => Microsoft.Extensions.Options.Options.Create(new CodexTelegramOptions
         {

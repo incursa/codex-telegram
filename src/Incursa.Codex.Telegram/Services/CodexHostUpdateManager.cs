@@ -23,6 +23,8 @@ internal interface ICodexHostUpdateManager
     Task<string?> GetConversationKeyAsync(string requestId, CancellationToken cancellationToken);
 
     Task<bool> MarkNotificationSentAsync(string requestId, CancellationToken cancellationToken);
+
+    Task<CodexHostUpdateSnapshot> CancelPendingAsync(CancellationToken cancellationToken);
 }
 
 internal enum CodexHostUpdateAction
@@ -98,7 +100,7 @@ internal sealed class CodexHostUpdateManager : ICodexHostUpdateManager, IDisposa
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            return ToSnapshot(await LoadAsync(cancellationToken).ConfigureAwait(false), _options.Value.HostUpdate.Enabled);
+            return ToSnapshot(await LoadAndReconcileAsync(cancellationToken).ConfigureAwait(false), _options.Value.HostUpdate.Enabled);
         }
         finally
         {
@@ -116,7 +118,7 @@ internal sealed class CodexHostUpdateManager : ICodexHostUpdateManager, IDisposa
         try
         {
             CodexHostUpdateOptions options = _options.Value.HostUpdate;
-            HostUpdateState current = await LoadAsync(cancellationToken).ConfigureAwait(false);
+            HostUpdateState current = await LoadAndReconcileAsync(cancellationToken).ConfigureAwait(false);
             if (!options.Enabled)
             {
                 return ToSnapshot(current, enabled: false, outcomeCode: "host_updates_disabled");
@@ -169,7 +171,7 @@ internal sealed class CodexHostUpdateManager : ICodexHostUpdateManager, IDisposa
                 return null;
             }
 
-            HostUpdateState state = await LoadAsync(cancellationToken).ConfigureAwait(false);
+            HostUpdateState state = await LoadAndReconcileAsync(cancellationToken).ConfigureAwait(false);
             if (!state.NotificationPending || state.State is not (
                 CodexHostUpdateState.Applying
                 or CodexHostUpdateState.RollbackApplying
@@ -210,6 +212,46 @@ internal sealed class CodexHostUpdateManager : ICodexHostUpdateManager, IDisposa
         }
     }
 
+    public async Task<CodexHostUpdateSnapshot> CancelPendingAsync(CancellationToken cancellationToken)
+    {
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            HostUpdateState current = await LoadAndReconcileAsync(cancellationToken).ConfigureAwait(false);
+            if (current.State is not (CodexHostUpdateState.Requested or CodexHostUpdateState.RollbackRequested))
+            {
+                return ToSnapshot(current, _options.Value.HostUpdate.Enabled, "update_not_queued");
+            }
+
+            using FileStream? updateLock = TryAcquireUpdateLock();
+            if (updateLock is null)
+            {
+                return ToSnapshot(current, _options.Value.HostUpdate.Enabled, "update_in_progress_cannot_cancel");
+            }
+
+            DeleteRequestFile();
+            HostUpdateState cancelled = new(
+                CurrentSchemaVersion,
+                CodexHostUpdateState.None,
+                null,
+                null,
+                null,
+                null,
+                GetCurrentVersion(),
+                null,
+                current.RequestedAtUtc,
+                _timeProvider.GetUtcNow(),
+                "update_request_cancelled",
+                false);
+            await SaveAsync(cancelled, cancellationToken).ConfigureAwait(false);
+            return ToSnapshot(cancelled, _options.Value.HostUpdate.Enabled);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
     public async Task<string?> GetConversationKeyAsync(string requestId, CancellationToken cancellationToken)
     {
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -241,6 +283,46 @@ internal sealed class CodexHostUpdateManager : ICodexHostUpdateManager, IDisposa
         return state ?? throw new InvalidDataException("The host update state file was empty.");
     }
 
+    private async Task<HostUpdateState> LoadAndReconcileAsync(CancellationToken cancellationToken)
+    {
+        HostUpdateState state = await LoadAsync(cancellationToken).ConfigureAwait(false);
+        if (state.State is not (CodexHostUpdateState.Requested or CodexHostUpdateState.RollbackRequested)
+            || string.IsNullOrWhiteSpace(state.RequestId)
+            || string.IsNullOrWhiteSpace(state.CurrentVersion))
+        {
+            return state;
+        }
+
+        string runningVersion = GetCurrentVersion();
+        if (string.Equals(state.CurrentVersion, runningVersion, StringComparison.Ordinal))
+        {
+            return state;
+        }
+
+        using FileStream? updateLock = TryAcquireUpdateLock();
+        if (updateLock is null)
+        {
+            return state;
+        }
+
+        DeleteRequestFile();
+        HostUpdateState reconciled = state with
+        {
+            State = state.Action == CodexHostUpdateAction.Rollback
+                ? CodexHostUpdateState.RollbackActive
+                : CodexHostUpdateState.Active,
+            CurrentVersion = runningVersion,
+            TargetVersion = state.TargetVersion ?? runningVersion,
+            UpdatedAtUtc = _timeProvider.GetUtcNow(),
+            OutcomeCode = state.Action == CodexHostUpdateAction.Rollback
+                ? "manual_rollback_detected"
+                : "manual_update_detected",
+            NotificationPending = true,
+        };
+        await SaveAsync(reconciled, cancellationToken).ConfigureAwait(false);
+        return reconciled;
+    }
+
     private async Task SaveAsync(HostUpdateState state, CancellationToken cancellationToken)
     {
         Directory.CreateDirectory(_dataRoot);
@@ -264,6 +346,32 @@ internal sealed class CodexHostUpdateManager : ICodexHostUpdateManager, IDisposa
             state.TargetVersion,
             NormalizeOptional(options.ExpectedSha256));
         await SaveFileAsync(path, request, cancellationToken).ConfigureAwait(false);
+    }
+
+    private void DeleteRequestFile()
+    {
+        string path = GetRequestPath(_options.Value.HostUpdate);
+        if (File.Exists(path))
+        {
+            File.Delete(path);
+        }
+    }
+
+    private FileStream? TryAcquireUpdateLock()
+    {
+        Directory.CreateDirectory(_dataRoot);
+        try
+        {
+            return new FileStream(
+                Path.Combine(_dataRoot, "codex-host-update.lock"),
+                FileMode.OpenOrCreate,
+                FileAccess.ReadWrite,
+                FileShare.None);
+        }
+        catch (IOException)
+        {
+            return null;
+        }
     }
 
     private async Task SaveFileAsync<T>(string path, T value, CancellationToken cancellationToken)
