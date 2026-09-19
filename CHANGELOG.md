@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.59 - 2026-09-19
+
+- Added explicit Telegram notifications before an external host update or rollback starts and after the restarted service passes its health check.
+- Added a bounded updater wait for the pre-update notification acknowledgement, with timeout-based continuation if the bot is unavailable.
+
 ## 1.0.58 - 2026-09-19
 
 - Bumped the package and application version to exercise the Telegram-controlled update and rollback flow.

@@ -21,7 +21,8 @@ public sealed class CodexTelegramUpdaterContractTests
           "healthCheckTimeoutSeconds": 30,
           "healthCheckIntervalSeconds": 1,
           "healthRequestTimeoutSeconds": 2,
-          "aptTimeoutMinutes": 1
+          "aptTimeoutMinutes": 1,
+          "startNotificationTimeoutSeconds": 3
         }
         """);
 
@@ -30,6 +31,7 @@ public sealed class CodexTelegramUpdaterContractTests
         Assert.Equal(Path.Combine(root.Path, "data", "codex-host-update-request.json"), options.RequestPath);
         Assert.Equal(Path.Combine(root.Path, "data", "codex-host-update-state.json"), options.StatePath);
         Assert.Equal(Path.Combine(root.Path, "rollback", "last-known-good.json"), options.RollbackManifestPath);
+        Assert.Equal(3, options.StartNotificationTimeoutSeconds);
     }
 
     [Fact]

@@ -7,5 +7,6 @@
   "healthCheckTimeoutSeconds": 120,
   "healthCheckIntervalSeconds": 2,
   "healthRequestTimeoutSeconds": 5,
-  "aptTimeoutMinutes": 30
+  "aptTimeoutMinutes": 30,
+  "startNotificationTimeoutSeconds": 15
 }

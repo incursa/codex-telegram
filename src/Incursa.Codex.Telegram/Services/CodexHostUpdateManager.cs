@@ -171,6 +171,9 @@ internal sealed class CodexHostUpdateManager : ICodexHostUpdateManager, IDisposa
 
             HostUpdateState state = await LoadAsync(cancellationToken).ConfigureAwait(false);
             if (!state.NotificationPending || state.State is not (
+                CodexHostUpdateState.Applying
+                or CodexHostUpdateState.RollbackApplying
+                or
                 CodexHostUpdateState.Active
                 or CodexHostUpdateState.Failed
                 or CodexHostUpdateState.RollbackActive

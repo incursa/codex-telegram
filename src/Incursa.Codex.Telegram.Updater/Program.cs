@@ -123,8 +123,9 @@ internal sealed class HostUpdateUpdater
             request.RequestedAtUtc,
             DateTimeOffset.UtcNow,
             null,
-            false);
+            true);
         await WriteStateAsync(applying, cancellationToken).ConfigureAwait(false);
+        await WaitForStartNotificationAsync(request, cancellationToken).ConfigureAwait(false);
 
         if (request.Action == HostUpdateAction.Rollback)
         {
@@ -242,6 +243,28 @@ internal sealed class HostUpdateUpdater
             DeleteRequest();
             return 1;
         }
+    }
+
+    private async Task WaitForStartNotificationAsync(
+        HostUpdateRequest request,
+        CancellationToken cancellationToken)
+    {
+        DateTimeOffset deadline = DateTimeOffset.UtcNow.AddSeconds(_options.StartNotificationTimeoutSeconds);
+        while (DateTimeOffset.UtcNow < deadline)
+        {
+            HostUpdateState? state = await ReadAsync<HostUpdateState>(_options.StatePath, cancellationToken).ConfigureAwait(false);
+            if (state is not null
+                && string.Equals(state.RequestId, request.RequestId, StringComparison.Ordinal)
+                && !state.NotificationPending)
+            {
+                return;
+            }
+
+            await Task.Delay(TimeSpan.FromMilliseconds(250), cancellationToken).ConfigureAwait(false);
+        }
+
+        Console.Error.WriteLine(
+            $"The pre-update Telegram notification was not acknowledged within {_options.StartNotificationTimeoutSeconds} seconds; continuing with the host update.");
     }
 
     private async Task<string> CacheInstalledPackageAsync(string installedVersion, CancellationToken cancellationToken)
@@ -712,6 +735,7 @@ internal sealed class UpdaterOptions
     public int HealthCheckIntervalSeconds { get; init; } = 2;
     public int HealthRequestTimeoutSeconds { get; init; } = 5;
     public int AptTimeoutMinutes { get; init; } = 30;
+    public int StartNotificationTimeoutSeconds { get; init; } = 15;
 
     [JsonIgnore]
     public string RequestPath => Path.Combine(DataRoot, "codex-host-update-request.json");
@@ -764,7 +788,8 @@ internal sealed class UpdaterOptions
         if (HealthCheckTimeoutSeconds is < 5 or > 3600
             || HealthCheckIntervalSeconds is < 1 or > 60
             || HealthRequestTimeoutSeconds is < 1 or > 60
-            || AptTimeoutMinutes is < 1 or > 240)
+            || AptTimeoutMinutes is < 1 or > 240
+            || StartNotificationTimeoutSeconds is < 1 or > 120)
         {
             throw new InvalidDataException("Updater timing values are outside their supported bounds.");
         }

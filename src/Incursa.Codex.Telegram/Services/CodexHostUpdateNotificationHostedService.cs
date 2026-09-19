@@ -72,6 +72,17 @@ internal sealed class CodexHostUpdateNotificationHostedService : BackgroundServi
 
     private static string FormatUpdateResult(CodexHostUpdateSnapshot update)
     {
+        if (update.State is CodexHostUpdateState.Applying or CodexHostUpdateState.RollbackApplying)
+        {
+            string startAction = update.Action == CodexHostUpdateAction.Rollback ? "rollback" : "update";
+            return string.Join(Environment.NewLine, [
+                $"Host {startAction} starting.",
+                $"Running version: {update.CurrentVersion}",
+                $"Target version: {update.TargetVersion ?? "(external updater selects the release)"}",
+                "The service will be offline briefly while the package is installed. I’ll report back after the restarted service passes its health check.",
+            ]);
+        }
+
         string heading = update.State is CodexHostUpdateState.Active or CodexHostUpdateState.RollbackActive
             ? "Host update complete."
             : "Host update failed.";

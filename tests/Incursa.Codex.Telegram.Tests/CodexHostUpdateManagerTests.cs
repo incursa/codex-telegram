@@ -91,6 +91,43 @@ public sealed class CodexHostUpdateManagerTests
         Assert.Null(await manager.TryGetPendingNotificationAsync(CancellationToken.None));
     }
 
+    [Fact]
+    public async Task ApplyingExternalStateProducesOneStartNotification()
+    {
+        using TemporaryDirectory dataRoot = TemporaryDirectory.Create();
+        IOptions<CodexTelegramOptions> options = CreateOptions(dataRoot.Path);
+        using CodexHostUpdateManager manager = new(options, TimeProvider.System, dataRoot.Path);
+        TelegramConversationScope conversation = new(1234, null);
+        CodexHostUpdateSnapshot requested = await manager.RequestAsync(CodexHostUpdateAction.Update, conversation, 42, CancellationToken.None);
+
+        string statePath = Path.Combine(dataRoot.Path, "codex-host-update-state.json");
+        JsonSerializerOptions jsonOptions = new(JsonSerializerDefaults.Web)
+        {
+            WriteIndented = true,
+            Converters = { new JsonStringEnumConverter() },
+        };
+        CodexHostUpdateManager.HostUpdateState applying = new(
+            1,
+            CodexHostUpdateState.Applying,
+            CodexHostUpdateAction.Update,
+            requested.RequestId,
+            42,
+            conversation.ToStorageKey(),
+            requested.CurrentVersion,
+            "1.0.59",
+            requested.RequestedAtUtc,
+            DateTimeOffset.UtcNow,
+            null,
+            true);
+        await File.WriteAllTextAsync(statePath, JsonSerializer.Serialize(applying, jsonOptions));
+
+        CodexHostUpdateSnapshot? notification = await manager.TryGetPendingNotificationAsync(CancellationToken.None);
+        Assert.NotNull(notification);
+        Assert.Equal(CodexHostUpdateState.Applying, notification.State);
+        Assert.True(await manager.MarkNotificationSentAsync(requested.RequestId!, CancellationToken.None));
+        Assert.Null(await manager.TryGetPendingNotificationAsync(CancellationToken.None));
+    }
+
     private static IOptions<CodexTelegramOptions> CreateOptions(string dataRoot)
         => Microsoft.Extensions.Options.Options.Create(new CodexTelegramOptions
         {
