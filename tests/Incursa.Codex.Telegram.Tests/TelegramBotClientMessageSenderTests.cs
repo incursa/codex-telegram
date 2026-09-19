@@ -209,6 +209,22 @@ public sealed class TelegramBotClientMessageSenderTests
     }
 
     [Fact]
+    public async Task AcknowledgeMessageAsync_WhenReactionIsRejectedSendsVisibleFallback()
+    {
+        FakeTelegramBotApiClient client = new();
+        client.ReactionFailures.Enqueue(new InvalidOperationException("reactions are disabled"));
+        TelegramBotClientMessageSender sender = CreateSender(client);
+
+        await sender.AcknowledgeMessageAsync(
+            new TelegramMessageAcknowledgement(new TelegramConversationScope(1234, 55), 42, null),
+            CancellationToken.None);
+
+        SentTelegramApiMessage fallback = Assert.Single(client.SentMessages);
+        Assert.Equal("Received. Working on it.", fallback.Text);
+        Assert.Single(client.Reactions);
+    }
+
+    [Fact]
     public async Task ReactToMessageAsync_MetadataCaptureRecordsReactionAttemptAndSuccess()
     {
         using TemporaryDirectory dataRoot = TemporaryDirectory.Create();
@@ -914,6 +930,8 @@ public sealed class TelegramBotClientMessageSenderTests
 
         public Queue<Exception> AnswerFailures { get; } = new();
 
+        public Queue<Exception> ReactionFailures { get; } = new();
+
         public Task<int> SendMessageAsync(
             long chatId,
             string text,
@@ -993,6 +1011,11 @@ public sealed class TelegramBotClientMessageSenderTests
         public Task SetMessageReactionAsync(long chatId, int messageId, string emoji, bool isBig, CancellationToken cancellationToken)
         {
             Reactions.Add(new TelegramReaction(chatId, messageId, emoji, isBig));
+            if (ReactionFailures.Count > 0)
+            {
+                throw ReactionFailures.Dequeue();
+            }
+
             return Task.CompletedTask;
         }
 

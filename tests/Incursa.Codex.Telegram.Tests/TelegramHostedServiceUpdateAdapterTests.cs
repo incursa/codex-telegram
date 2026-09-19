@@ -118,6 +118,32 @@ public sealed class TelegramHostedServiceUpdateAdapterTests
     }
 
     [Fact]
+    public async Task HandleUpdateAsync_RoutesFormattedTelegramTextLikeOrdinaryText()
+    {
+        using Harness harness = Harness.Create();
+        Message telegramMessage = CreateMessage(text: "run this formatted prompt", messageId: 117);
+        telegramMessage.Entities =
+        [
+            new MessageEntity
+            {
+                Type = MessageEntityType.Bold,
+                Offset = 0,
+                Length = 7,
+            },
+        ];
+
+        await harness.Service.HandleUpdateAsync(
+            harness.FileClient,
+            new Update { Id = 117, Message = telegramMessage },
+            harness.Sender,
+            CancellationToken.None);
+
+        TelegramInboundMessage message = Assert.Single(harness.Handler.Messages);
+        Assert.Equal("run this formatted prompt", message.Text);
+        Assert.Single(harness.Sender.Acknowledgements);
+    }
+
+    [Fact]
     public async Task HandleUpdateAsync_FullCaptureRecordsInboundTelegramMessageBody()
     {
         using Harness harness = Harness.Create();

@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.61 - 2026-09-19
+
+- Added a visible plain-text acknowledgement fallback when Telegram rejects the bot's reaction acknowledgement, so accepted inbound messages do not appear silently dropped.
+- Added regression coverage proving formatted Telegram text continues through the normal inbound route.
+
 ## 1.0.60 - 2026-09-19
 
 - Added automatic reconciliation for a request left queued when an operator completes the installation through ordinary APT.

@@ -16,6 +16,8 @@ internal interface IFormattedTelegramBotMessageSender
 
 internal sealed class TelegramBotClientMessageSender : ITelegramBotMessageSender, IOutboundTelegramMessageSender, IFormattedOutboundTelegramMessageSender, IFormattedTelegramBotMessageSender
 {
+    private const string AcknowledgementFallbackText = "Received. Working on it.";
+
     private readonly TelegramBotOptions _options;
     private readonly ILogger<TelegramBotClientMessageSender> _logger;
     private readonly Lazy<ITelegramBotApiClient> _client;
@@ -540,12 +542,6 @@ internal sealed class TelegramBotClientMessageSender : ITelegramBotMessageSender
                 await SendTypingActionAsync(acknowledgement.Conversation, cancellationToken).ConfigureAwait(false);
             }
 
-            await ReactToMessageAsync(
-                new TelegramMessageReaction(
-                    acknowledgement.Conversation,
-                    acknowledgement.MessageId,
-                    TelegramMessageReactionKind.Accepted),
-                cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -555,18 +551,40 @@ internal sealed class TelegramBotClientMessageSender : ITelegramBotMessageSender
         {
             _logger.LogDebug(
                 exception,
-                "Telegram acknowledgement failed for chat {ChatId} topic {MessageThreadId} message {MessageId}; continuing.",
+                "Telegram acknowledgement preflight failed for chat {ChatId} topic {MessageThreadId} message {MessageId}; continuing with reaction/fallback.",
                 acknowledgement.Conversation.ChatId,
                 acknowledgement.Conversation.MessageThreadId,
                 acknowledgement.MessageId);
         }
+
+        bool reactionSent = await TryReactToMessageAsync(
+            new TelegramMessageReaction(
+                acknowledgement.Conversation,
+                acknowledgement.MessageId,
+                TelegramMessageReactionKind.Accepted),
+            cancellationToken).ConfigureAwait(false);
+        if (!reactionSent)
+        {
+            // Reactions are optional Telegram capabilities and can be rejected by chat
+            // permissions. Preserve a visible acknowledgement so the operator does not have
+            // to infer whether the inbound message reached the bot from a silent UI failure.
+            await SendTextMessageAndGetIdAsync(
+                acknowledgement.Conversation,
+                AcknowledgementFallbackText,
+                buttons: null,
+                cancellationToken,
+                new TelegramDebugMessageContext("telegram.acknowledgement.fallback")).ConfigureAwait(false);
+        }
     }
 
-    public async Task ReactToMessageAsync(TelegramMessageReaction reaction, CancellationToken cancellationToken)
+    public Task ReactToMessageAsync(TelegramMessageReaction reaction, CancellationToken cancellationToken)
+        => TryReactToMessageAsync(reaction, cancellationToken);
+
+    private async Task<bool> TryReactToMessageAsync(TelegramMessageReaction reaction, CancellationToken cancellationToken)
     {
         if (!_options.Enabled || reaction.MessageId <= 0)
         {
-            return;
+            return false;
         }
 
         string? traceId = _traceStore.IsFileTraceEnabled ? _traceStore.CreateTraceId() : null;
@@ -602,6 +620,7 @@ internal sealed class TelegramBotClientMessageSender : ITelegramBotMessageSender
                 error: null,
                 metadata: metadata,
                 cancellationToken: cancellationToken).ConfigureAwait(false);
+            return true;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -625,6 +644,7 @@ internal sealed class TelegramBotClientMessageSender : ITelegramBotMessageSender
                 reaction.Kind,
                 reaction.Conversation.ChatId,
                 reaction.MessageId);
+            return false;
         }
     }
 
